@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: ramseys-arcade-api
+    runtime: node
+    plan: free
+    region: oregon
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      # Set after the Vercel site exists, e.g. https://ramseys-arcade.vercel.app
+      - key: CORS_ORIGIN
+        sync: false

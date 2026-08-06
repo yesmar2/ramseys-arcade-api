@@ -10,6 +10,5 @@ services:
     envVars:
       - key: NODE_VERSION
         value: "22"
-      # Set after the Vercel site exists, e.g. https://ramseys-arcade.vercel.app
       - key: CORS_ORIGIN
-        sync: false
+        value: https://ramseys-arcade.vercel.app

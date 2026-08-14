@@ -1,5 +1,6 @@
 import { Router } from 'express'
 import { z } from 'zod'
+import { claimName } from './names.js'
 import {
   addScore,
   getBoard,
@@ -17,6 +18,7 @@ export const leaderboardsRouter = Router()
 const submitSchema = z.object({
   name: z.string().min(1).max(12),
   score: z.number().int().positive().max(1_000_000),
+  token: z.string().min(1).max(128).optional(),
 })
 
 function parsePeriod(raw: unknown): Period {
@@ -93,7 +95,7 @@ leaderboardsRouter.post('/:game', (req, res) => {
     return
   }
 
-  const { name, score } = parsed.data
+  const { name, score, token } = parsed.data
   if (!qualifiesAny(game, score)) {
     res.status(409).json({
       error: 'Score does not qualify for the leaderboard',
@@ -102,7 +104,20 @@ leaderboardsRouter.post('/:game', (req, res) => {
     return
   }
 
-  const result = addScore(game, name, score)
+  let claim: { name: string; token: string }
+  try {
+    claim = claimName(name, token)
+  } catch (err) {
+    const status = (err as { status?: number }).status ?? 500
+    const code = (err as { code?: string }).code
+    res.status(status).json({
+      error: err instanceof Error ? err.message : 'Name claim failed',
+      code,
+    })
+    return
+  }
+
+  const result = addScore(game, claim.name, score)
   res.status(201).json({
     game,
     entry: result.entry,
@@ -110,5 +125,7 @@ leaderboardsRouter.post('/:game', (req, res) => {
     ranks: result.ranks,
     period: 'daily',
     entries: result.board,
+    name: claim.name,
+    token: claim.token,
   })
 })

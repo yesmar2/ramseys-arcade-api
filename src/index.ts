@@ -1,5 +1,6 @@
 import cors from 'cors'
 import express from 'express'
+import { namesRouter } from './namesRoutes.js'
 import { leaderboardsRouter } from './routes.js'
 import { ALLOWED_GAMES } from './store.js'
 import { tournamentsRouter } from './tournamentsRoutes.js'
@@ -24,6 +25,7 @@ app.get('/health', (_req, res) => {
   res.json({ ok: true, games: ALLOWED_GAMES })
 })
 
+app.use('/names', namesRouter)
 app.use('/leaderboards', leaderboardsRouter)
 app.use('/tournaments', tournamentsRouter)
 

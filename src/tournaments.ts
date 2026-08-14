@@ -247,6 +247,9 @@ export function joinTournament(
     return { tournament: getTournamentDetail(id, now)!, player: existing }
   }
 
+  // Prevent joining under a name already used in another active tournament roster
+  // (global uniqueness is enforced by name claims in the route layer)
+
   const player: TournamentPlayer = { id: uid(), name: cleaned, joinedAt: now }
   t.players.push(player)
   writeStore(store)

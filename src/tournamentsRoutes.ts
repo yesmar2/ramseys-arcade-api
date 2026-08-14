@@ -1,5 +1,6 @@
 import { Router } from 'express'
 import { z } from 'zod'
+import { claimName } from './names.js'
 import { isAllowedGame } from './store.js'
 import {
   activeTournamentsForGame,
@@ -13,16 +14,29 @@ import {
 export const tournamentsRouter = Router()
 
 const nameSchema = z.string().min(1).max(12)
-const joinSchema = z.object({ name: nameSchema })
+const tokenSchema = z.string().min(1).max(128).optional()
+const joinSchema = z.object({ name: nameSchema, token: tokenSchema })
 const scoreSchema = z.object({
   name: nameSchema,
   game: z.string().min(1),
   score: z.number().int().positive().max(1_000_000),
+  token: tokenSchema,
 })
 const renameSchema = z.object({
   from: nameSchema,
   to: nameSchema,
+  fromToken: tokenSchema,
+  toToken: tokenSchema,
 })
+
+function claimError(err: unknown, res: import('express').Response) {
+  const status = (err as { status?: number }).status ?? 500
+  const code = (err as { code?: string }).code
+  res.status(status).json({
+    error: err instanceof Error ? err.message : 'Request failed',
+    code,
+  })
+}
 
 tournamentsRouter.get('/', (_req, res) => {
   res.json({ tournaments: listTournaments() })
@@ -34,8 +48,15 @@ tournamentsRouter.post('/rename-player', (req, res) => {
     res.status(400).json({ error: 'Invalid body', details: parsed.error.flatten() })
     return
   }
-  const result = renamePlayerAcrossTournaments(parsed.data.from, parsed.data.to)
-  res.json(result)
+  try {
+    // Must own the old name; new name must be free or already owned
+    claimName(parsed.data.from, parsed.data.fromToken)
+    const toClaim = claimName(parsed.data.to, parsed.data.toToken)
+    const result = renamePlayerAcrossTournaments(parsed.data.from, toClaim.name)
+    res.json({ ...result, token: toClaim.token, name: toClaim.name })
+  } catch (err) {
+    claimError(err, res)
+  }
 })
 
 tournamentsRouter.get('/active-for/:game', (req, res) => {
@@ -63,11 +84,11 @@ tournamentsRouter.post('/:id/join', (req, res) => {
     return
   }
   try {
-    const result = joinTournament(req.params.id, parsed.data.name)
-    res.status(201).json(result)
+    const claim = claimName(parsed.data.name, parsed.data.token)
+    const result = joinTournament(req.params.id, claim.name)
+    res.status(201).json({ ...result, name: claim.name, token: claim.token })
   } catch (err) {
-    const status = (err as { status?: number }).status ?? 500
-    res.status(status).json({ error: err instanceof Error ? err.message : 'Join failed' })
+    claimError(err, res)
   }
 })
 
@@ -78,11 +99,15 @@ tournamentsRouter.post('/:id/scores', (req, res) => {
     return
   }
   try {
-    const { name, game, score } = parsed.data
-    const result = submitTournamentScore(req.params.id, name, game, score)
-    res.status(201).json(result)
+    const claim = claimName(parsed.data.name, parsed.data.token)
+    const result = submitTournamentScore(
+      req.params.id,
+      claim.name,
+      parsed.data.game,
+      parsed.data.score,
+    )
+    res.status(201).json({ ...result, name: claim.name, token: claim.token })
   } catch (err) {
-    const status = (err as { status?: number }).status ?? 500
-    res.status(status).json({ error: err instanceof Error ? err.message : 'Submit failed' })
+    claimError(err, res)
   }
 })

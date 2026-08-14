@@ -186,10 +186,11 @@ export function rankForScore(
   period: Period = 'daily',
   now = Date.now(),
 ): number | null {
-  if (!qualifies(game, score, period, now)) return null
-  const board = getBoard(game, period, now)
-  const index = board.findIndex((e) => score > e.score)
-  return index === -1 ? board.length + 1 : index + 1
+  if (score <= 0) return null
+  // Place among every score in the period — not just the displayed top 10
+  const pool = sortByScore(filterByPeriod(historyFor(game), period, now))
+  const better = pool.filter((e) => e.score > score).length
+  return better + 1
 }
 
 export function ranksForScore(
@@ -220,7 +221,7 @@ export function addScore(
   rank: number | null
   ranks: Partial<Record<Period, number>>
 } {
-  const cleaned = name.trim().slice(0, 12) || 'Player'
+  const cleaned = name.trim().slice(0, 12).toUpperCase() || 'PLAYER'
   const entry: LeaderboardEntry = {
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     name: cleaned,
@@ -235,8 +236,8 @@ export function addScore(
 
   const ranks: Partial<Record<Period, number>> = {}
   for (const period of PERIODS) {
-    const board = getBoard(game, period)
-    const index = board.findIndex((e) => e.id === entry.id)
+    const pool = sortByScore(filterByPeriod(next, period))
+    const index = pool.findIndex((e) => e.id === entry.id)
     if (index !== -1) ranks[period] = index + 1
   }
 

@@ -3,6 +3,8 @@ import { z } from 'zod'
 import { claimName } from './names.js'
 import {
   addScore,
+  bestForName,
+  bestsForName,
   getBoard,
   isAllowedGame,
   isPeriod,
@@ -15,10 +17,23 @@ import {
 
 export const leaderboardsRouter = Router()
 
+leaderboardsRouter.get('/bests', (req, res) => {
+  const name = String(req.query.name ?? '').trim()
+  if (!name) {
+    res.status(400).json({ error: 'name query param required' })
+    return
+  }
+  res.json({
+    name: name.slice(0, 12).toUpperCase(),
+    bests: bestsForName(name),
+  })
+})
+
 const submitSchema = z.object({
   name: z.string().min(1).max(12),
   score: z.number().int().positive().max(1_000_000),
   token: z.string().min(1).max(128).optional(),
+  device: z.enum(['phone', 'tablet', 'desktop']).optional(),
 })
 
 function parsePeriod(raw: unknown): Period {
@@ -33,10 +48,12 @@ leaderboardsRouter.get('/:game', (req, res) => {
     return
   }
   const period = parsePeriod(req.query.period)
+  const name = typeof req.query.name === 'string' ? req.query.name : ''
   res.json({
     game,
     period,
     entries: getBoard(game, period),
+    you: name ? bestForName(game, name, period) : null,
   })
 })
 
@@ -95,14 +112,7 @@ leaderboardsRouter.post('/:game', (req, res) => {
     return
   }
 
-  const { name, score, token } = parsed.data
-  if (!qualifiesAny(game, score)) {
-    res.status(409).json({
-      error: 'Score does not qualify for the leaderboard',
-      entries: getBoard(game, 'daily'),
-    })
-    return
-  }
+  const { name, score, token, device } = parsed.data
 
   let claim: { name: string; token: string }
   try {
@@ -117,7 +127,7 @@ leaderboardsRouter.post('/:game', (req, res) => {
     return
   }
 
-  const result = addScore(game, claim.name, score)
+  const result = addScore(game, claim.name, score, device ?? 'desktop')
   res.status(201).json({
     game,
     entry: result.entry,

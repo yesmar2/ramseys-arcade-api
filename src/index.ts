@@ -2,6 +2,7 @@ import cors from 'cors'
 import express from 'express'
 import { namesRouter } from './namesRoutes.js'
 import { leaderboardsRouter } from './routes.js'
+import { seedLeaderboards } from './seedBoards.js'
 import { ALLOWED_GAMES } from './store.js'
 import { tournamentsRouter } from './tournamentsRoutes.js'
 
@@ -29,10 +30,14 @@ app.use('/names', namesRouter)
 app.use('/leaderboards', leaderboardsRouter)
 app.use('/tournaments', tournamentsRouter)
 
+if (seedLeaderboards()) {
+  console.log('Seeded leaderboards (replaced placeholder scores)')
+}
+
 app.use((_req, res) => {
   res.status(404).json({ error: 'Not found' })
 })
 
 app.listen(PORT, HOST, () => {
-  console.log(`Ramsey's Arcade API listening on http://${HOST}:${PORT}`)
+  console.log(`Archivade API listening on http://${HOST}:${PORT}`)
 })

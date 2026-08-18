@@ -6,7 +6,15 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const DATA_DIR = path.resolve(__dirname, '../data')
 const STORE_PATH = path.join(DATA_DIR, 'leaderboards.json')
 
-export const ALLOWED_GAMES = ['stacker', 'patriot', 'snake'] as const
+export const ALLOWED_GAMES = [
+  'stacker',
+  'patriot',
+  'snake',
+  'pop',
+  'dead-center',
+  'asteroids',
+  'simon',
+] as const
 export type GameSlug = (typeof ALLOWED_GAMES)[number]
 
 export const PERIODS = ['daily', 'weekly', 'monthly', 'all'] as const
@@ -15,21 +23,71 @@ export type Period = (typeof PERIODS)[number]
 /** Calendar periods evaluated in this timezone. */
 export const BOARD_TZ = 'America/New_York'
 
+export type DeviceType = 'phone' | 'tablet' | 'desktop'
+
 export type LeaderboardEntry = {
   id: string
   name: string
   score: number
   at: number
+  device: DeviceType
 }
 
-type Store = Record<string, LeaderboardEntry[]>
+export function isDeviceType(value: unknown): value is DeviceType {
+  return value === 'phone' || value === 'tablet' || value === 'desktop'
+}
 
-const MAX_BOARD = 10
+function normalizeEntry(raw: unknown): { entry: LeaderboardEntry | null; changed: boolean } {
+  if (!raw || typeof raw !== 'object') return { entry: null, changed: false }
+  const row = raw as Partial<LeaderboardEntry>
+  if (typeof row.id !== 'string' || typeof row.name !== 'string' || typeof row.score !== 'number') {
+    return { entry: null, changed: false }
+  }
+  const device = isDeviceType(row.device) ? row.device : 'desktop'
+  return {
+    entry: {
+      id: row.id,
+      name: row.name,
+      score: row.score,
+      at: typeof row.at === 'number' ? row.at : 0,
+      device,
+    },
+    changed: row.device !== device,
+  }
+}
+
+function normalizeBoard(raw: unknown): { entries: LeaderboardEntry[]; changed: boolean } {
+  if (!Array.isArray(raw)) return { entries: [], changed: false }
+  let changed = false
+  const entries: LeaderboardEntry[] = []
+  for (const row of raw) {
+    const next = normalizeEntry(row)
+    if (!next.entry) {
+      changed = true
+      continue
+    }
+    if (next.changed) changed = true
+    entries.push(next.entry)
+  }
+  return { entries, changed }
+}
+
+type Store = Record<GameSlug, LeaderboardEntry[]>
+
+const MAX_BOARD = 100
 const MAX_HISTORY = 500
 const RETAIN_DAYS = 100
 
 function emptyStore(): Store {
-  return { stacker: [], patriot: [], snake: [] }
+  return {
+    stacker: [],
+    patriot: [],
+    snake: [],
+    'pop': [],
+    'dead-center': [],
+    asteroids: [],
+    simon: [],
+  }
 }
 
 function ensureStore(): Store {
@@ -44,11 +102,32 @@ function ensureStore(): Store {
   try {
     const raw = fs.readFileSync(STORE_PATH, 'utf8')
     const parsed = JSON.parse(raw) as Store
-    return {
-      stacker: Array.isArray(parsed.stacker) ? parsed.stacker : [],
-      patriot: Array.isArray(parsed.patriot) ? parsed.patriot : [],
-      snake: Array.isArray(parsed.snake) ? parsed.snake : [],
+    const stacker = normalizeBoard(parsed.stacker)
+    const patriot = normalizeBoard(parsed.patriot)
+    const snake = normalizeBoard(parsed.snake)
+    const pop = normalizeBoard(parsed.pop)
+    const deadCenter = normalizeBoard(parsed['dead-center'])
+    const asteroids = normalizeBoard(parsed.asteroids)
+    const simon = normalizeBoard(parsed.simon)
+    const store: Store = {
+      stacker: stacker.entries,
+      patriot: patriot.entries,
+      snake: snake.entries,
+      pop: pop.entries,
+      'dead-center': deadCenter.entries,
+      asteroids: asteroids.entries,
+      simon: simon.entries,
     }
+    const changed =
+      stacker.changed ||
+      patriot.changed ||
+      snake.changed ||
+      pop.changed ||
+      deadCenter.changed ||
+      asteroids.changed ||
+      simon.changed
+    if (changed) writeStore(store)
+    return store
   } catch {
     return emptyStore()
   }
@@ -58,6 +137,28 @@ function writeStore(store: Store) {
   const tmp = `${STORE_PATH}.tmp`
   fs.writeFileSync(tmp, JSON.stringify(store, null, 2))
   fs.renameSync(tmp, STORE_PATH)
+}
+
+export function loadStore(): Store {
+  return ensureStore()
+}
+
+export function replaceAllBoards(next: Store) {
+  writeStore({
+    stacker: Array.isArray(next.stacker) ? next.stacker : [],
+    patriot: Array.isArray(next.patriot) ? next.patriot : [],
+    snake: Array.isArray(next.snake) ? next.snake : [],
+    'pop': Array.isArray(next['pop']) ? next['pop'] : [],
+    'dead-center': Array.isArray(next['dead-center']) ? next['dead-center'] : [],
+    asteroids: Array.isArray(next.asteroids) ? next.asteroids : [],
+    simon: Array.isArray(next.simon) ? next.simon : [],
+  })
+}
+
+export function replaceGameBoard(game: GameSlug, entries: LeaderboardEntry[]) {
+  const store = loadStore()
+  store[game] = Array.isArray(entries) ? entries : []
+  writeStore(store)
 }
 
 function sortByScore(entries: LeaderboardEntry[]) {
@@ -163,6 +264,32 @@ export function getBoard(
   return topBoard(filterByPeriod(historyFor(game), period, now))
 }
 
+export type YouEntry = LeaderboardEntry & { rank: number }
+
+export function bestForName(
+  game: GameSlug,
+  name: string,
+  period: Period = 'all',
+  now = Date.now(),
+): YouEntry | null {
+  const cleaned = name.trim().slice(0, 12).toUpperCase()
+  if (!cleaned) return null
+  const pool = sortByScore(filterByPeriod(historyFor(game), period, now))
+  const mine = pool.filter((e) => e.name === cleaned)
+  if (!mine.length) return null
+  const best = mine[0]
+  return { ...best, rank: pool.findIndex((e) => e.id === best.id) + 1 }
+}
+
+export function bestsForName(name: string): Partial<Record<GameSlug, number>> {
+  const out: Partial<Record<GameSlug, number>> = {}
+  for (const game of ALLOWED_GAMES) {
+    const row = bestForName(game, name, 'all')
+    if (row) out[game] = row.score
+  }
+  return out
+}
+
 export function qualifies(
   game: GameSlug,
   score: number,
@@ -215,6 +342,7 @@ export function addScore(
   game: GameSlug,
   name: string,
   score: number,
+  device: DeviceType = 'desktop',
 ): {
   board: LeaderboardEntry[]
   entry: LeaderboardEntry
@@ -227,6 +355,7 @@ export function addScore(
     name: cleaned,
     score,
     at: Date.now(),
+    device: isDeviceType(device) ? device : 'desktop',
   }
 
   const store = ensureStore()

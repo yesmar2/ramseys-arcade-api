@@ -290,6 +290,94 @@ export function bestsForName(name: string): Partial<Record<GameSlug, number>> {
   return out
 }
 
+/** Placement points: 1st = 100 … 100th = 1. */
+export function placePoints(place: number): number {
+  if (place < 1 || place > MAX_BOARD) return 0
+  return Math.max(0, 101 - place)
+}
+
+export type GlobalGamePlace = {
+  place: number
+  points: number
+}
+
+export type GlobalRankEntry = {
+  name: string
+  rank: number
+  score: number
+  games: number
+  byGame: Partial<Record<GameSlug, GlobalGamePlace>>
+}
+
+/** Unique best-per-name on an all-time board, ordered for placement. */
+function allTimePlacements(game: GameSlug): { name: string; place: number }[] {
+  const pool = sortByScore(filterByPeriod(historyFor(game), 'all'))
+  const seen = new Set<string>()
+  const bests: string[] = []
+  for (const entry of pool) {
+    if (seen.has(entry.name)) continue
+    seen.add(entry.name)
+    bests.push(entry.name)
+    if (bests.length >= MAX_BOARD) break
+  }
+  return bests.map((name, i) => ({ name, place: i + 1 }))
+}
+
+export function globalRanks(): GlobalRankEntry[] {
+  const byName = new Map<
+    string,
+    { score: number; games: number; byGame: Partial<Record<GameSlug, GlobalGamePlace>> }
+  >()
+
+  for (const game of ALLOWED_GAMES) {
+    for (const { name, place } of allTimePlacements(game)) {
+      const points = placePoints(place)
+      if (points <= 0) continue
+      const row = byName.get(name) ?? { score: 0, games: 0, byGame: {} }
+      row.score += points
+      row.games += 1
+      row.byGame[game] = { place, points }
+      byName.set(name, row)
+    }
+  }
+
+  const ranked = [...byName.entries()]
+    .map(([name, row]) => ({ name, ...row }))
+    .sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score
+      if (b.games !== a.games) return b.games - a.games
+      return a.name.localeCompare(b.name)
+    })
+
+  return ranked.map((row, i) => ({
+    name: row.name,
+    rank: i + 1,
+    score: row.score,
+    games: row.games,
+    byGame: row.byGame,
+  }))
+}
+
+export function rankForName(name: string): {
+  rank: number | null
+  score: number
+  totalPlayers: number
+  byGame: Partial<Record<GameSlug, GlobalGamePlace>>
+} {
+  const cleaned = name.trim().slice(0, 12).toUpperCase()
+  const all = globalRanks()
+  if (!cleaned) {
+    return { rank: null, score: 0, totalPlayers: all.length, byGame: {} }
+  }
+  const me = all.find((row) => row.name === cleaned)
+  return {
+    rank: me?.rank ?? null,
+    score: me?.score ?? 0,
+    totalPlayers: all.length,
+    byGame: me?.byGame ?? {},
+  }
+}
+
 export function qualifies(
   game: GameSlug,
   score: number,

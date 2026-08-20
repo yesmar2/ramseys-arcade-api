@@ -1,15 +1,18 @@
 import { Router } from 'express'
 import { z } from 'zod'
-import { claimName } from './names.js'
+import { accountFromRequest } from './auth.js'
+import { assertCanUseName } from './names.js'
 import {
   addScore,
   bestForName,
   bestsForName,
   getBoard,
+  globalRanks,
   isAllowedGame,
   isPeriod,
   qualifies,
   qualifiesAny,
+  rankForName,
   rankForScore,
   ranksForScore,
   type Period,
@@ -26,6 +29,23 @@ leaderboardsRouter.get('/bests', (req, res) => {
   res.json({
     name: name.slice(0, 12).toUpperCase(),
     bests: bestsForName(name),
+  })
+})
+
+leaderboardsRouter.get('/rank', (req, res) => {
+  const name = typeof req.query.name === 'string' ? req.query.name.trim() : ''
+  if (name) {
+    res.json(rankForName(name))
+    return
+  }
+  const limitRaw = Number(req.query.limit ?? 50)
+  const limit = Number.isFinite(limitRaw)
+    ? Math.min(100, Math.max(1, Math.floor(limitRaw)))
+    : 50
+  const all = globalRanks()
+  res.json({
+    totalPlayers: all.length,
+    entries: all.slice(0, limit),
   })
 })
 
@@ -113,10 +133,14 @@ leaderboardsRouter.post('/:game', (req, res) => {
   }
 
   const { name, score, token, device } = parsed.data
+  const account = accountFromRequest(req)
 
   let claim: { name: string; token: string }
   try {
-    claim = claimName(name, token)
+    claim = assertCanUseName(name, {
+      claimToken: token,
+      accountId: account?.id,
+    })
   } catch (err) {
     const status = (err as { status?: number }).status ?? 500
     const code = (err as { code?: string }).code

@@ -10,6 +10,7 @@ const CLAIMS_PATH = path.join(DATA_DIR, 'name-claims.json')
 export type NameClaim = {
   token: string
   claimedAt: number
+  accountId?: string
 }
 
 type ClaimsStore = {
@@ -61,21 +62,44 @@ export function getClaim(name: string): NameClaim | null {
   return ensureStore().claims[cleaned] ?? null
 }
 
-export function isNameAvailable(name: string, token?: string | null): boolean {
+export function isNameAvailable(
+  name: string,
+  token?: string | null,
+  accountId?: string | null,
+): boolean {
   const cleaned = cleanPlayerName(name)
   if (!cleaned) return false
   const claim = getClaim(cleaned)
   if (!claim) return true
-  return Boolean(token && token === claim.token)
+  if (token && token === claim.token) return true
+  if (accountId && claim.accountId === accountId) return true
+  return false
+}
+
+export type UseNameAuth = {
+  claimToken?: string | null
+  accountId?: string | null
 }
 
 /**
  * Claim a player name (or verify an existing claim).
- * Returns the claim token the client must store and send with later requests.
+ * Accepts guest claim token and/or owning account id.
  */
 export function claimName(
   name: string,
   token?: string | null,
+  accountId?: string | null,
+): { name: string; token: string; created: boolean } {
+  return assertCanUseName(name, { claimToken: token, accountId })
+}
+
+/**
+ * Authorize use of a name via guest token or owning session account.
+ * Creates the claim if the name is free.
+ */
+export function assertCanUseName(
+  name: string,
+  auth: UseNameAuth = {},
 ): { name: string; token: string; created: boolean } {
   const cleaned = cleanPlayerName(name)
   if (!cleaned) {
@@ -84,15 +108,26 @@ export function claimName(
 
   const store = ensureStore()
   const existing = store.claims[cleaned]
+  const { claimToken, accountId } = auth
 
   if (!existing) {
     const next: NameClaim = { token: mintToken(), claimedAt: Date.now() }
+    if (accountId) next.accountId = accountId
     store.claims[cleaned] = next
     writeStore(store)
     return { name: cleaned, token: next.token, created: true }
   }
 
-  if (token && token === existing.token) {
+  const tokenOk = Boolean(claimToken && claimToken === existing.token)
+  const accountOk = Boolean(accountId && existing.accountId === accountId)
+
+  if (tokenOk || accountOk) {
+    let dirty = false
+    if (accountId && tokenOk && !existing.accountId) {
+      existing.accountId = accountId
+      dirty = true
+    }
+    if (dirty) writeStore(store)
     return { name: cleaned, token: existing.token, created: false }
   }
 
@@ -103,7 +138,11 @@ export function claimName(
 }
 
 /** Verify ownership without creating a new claim. */
-export function assertOwnsName(name: string, token?: string | null): string {
+export function assertOwnsName(
+  name: string,
+  token?: string | null,
+  accountId?: string | null,
+): string {
   const cleaned = cleanPlayerName(name)
   if (!cleaned) {
     throw Object.assign(new Error('Name required'), { status: 400, code: 'NAME_REQUIRED' })
@@ -115,11 +154,82 @@ export function assertOwnsName(name: string, token?: string | null): string {
       code: 'NAME_UNCLAIMED',
     })
   }
-  if (!token || token !== existing.token) {
+  const tokenOk = Boolean(token && token === existing.token)
+  const accountOk = Boolean(accountId && existing.accountId === accountId)
+  if (!tokenOk && !accountOk) {
     throw Object.assign(new Error('That name is already taken'), {
       status: 409,
       code: 'NAME_TAKEN',
     })
   }
   return cleaned
+}
+
+/**
+ * Bind a name to an account. Requires claim token if the name is already
+ * claimed by a guest; free names are claimed for the account directly.
+ */
+export function linkNameToAccount(
+  name: string,
+  claimToken: string | null | undefined,
+  accountId: string,
+): { name: string; token: string; created: boolean } {
+  const cleaned = cleanPlayerName(name)
+  if (!cleaned) {
+    throw Object.assign(new Error('Name required'), { status: 400, code: 'NAME_REQUIRED' })
+  }
+  if (!accountId) {
+    throw Object.assign(new Error('Account required'), { status: 401, code: 'AUTH_REQUIRED' })
+  }
+
+  const store = ensureStore()
+  const existing = store.claims[cleaned]
+
+  if (!existing) {
+    const next: NameClaim = {
+      token: mintToken(),
+      claimedAt: Date.now(),
+      accountId,
+    }
+    store.claims[cleaned] = next
+    writeStore(store)
+    return { name: cleaned, token: next.token, created: true }
+  }
+
+  if (existing.accountId && existing.accountId !== accountId) {
+    throw Object.assign(new Error('That name is linked to another account'), {
+      status: 409,
+      code: 'NAME_TAKEN',
+    })
+  }
+
+  if (existing.accountId === accountId) {
+    return { name: cleaned, token: existing.token, created: false }
+  }
+
+  if (claimToken && claimToken === existing.token) {
+    existing.accountId = accountId
+    writeStore(store)
+    return { name: cleaned, token: existing.token, created: false }
+  }
+
+  throw Object.assign(
+    new Error('Sign in from the device that claimed this name, then link it'),
+    { status: 403, code: 'NAME_PROOF_REQUIRED' },
+  )
+}
+
+export function namesOwnedByAccount(
+  accountId: string,
+): { name: string; token: string }[] {
+  if (!accountId) return []
+  const store = ensureStore()
+  const out: { name: string; token: string }[] = []
+  for (const [name, claim] of Object.entries(store.claims)) {
+    if (claim.accountId === accountId) {
+      out.push({ name, token: claim.token })
+    }
+  }
+  out.sort((a, b) => a.name.localeCompare(b.name))
+  return out
 }

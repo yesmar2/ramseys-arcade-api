@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import { z } from 'zod'
-import { claimName } from './names.js'
+import { accountFromRequest } from './auth.js'
+import { assertCanUseName } from './names.js'
 import { isAllowedGame } from './store.js'
 import {
   activeTournamentsForGame,
@@ -49,9 +50,16 @@ tournamentsRouter.post('/rename-player', (req, res) => {
     return
   }
   try {
+    const account = accountFromRequest(req)
     // Must own the old name; new name must be free or already owned
-    claimName(parsed.data.from, parsed.data.fromToken)
-    const toClaim = claimName(parsed.data.to, parsed.data.toToken)
+    assertCanUseName(parsed.data.from, {
+      claimToken: parsed.data.fromToken,
+      accountId: account?.id,
+    })
+    const toClaim = assertCanUseName(parsed.data.to, {
+      claimToken: parsed.data.toToken,
+      accountId: account?.id,
+    })
     const result = renamePlayerAcrossTournaments(parsed.data.from, toClaim.name)
     res.json({ ...result, token: toClaim.token, name: toClaim.name })
   } catch (err) {
@@ -84,7 +92,11 @@ tournamentsRouter.post('/:id/join', (req, res) => {
     return
   }
   try {
-    const claim = claimName(parsed.data.name, parsed.data.token)
+    const account = accountFromRequest(req)
+    const claim = assertCanUseName(parsed.data.name, {
+      claimToken: parsed.data.token,
+      accountId: account?.id,
+    })
     const result = joinTournament(req.params.id, claim.name)
     res.status(201).json({ ...result, name: claim.name, token: claim.token })
   } catch (err) {
@@ -99,7 +111,11 @@ tournamentsRouter.post('/:id/scores', (req, res) => {
     return
   }
   try {
-    const claim = claimName(parsed.data.name, parsed.data.token)
+    const account = accountFromRequest(req)
+    const claim = assertCanUseName(parsed.data.name, {
+      claimToken: parsed.data.token,
+      accountId: account?.id,
+    })
     const result = submitTournamentScore(
       req.params.id,
       claim.name,

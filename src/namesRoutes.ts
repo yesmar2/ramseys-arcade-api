@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import { z } from 'zod'
-import { claimName, cleanPlayerName, isNameAvailable } from './names.js'
+import { accountFromRequest } from './auth.js'
+import { assertCanUseName, cleanPlayerName, isNameAvailable } from './names.js'
 
 export const namesRouter = Router()
 
@@ -16,9 +17,10 @@ namesRouter.get('/:name', (req, res) => {
     return
   }
   const token = typeof req.query.token === 'string' ? req.query.token : null
+  const account = accountFromRequest(req)
   res.json({
     name,
-    available: isNameAvailable(name, token),
+    available: isNameAvailable(name, token, account?.id),
   })
 })
 
@@ -29,7 +31,11 @@ namesRouter.post('/claim', (req, res) => {
     return
   }
   try {
-    const result = claimName(parsed.data.name, parsed.data.token)
+    const account = accountFromRequest(req)
+    const result = assertCanUseName(parsed.data.name, {
+      claimToken: parsed.data.token,
+      accountId: account?.id,
+    })
     res.status(result.created ? 201 : 200).json(result)
   } catch (err) {
     const status = (err as { status?: number }).status ?? 500

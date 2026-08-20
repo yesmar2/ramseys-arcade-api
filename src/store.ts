@@ -466,3 +466,26 @@ export function addScore(
     ranks,
   }
 }
+
+/** Rename a player across all game boards (history rows keep the new tag). */
+export function renamePlayerAcrossLeaderboards(
+  fromRaw: string,
+  toRaw: string,
+): { from: string; to: string; updated: number } {
+  const from = fromRaw.trim().slice(0, 12).toUpperCase()
+  const to = toRaw.trim().slice(0, 12).toUpperCase()
+  if (!from || !to || from === to) return { from, to, updated: 0 }
+
+  const store = ensureStore()
+  let updated = 0
+  for (const game of ALLOWED_GAMES) {
+    for (const entry of store[game] ?? []) {
+      if (entry.name === from) {
+        entry.name = to
+        updated += 1
+      }
+    }
+  }
+  if (updated) writeStore(store)
+  return { from, to, updated }
+}

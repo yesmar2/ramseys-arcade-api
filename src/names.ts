@@ -97,14 +97,17 @@ function releaseOtherAccountNames(
   store: ClaimsStore,
   accountId: string,
   keepName: string,
-) {
+): string[] {
+  const released: string[] = []
   for (const [otherName, claim] of Object.entries(store.claims)) {
     if (otherName === keepName) continue
     if (claim.accountId === accountId) {
-      delete claim.accountId
-      claim.token = mintToken()
+      released.push(otherName)
+      // Fully free the tag so it can be reclaimed (by this account or anyone).
+      delete store.claims[otherName]
     }
   }
+  return released
 }
 
 /**
@@ -185,14 +188,14 @@ export function assertOwnsName(
 
 /**
  * Bind a name to an account as its only active gamer tag.
- * Any previously linked tags for this account are released (and their
- * claim tokens rotated so other devices cannot keep using them).
+ * Previously linked tags are deleted (freed) and returned so callers can
+ * rename historical scores.
  */
 export function linkNameToAccount(
   name: string,
   claimToken: string | null | undefined,
   accountId: string,
-): { name: string; token: string; created: boolean } {
+): { name: string; token: string; created: boolean; previousNames: string[] } {
   const cleaned = cleanPlayerName(name)
   if (!cleaned) {
     throw Object.assign(new Error('Name required'), { status: 400, code: 'NAME_REQUIRED' })
@@ -224,6 +227,12 @@ export function linkNameToAccount(
   } else if (claimToken && claimToken === existing.token) {
     existing.accountId = accountId
     token = existing.token
+  } else if (!existing.accountId) {
+    // Orphan / previously released claim with no owner — adopt it.
+    existing.accountId = accountId
+    existing.token = mintToken()
+    existing.claimedAt = Date.now()
+    token = existing.token
   } else {
     throw Object.assign(
       new Error('Sign in from the device that claimed this name, then link it'),
@@ -231,11 +240,10 @@ export function linkNameToAccount(
     )
   }
 
-  // One active tag per account: release everything else.
-  releaseOtherAccountNames(store, accountId, cleaned)
+  const previousNames = releaseOtherAccountNames(store, accountId, cleaned)
 
   writeStore(store)
-  return { name: cleaned, token, created }
+  return { name: cleaned, token, created, previousNames }
 }
 
 /** Heal accounts that somehow own multiple tags; keep the newest. */
@@ -254,14 +262,10 @@ export function reconcileAccountNames(accountId: string): { name: string; token:
 
   owned.sort((a, b) => b.claimedAt - a.claimedAt)
   const keep = owned[0]
-  for (const extra of owned.slice(1)) {
-    const claim = store.claims[extra.name]
-    if (!claim) continue
-    delete claim.accountId
-    claim.token = mintToken()
-  }
+  releaseOtherAccountNames(store, accountId, keep.name)
   writeStore(store)
-  return [{ name: keep.name, token: keep.token }]
+  const kept = store.claims[keep.name]
+  return kept ? [{ name: keep.name, token: kept.token }] : []
 }
 
 export function namesOwnedByAccount(

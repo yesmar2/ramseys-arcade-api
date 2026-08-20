@@ -358,23 +358,46 @@ export function globalRanks(): GlobalRankEntry[] {
   }))
 }
 
-export function rankForName(name: string): {
+export function rankForName(
+  name: string,
+  neighborRadius = 2,
+): {
   rank: number | null
   score: number
   totalPlayers: number
   byGame: Partial<Record<GameSlug, GlobalGamePlace>>
+  nearby: GlobalRankEntry[]
 } {
   const cleaned = name.trim().slice(0, 12).toUpperCase()
   const all = globalRanks()
   if (!cleaned) {
-    return { rank: null, score: 0, totalPlayers: all.length, byGame: {} }
+    return {
+      rank: null,
+      score: 0,
+      totalPlayers: all.length,
+      byGame: {},
+      nearby: [],
+    }
   }
   const me = all.find((row) => row.name === cleaned)
+  if (!me) {
+    return {
+      rank: null,
+      score: 0,
+      totalPlayers: all.length,
+      byGame: {},
+      nearby: [],
+    }
+  }
+  const idx = me.rank - 1
+  const start = Math.max(0, idx - neighborRadius)
+  const end = Math.min(all.length, idx + neighborRadius + 1)
   return {
-    rank: me?.rank ?? null,
-    score: me?.score ?? 0,
+    rank: me.rank,
+    score: me.score,
     totalPlayers: all.length,
-    byGame: me?.byGame ?? {},
+    byGame: me.byGame,
+    nearby: all.slice(start, end),
   }
 }
 

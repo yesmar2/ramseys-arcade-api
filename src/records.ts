@@ -190,10 +190,12 @@ export function bestRecordForName(
 export function listGameRecords(game: GameSlug): {
   records: Array<RecordDef & { top: RecordEntry | null }>
 } {
-  const records = listRecordDefs(game).map((def) => {
-    const board = getRecordBoard(game, def.id, 'all')
-    return { ...def, top: board[0] ?? null }
-  })
+  const records = listRecordDefs(game)
+    .map((def) => {
+      const board = getRecordBoard(game, def.id, 'all')
+      return { ...def, top: board[0] ?? null }
+    })
+    .filter((row) => row.top != null)
   return { records }
 }
 

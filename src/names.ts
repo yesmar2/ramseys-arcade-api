@@ -3,6 +3,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { renamePlayerAcrossLeaderboards } from './store.js'
+import { renamePlayerAcrossRecords } from './records.js'
 import { renamePlayerAcrossTournaments } from './tournaments.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -90,6 +91,7 @@ export function migratePlayerScores(fromRaw: string, toRaw: string) {
   if (!from || !to || from === to) return { from, to, updated: 0 }
   const boards = renamePlayerAcrossLeaderboards(from, to)
   renamePlayerAcrossTournaments(from, to)
+  renamePlayerAcrossRecords(from, to)
   return boards
 }
 

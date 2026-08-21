@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url'
 import { authRouter } from './authRoutes.js'
 import { namesRouter } from './namesRoutes.js'
 import { leaderboardsRouter } from './routes.js'
+import { recordsRouter } from './recordsRoutes.js'
 import { seedLeaderboards } from './seedBoards.js'
 import { ALLOWED_GAMES } from './store.js'
 import { tournamentsRouter } from './tournamentsRoutes.js'
@@ -68,6 +69,7 @@ app.get('/health', (_req, res) => {
 app.use('/auth', authRouter)
 app.use('/names', namesRouter)
 app.use('/leaderboards', leaderboardsRouter)
+app.use('/records', recordsRouter)
 app.use('/tournaments', tournamentsRouter)
 
 if (seedLeaderboards()) {

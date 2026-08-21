@@ -10,6 +10,7 @@ import {
   verifyMagicLink,
 } from './auth.js'
 import { linkNameToAccount, namesOwnedByAccount } from './names.js'
+import { renamePlayerAcrossRecords } from './records.js'
 import { renamePlayerAcrossLeaderboards } from './store.js'
 import { renamePlayerAcrossTournaments } from './tournaments.js'
 
@@ -156,6 +157,7 @@ authRouter.post('/link-name', (req, res) => {
     for (const previous of linked.previousNames) {
       renamePlayerAcrossLeaderboards(previous, linked.name)
       renamePlayerAcrossTournaments(previous, linked.name)
+      renamePlayerAcrossRecords(previous, linked.name)
     }
     res.json({
       name: linked.name,

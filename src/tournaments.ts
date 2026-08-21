@@ -231,6 +231,7 @@ export function joinTournament(
   id: string,
   name: string,
   now = Date.now(),
+  playerId?: string | null,
 ): { tournament: ReturnType<typeof getTournamentDetail>; player: TournamentPlayer } {
   const store = ensureStore()
   const t = store.tournaments.find((x) => x.id === id)
@@ -241,14 +242,27 @@ export function joinTournament(
     throw Object.assign(new Error('Tournament has ended'), { status: 409 })
   }
 
-  const cleaned = name.trim().slice(0, 12).toUpperCase() || 'PLAYER'
-  const existing = t.players.find((p) => p.name === cleaned)
-  if (existing) {
-    return { tournament: getTournamentDetail(id, now)!, player: existing }
+  const cleaned = cleanName(name)
+  const existingByName = t.players.find((p) => p.name === cleaned)
+  if (existingByName) {
+    return { tournament: getTournamentDetail(id, now)!, player: existingByName }
   }
 
-  // Prevent joining under a name already used in another active tournament roster
-  // (global uniqueness is enforced by name claims in the route layer)
+  // Same device / seat after a gamer-tag rename: keep player id + scores.
+  if (playerId) {
+    const seat = t.players.find((p) => p.id === playerId)
+    if (seat) {
+      const conflict = t.players.find((p) => p.name === cleaned && p.id !== seat.id)
+      if (conflict) {
+        mergeTournamentPlayers(t, seat, conflict)
+        writeStore(store)
+        return { tournament: getTournamentDetail(id, now)!, player: conflict }
+      }
+      seat.name = cleaned
+      writeStore(store)
+      return { tournament: getTournamentDetail(id, now)!, player: seat }
+    }
+  }
 
   const player: TournamentPlayer = { id: uid(), name: cleaned, joinedAt: now }
   t.players.push(player)
@@ -326,6 +340,43 @@ function cleanName(name: string) {
   return name.trim().slice(0, 12).toUpperCase() || 'PLAYER'
 }
 
+type TournamentRecord = Tournament
+
+/** Merge `source` into `target` (best scores win), then drop `source`. */
+function mergeTournamentPlayers(
+  t: TournamentRecord,
+  source: TournamentPlayer,
+  target: TournamentPlayer,
+) {
+  if (source.id === target.id) return
+  for (const game of t.games) {
+    const sourceBest = t.scores
+      .filter((s) => s.playerId === source.id && s.game === game)
+      .reduce((max, s) => Math.max(max, s.score), 0)
+    if (sourceBest <= 0) continue
+
+    const targetBest = t.scores
+      .filter((s) => s.playerId === target.id && s.game === game)
+      .reduce((max, s) => Math.max(max, s.score), 0)
+
+    if (sourceBest > targetBest) {
+      t.scores = t.scores.filter((s) => !(s.playerId === target.id && s.game === game))
+      const latest = t.scores
+        .filter((s) => s.playerId === source.id && s.game === game)
+        .sort((a, b) => b.at - a.at)[0]
+      t.scores.push({
+        playerId: target.id,
+        game,
+        score: sourceBest,
+        at: latest?.at ?? Date.now(),
+      })
+    }
+  }
+
+  t.scores = t.scores.filter((s) => s.playerId !== source.id)
+  t.players = t.players.filter((p) => p.id !== source.id)
+}
+
 /**
  * Rename a guest player across all tournaments.
  * Scores stay attached (same player id). If the new name already exists
@@ -354,33 +405,7 @@ export function renamePlayerAcrossTournaments(fromRaw: string, toRaw: string): {
       continue
     }
 
-    // Merge: keep best score per game on target, remove source
-    for (const game of t.games) {
-      const sourceBest = t.scores
-        .filter((s) => s.playerId === source.id && s.game === game)
-        .reduce((max, s) => Math.max(max, s.score), 0)
-      if (sourceBest <= 0) continue
-
-      const targetBest = t.scores
-        .filter((s) => s.playerId === target.id && s.game === game)
-        .reduce((max, s) => Math.max(max, s.score), 0)
-
-      if (sourceBest > targetBest) {
-        t.scores = t.scores.filter((s) => !(s.playerId === target.id && s.game === game))
-        const latest = t.scores
-          .filter((s) => s.playerId === source.id && s.game === game)
-          .sort((a, b) => b.at - a.at)[0]
-        t.scores.push({
-          playerId: target.id,
-          game,
-          score: sourceBest,
-          at: latest?.at ?? Date.now(),
-        })
-      }
-    }
-
-    t.scores = t.scores.filter((s) => s.playerId !== source.id)
-    t.players = t.players.filter((p) => p.id !== source.id)
+    mergeTournamentPlayers(t, source, target)
     updatedTournaments.push(t.id)
   }
 

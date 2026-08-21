@@ -16,7 +16,11 @@ export const tournamentsRouter = Router()
 
 const nameSchema = z.string().min(1).max(12)
 const tokenSchema = z.string().min(1).max(128).optional()
-const joinSchema = z.object({ name: nameSchema, token: tokenSchema })
+const joinSchema = z.object({
+  name: nameSchema,
+  token: tokenSchema,
+  playerId: z.string().min(1).max(64).optional(),
+})
 const scoreSchema = z.object({
   name: nameSchema,
   game: z.string().min(1),
@@ -97,7 +101,7 @@ tournamentsRouter.post('/:id/join', (req, res) => {
       claimToken: parsed.data.token,
       accountId: account?.id,
     })
-    const result = joinTournament(req.params.id, claim.name)
+    const result = joinTournament(req.params.id, claim.name, Date.now(), parsed.data.playerId)
     res.status(201).json({ ...result, name: claim.name, token: claim.token })
   } catch (err) {
     claimError(err, res)

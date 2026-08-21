@@ -2,6 +2,8 @@ import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { renamePlayerAcrossLeaderboards } from './store.js'
+import { renamePlayerAcrossTournaments } from './tournaments.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const DATA_DIR = path.resolve(__dirname, '../data')
@@ -81,16 +83,14 @@ export type UseNameAuth = {
   accountId?: string | null
 }
 
-/**
- * Claim a player name (or verify an existing claim).
- * Accepts guest claim token and/or owning account id.
- */
-export function claimName(
-  name: string,
-  token?: string | null,
-  accountId?: string | null,
-): { name: string; token: string; created: boolean } {
-  return assertCanUseName(name, { claimToken: token, accountId })
+/** Move leaderboard + tournament rows from one tag to another. */
+export function migratePlayerScores(fromRaw: string, toRaw: string) {
+  const from = cleanPlayerName(fromRaw)
+  const to = cleanPlayerName(toRaw)
+  if (!from || !to || from === to) return { from, to, updated: 0 }
+  const boards = renamePlayerAcrossLeaderboards(from, to)
+  renamePlayerAcrossTournaments(from, to)
+  return boards
 }
 
 function releaseOtherAccountNames(
@@ -108,6 +108,30 @@ function releaseOtherAccountNames(
     }
   }
   return released
+}
+
+function releaseAndMigrateAccountNames(
+  store: ClaimsStore,
+  accountId: string,
+  keepName: string,
+): string[] {
+  const released = releaseOtherAccountNames(store, accountId, keepName)
+  for (const previous of released) {
+    migratePlayerScores(previous, keepName)
+  }
+  return released
+}
+
+/**
+ * Claim a player name (or verify an existing claim).
+ * Accepts guest claim token and/or owning account id.
+ */
+export function claimName(
+  name: string,
+  token?: string | null,
+  accountId?: string | null,
+): { name: string; token: string; created: boolean } {
+  return assertCanUseName(name, { claimToken: token, accountId })
 }
 
 /**
@@ -131,7 +155,7 @@ export function assertCanUseName(
     const next: NameClaim = { token: mintToken(), claimedAt: Date.now() }
     if (accountId) {
       next.accountId = accountId
-      releaseOtherAccountNames(store, accountId, cleaned)
+      releaseAndMigrateAccountNames(store, accountId, cleaned)
     }
     store.claims[cleaned] = next
     writeStore(store)
@@ -145,7 +169,7 @@ export function assertCanUseName(
     let dirty = false
     if (accountId && tokenOk && !existing.accountId) {
       existing.accountId = accountId
-      releaseOtherAccountNames(store, accountId, cleaned)
+      releaseAndMigrateAccountNames(store, accountId, cleaned)
       dirty = true
     }
     if (dirty) writeStore(store)
@@ -187,6 +211,66 @@ export function assertOwnsName(
 }
 
 /**
+ * Rename a gamer tag: prove ownership of `from`, claim `to`, move scores,
+ * and free the old claim.
+ */
+export function renameGamerTag(
+  fromRaw: string,
+  toRaw: string,
+  auth: UseNameAuth & { fromToken?: string | null } = {},
+): {
+  name: string
+  token: string
+  created: boolean
+  from: string
+  migratedFrom: string[]
+} {
+  const from = cleanPlayerName(fromRaw)
+  const to = cleanPlayerName(toRaw)
+  if (!from || !to) {
+    throw Object.assign(new Error('Name required'), { status: 400, code: 'NAME_REQUIRED' })
+  }
+
+  if (from === to) {
+    const same = assertCanUseName(to, {
+      claimToken: auth.claimToken,
+      accountId: auth.accountId,
+    })
+    return { ...same, from, migratedFrom: [] }
+  }
+
+  assertOwnsName(from, auth.fromToken, auth.accountId)
+
+  const toClaim = assertCanUseName(to, {
+    claimToken: auth.claimToken,
+    accountId: auth.accountId,
+  })
+
+  migratePlayerScores(from, to)
+
+  const store = ensureStore()
+  if (store.claims[from]) {
+    delete store.claims[from]
+    writeStore(store)
+  }
+
+  const migratedFrom = [from]
+  if (auth.accountId) {
+    const extras = releaseAndMigrateAccountNames(store, auth.accountId, to)
+    if (extras.length) writeStore(store)
+    migratedFrom.push(...extras)
+  }
+
+  return {
+    name: toClaim.name,
+    token: toClaim.token,
+    created: toClaim.created,
+    from,
+    migratedFrom: [...new Set(migratedFrom)],
+  }
+}
+
+/**
  * Bind a name to an account as its only active gamer tag.
  * Previously linked tags are deleted (freed) and returned so callers can
  * rename historical scores.
@@ -195,6 +279,8 @@ export function linkNameToAccount(
   name: string,
   claimToken: string | null | undefined,
   accountId: string,
+  previousName?: string | null,
+  previousToken?: string | null,
 ): { name: string; token: string; created: boolean; previousNames: string[] } {
   const cleaned = cleanPlayerName(name)
   if (!cleaned) {
@@ -202,6 +288,30 @@ export function linkNameToAccount(
   }
   if (!accountId) {
     throw Object.assign(new Error('Account required'), { status: 401, code: 'AUTH_REQUIRED' })
+  }
+
+  const prev = previousName ? cleanPlayerName(previousName) : ''
+  // Guest tag → account rename: move scores before claims are shuffled.
+  if (prev && prev !== cleaned) {
+    const prevClaim = getClaim(prev)
+    const canMigrate =
+      (prevClaim && prevClaim.accountId === accountId) ||
+      (prevClaim && previousToken && previousToken === prevClaim.token) ||
+      (prevClaim && claimToken && claimToken === prevClaim.token)
+    if (canMigrate) {
+      try {
+        return {
+          ...renameGamerTag(prev, cleaned, {
+            fromToken: previousToken ?? claimToken,
+            claimToken,
+            accountId,
+          }),
+          previousNames: [prev],
+        }
+      } catch {
+        /* fall through to normal link */
+      }
+    }
   }
 
   const store = ensureStore()
@@ -240,7 +350,7 @@ export function linkNameToAccount(
     )
   }
 
-  const previousNames = releaseOtherAccountNames(store, accountId, cleaned)
+  const previousNames = releaseAndMigrateAccountNames(store, accountId, cleaned)
 
   writeStore(store)
   return { name: cleaned, token, created, previousNames }
@@ -262,7 +372,7 @@ export function reconcileAccountNames(accountId: string): { name: string; token:
 
   owned.sort((a, b) => b.claimedAt - a.claimedAt)
   const keep = owned[0]
-  releaseOtherAccountNames(store, accountId, keep.name)
+  releaseAndMigrateAccountNames(store, accountId, keep.name)
   writeStore(store)
   const kept = store.claims[keep.name]
   return kept ? [{ name: keep.name, token: kept.token }] : []

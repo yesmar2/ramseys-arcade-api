@@ -30,6 +30,8 @@ const googleSchema = z.object({
 const linkNameSchema = z.object({
   name: z.string().min(1).max(12),
   claimToken: z.string().min(1).max(128).optional(),
+  previousName: z.string().min(1).max(12).optional(),
+  previousToken: z.string().min(1).max(128).optional(),
 })
 
 function authError(err: unknown, res: import('express').Response) {
@@ -147,7 +149,10 @@ authRouter.post('/link-name', (req, res) => {
       parsed.data.name,
       parsed.data.claimToken,
       account.id,
+      parsed.data.previousName,
+      parsed.data.previousToken,
     )
+    // Extra safety if link didn't migrate (idempotent if it did).
     for (const previous of linked.previousNames) {
       renamePlayerAcrossLeaderboards(previous, linked.name)
       renamePlayerAcrossTournaments(previous, linked.name)

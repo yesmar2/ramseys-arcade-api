@@ -5,6 +5,11 @@ import { fileURLToPath } from 'node:url'
 import { renamePlayerAcrossLeaderboards } from './store.js'
 import { renamePlayerAcrossRecords } from './records.js'
 import { renamePlayerAcrossTournaments } from './tournaments.js'
+import {
+  defaultAvatarId,
+  isAvatarId,
+  type AvatarId,
+} from './avatars.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const DATA_DIR = path.resolve(__dirname, '../data')
@@ -14,6 +19,7 @@ export type NameClaim = {
   token: string
   claimedAt: number
   accountId?: string
+  avatarId?: AvatarId
 }
 
 type ClaimsStore = {
@@ -243,6 +249,9 @@ export function renameGamerTag(
 
   assertOwnsName(from, auth.fromToken, auth.accountId)
 
+  const fromClaim = getClaim(from)
+  const fromAvatar = fromClaim?.avatarId
+
   const toClaim = assertCanUseName(to, {
     claimToken: auth.claimToken,
     accountId: auth.accountId,
@@ -251,10 +260,13 @@ export function renameGamerTag(
   migratePlayerScores(from, to)
 
   const store = ensureStore()
+  if (fromAvatar && store.claims[to] && !store.claims[to].avatarId) {
+    store.claims[to].avatarId = fromAvatar
+  }
   if (store.claims[from]) {
     delete store.claims[from]
-    writeStore(store)
   }
+  writeStore(store)
 
   const migratedFrom = [from]
   if (auth.accountId) {
@@ -382,6 +394,53 @@ export function reconcileAccountNames(accountId: string): { name: string; token:
 
 export function namesOwnedByAccount(
   accountId: string,
-): { name: string; token: string }[] {
-  return reconcileAccountNames(accountId)
+): { name: string; token: string; avatarId: AvatarId }[] {
+  return reconcileAccountNames(accountId).map(({ name, token }) => ({
+    name,
+    token,
+    avatarId: resolveAvatarId(name),
+  }))
+}
+
+/** Resolved avatar for a tag (saved or hash default). */
+export function resolveAvatarId(name: string): AvatarId {
+  const cleaned = cleanPlayerName(name)
+  if (!cleaned) return defaultAvatarId('')
+  const claim = getClaim(cleaned)
+  if (claim?.avatarId && isAvatarId(claim.avatarId)) return claim.avatarId
+  return defaultAvatarId(cleaned)
+}
+
+export function withAvatarId<T extends { name: string }>(
+  row: T,
+): T & { avatarId: AvatarId } {
+  return { ...row, avatarId: resolveAvatarId(row.name) }
+}
+
+export function withAvatarIds<T extends { name: string }>(
+  rows: T[],
+): Array<T & { avatarId: AvatarId }> {
+  return rows.map(withAvatarId)
+}
+
+export function setNameAvatar(
+  name: string,
+  avatarId: string,
+  auth: UseNameAuth = {},
+): { name: string; avatarId: AvatarId; token: string } {
+  if (!isAvatarId(avatarId)) {
+    throw Object.assign(new Error('Unknown avatar'), { status: 400, code: 'BAD_AVATAR' })
+  }
+  const cleaned = assertOwnsName(name, auth.claimToken, auth.accountId)
+  const store = ensureStore()
+  const claim = store.claims[cleaned]
+  if (!claim) {
+    throw Object.assign(new Error('Name is not claimed'), {
+      status: 409,
+      code: 'NAME_UNCLAIMED',
+    })
+  }
+  claim.avatarId = avatarId
+  writeStore(store)
+  return { name: cleaned, avatarId, token: claim.token }
 }

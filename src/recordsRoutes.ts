@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import { z } from 'zod'
 import { accountFromRequest } from './auth.js'
-import { assertCanUseName } from './names.js'
+import { assertCanUseName, withAvatarId, withAvatarIds } from './names.js'
 import {
   addRecord,
   bestRecordForName,
@@ -56,8 +56,13 @@ recordsRouter.get('/:game/:recordId', (req, res) => {
     game,
     record: def,
     period,
-    entries: getRecordBoard(game, recordId, period),
-    you: name ? bestRecordForName(game, recordId, name, period) : null,
+    entries: withAvatarIds(getRecordBoard(game, recordId, period)),
+    you: name
+      ? (() => {
+          const you = bestRecordForName(game, recordId, name, period)
+          return you ? withAvatarId(you) : null
+        })()
+      : null,
   })
 })
 
@@ -105,10 +110,10 @@ recordsRouter.post('/:game/:recordId', (req, res) => {
       game,
       record: def,
       improved: result.improved,
-      entry: result.entry,
+      entry: result.entry ? withAvatarId(result.entry) : null,
       rank: result.rank,
       ranks: result.ranks,
-      entries: result.board,
+      entries: withAvatarIds(result.board),
       name: claim.name,
       token: claim.token,
     })

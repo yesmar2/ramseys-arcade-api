@@ -6,7 +6,10 @@ import {
   cleanPlayerName,
   isNameAvailable,
   renameGamerTag,
+  resolveAvatarId,
+  setNameAvatar,
 } from './names.js'
+import { AVATAR_IDS } from './avatars.js'
 
 export const namesRouter = Router()
 
@@ -20,6 +23,11 @@ const renameSchema = z.object({
   to: z.string().min(1).max(12),
   fromToken: z.string().min(1).max(128).optional(),
   toToken: z.string().min(1).max(128).optional(),
+})
+
+const avatarSchema = z.object({
+  avatarId: z.string().min(1).max(32),
+  token: z.string().min(1).max(128).optional(),
 })
 
 namesRouter.post('/rename', (req, res) => {
@@ -57,7 +65,37 @@ namesRouter.get('/:name', (req, res) => {
   res.json({
     name,
     available: isNameAvailable(name, token, account?.id),
+    avatarId: resolveAvatarId(name),
+    avatars: AVATAR_IDS,
   })
+})
+
+namesRouter.put('/:name/avatar', (req, res) => {
+  const name = cleanPlayerName(req.params.name ?? '')
+  if (!name) {
+    res.status(400).json({ error: 'Name required' })
+    return
+  }
+  const parsed = avatarSchema.safeParse(req.body)
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Invalid body', details: parsed.error.flatten() })
+    return
+  }
+  try {
+    const account = accountFromRequest(req)
+    const result = setNameAvatar(name, parsed.data.avatarId, {
+      claimToken: parsed.data.token,
+      accountId: account?.id,
+    })
+    res.json(result)
+  } catch (err) {
+    const status = (err as { status?: number }).status ?? 500
+    const code = (err as { code?: string }).code
+    res.status(status).json({
+      error: err instanceof Error ? err.message : 'Could not set avatar',
+      code,
+    })
+  }
 })
 
 namesRouter.post('/claim', (req, res) => {

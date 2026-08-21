@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { withAvatarIds } from './names.js'
 import { isAllowedGame, type GameSlug } from './store.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -222,7 +223,7 @@ export function getTournamentDetail(id: string, now = Date.now()) {
   return {
     ...publicTournament(t, now),
     players: t.players.map((p) => ({ id: p.id, name: p.name, joinedAt: p.joinedAt })),
-    standings: computeStandings(t),
+    standings: withAvatarIds(computeStandings(t)),
     placePoints: PLACE_POINTS,
   }
 }

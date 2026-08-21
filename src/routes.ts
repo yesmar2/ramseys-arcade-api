@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import { z } from 'zod'
 import { accountFromRequest } from './auth.js'
-import { assertCanUseName } from './names.js'
+import { assertCanUseName, withAvatarId, withAvatarIds } from './names.js'
 import {
   addScore,
   bestForName,
@@ -29,13 +29,19 @@ leaderboardsRouter.get('/bests', (req, res) => {
   res.json({
     name: name.slice(0, 12).toUpperCase(),
     bests: bestsForName(name),
+    avatarId: withAvatarId({ name: name.slice(0, 12).toUpperCase() }).avatarId,
   })
 })
 
 leaderboardsRouter.get('/rank', (req, res) => {
   const name = typeof req.query.name === 'string' ? req.query.name.trim() : ''
   if (name) {
-    res.json(rankForName(name))
+    const data = rankForName(name)
+    res.json({
+      ...data,
+      avatarId: withAvatarId({ name: name.slice(0, 12).toUpperCase() }).avatarId,
+      nearby: withAvatarIds(data.nearby),
+    })
     return
   }
   const limitRaw = Number(req.query.limit ?? 50)
@@ -45,7 +51,7 @@ leaderboardsRouter.get('/rank', (req, res) => {
   const all = globalRanks()
   res.json({
     totalPlayers: all.length,
-    entries: all.slice(0, limit),
+    entries: withAvatarIds(all.slice(0, limit)),
   })
 })
 
@@ -72,8 +78,13 @@ leaderboardsRouter.get('/:game', (req, res) => {
   res.json({
     game,
     period,
-    entries: getBoard(game, period),
-    you: name ? bestForName(game, name, period) : null,
+    entries: withAvatarIds(getBoard(game, period)),
+    you: name
+      ? (() => {
+          const you = bestForName(game, name, period)
+          return you ? withAvatarId(you) : null
+        })()
+      : null,
   })
 })
 
@@ -154,11 +165,11 @@ leaderboardsRouter.post('/:game', (req, res) => {
   const result = addScore(game, claim.name, score, device ?? 'desktop')
   res.status(201).json({
     game,
-    entry: result.entry,
+    entry: withAvatarId(result.entry),
     rank: result.rank,
     ranks: result.ranks,
     period: 'daily',
-    entries: result.board,
+    entries: withAvatarIds(result.board),
     name: claim.name,
     token: claim.token,
   })

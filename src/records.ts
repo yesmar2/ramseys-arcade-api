@@ -54,7 +54,18 @@ function buildAsteroidsWaveRecords(): RecordDef[] {
   return defs
 }
 
-const RECORD_DEFS: RecordDef[] = [...buildAsteroidsWaveRecords()]
+const ASTEROIDS_HIGHEST_COMBO: RecordDef = {
+  id: 'highest-combo',
+  game: 'asteroids',
+  label: 'Highest combo',
+  direction: 'higher',
+  unit: 'count',
+}
+
+const RECORD_DEFS: RecordDef[] = [
+  ASTEROIDS_HIGHEST_COMBO,
+  ...buildAsteroidsWaveRecords(),
+]
 
 const DEFS_BY_KEY = new Map(
   RECORD_DEFS.map((def) => [`${def.game}::${def.id}`, def] as const),
@@ -292,4 +303,4 @@ export function renamePlayerAcrossRecords(
   return { from, to, updated }
 }
 
-export { ASTEROIDS_WAVE_MAX }
+export { ASTEROIDS_WAVE_MAX, ASTEROIDS_HIGHEST_COMBO }

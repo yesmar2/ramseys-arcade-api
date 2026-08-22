@@ -18,6 +18,8 @@ const STORE_PATH = path.join(DATA_DIR, 'records.json')
 const MAX_BOARD = 100
 const MAX_HISTORY = 500
 const ASTEROIDS_WAVE_MAX = 20
+const SNAKE_MILESTONE_MAX = 200
+const SNAKE_MILESTONE_STEP = 10
 
 export type RecordDirection = 'lower' | 'higher'
 
@@ -62,9 +64,28 @@ const ASTEROIDS_HIGHEST_COMBO: RecordDef = {
   unit: 'count',
 }
 
+function buildSnakeFastestRecords(): RecordDef[] {
+  const defs: RecordDef[] = []
+  for (
+    let score = SNAKE_MILESTONE_STEP;
+    score <= SNAKE_MILESTONE_MAX;
+    score += SNAKE_MILESTONE_STEP
+  ) {
+    defs.push({
+      id: `fastest-to-${score}`,
+      game: 'snake',
+      label: `Fastest to ${score}`,
+      direction: 'lower',
+      unit: 'ms',
+    })
+  }
+  return defs
+}
+
 const RECORD_DEFS: RecordDef[] = [
   ASTEROIDS_HIGHEST_COMBO,
   ...buildAsteroidsWaveRecords(),
+  ...buildSnakeFastestRecords(),
 ]
 
 const DEFS_BY_KEY = new Map(
@@ -86,6 +107,21 @@ export function isAsteroidsWaveTimeRecord(recordId: string): number | null {
   const wave = Number(match[1])
   if (!Number.isInteger(wave) || wave < 1 || wave > ASTEROIDS_WAVE_MAX) return null
   return wave
+}
+
+export function isSnakeFastestRecord(recordId: string): number | null {
+  const match = /^fastest-to-(\d+)$/.exec(recordId)
+  if (!match) return null
+  const score = Number(match[1])
+  if (
+    !Number.isInteger(score) ||
+    score < SNAKE_MILESTONE_STEP ||
+    score > SNAKE_MILESTONE_MAX ||
+    score % SNAKE_MILESTONE_STEP !== 0
+  ) {
+    return null
+  }
+  return score
 }
 
 function emptyStore(): RecordsStore {
@@ -201,12 +237,10 @@ export function bestRecordForName(
 export function listGameRecords(game: GameSlug): {
   records: Array<RecordDef & { top: RecordEntry | null }>
 } {
-  const records = listRecordDefs(game)
-    .map((def) => {
-      const board = getRecordBoard(game, def.id, 'all')
-      return { ...def, top: board[0] ?? null }
-    })
-    .filter((row) => row.top != null)
+  const records = listRecordDefs(game).map((def) => {
+    const board = getRecordBoard(game, def.id, 'all')
+    return { ...def, top: board[0] ?? null }
+  })
   return { records }
 }
 
@@ -303,4 +337,9 @@ export function renamePlayerAcrossRecords(
   return { from, to, updated }
 }
 
-export { ASTEROIDS_WAVE_MAX, ASTEROIDS_HIGHEST_COMBO }
+export {
+  ASTEROIDS_WAVE_MAX,
+  ASTEROIDS_HIGHEST_COMBO,
+  SNAKE_MILESTONE_MAX,
+  SNAKE_MILESTONE_STEP,
+}

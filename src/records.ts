@@ -18,8 +18,8 @@ const STORE_PATH = path.join(DATA_DIR, 'records.json')
 const MAX_BOARD = 100
 const MAX_HISTORY = 500
 const ASTEROIDS_WAVE_MAX = 20
-const SNAKE_MILESTONE_MAX = 200
-const SNAKE_MILESTONE_STEP = 10
+const SNAKE_LENGTH_MILESTONE_MAX = 100
+const SNAKE_LENGTH_MILESTONE_STEP = 10
 
 export type RecordDirection = 'lower' | 'higher'
 
@@ -64,17 +64,17 @@ const ASTEROIDS_HIGHEST_COMBO: RecordDef = {
   unit: 'count',
 }
 
-function buildSnakeFastestRecords(): RecordDef[] {
+function buildSnakeFastestLengthRecords(): RecordDef[] {
   const defs: RecordDef[] = []
   for (
-    let score = SNAKE_MILESTONE_STEP;
-    score <= SNAKE_MILESTONE_MAX;
-    score += SNAKE_MILESTONE_STEP
+    let length = SNAKE_LENGTH_MILESTONE_STEP;
+    length <= SNAKE_LENGTH_MILESTONE_MAX;
+    length += SNAKE_LENGTH_MILESTONE_STEP
   ) {
     defs.push({
-      id: `fastest-to-${score}`,
+      id: `fastest-length-${length}`,
       game: 'snake',
-      label: `Fastest to ${score}`,
+      label: `Fastest to length ${length}`,
       direction: 'lower',
       unit: 'ms',
     })
@@ -85,7 +85,7 @@ function buildSnakeFastestRecords(): RecordDef[] {
 const RECORD_DEFS: RecordDef[] = [
   ASTEROIDS_HIGHEST_COMBO,
   ...buildAsteroidsWaveRecords(),
-  ...buildSnakeFastestRecords(),
+  ...buildSnakeFastestLengthRecords(),
 ]
 
 const DEFS_BY_KEY = new Map(
@@ -109,19 +109,19 @@ export function isAsteroidsWaveTimeRecord(recordId: string): number | null {
   return wave
 }
 
-export function isSnakeFastestRecord(recordId: string): number | null {
-  const match = /^fastest-to-(\d+)$/.exec(recordId)
+export function isSnakeFastestLengthRecord(recordId: string): number | null {
+  const match = /^fastest-length-(\d+)$/.exec(recordId)
   if (!match) return null
-  const score = Number(match[1])
+  const length = Number(match[1])
   if (
-    !Number.isInteger(score) ||
-    score < SNAKE_MILESTONE_STEP ||
-    score > SNAKE_MILESTONE_MAX ||
-    score % SNAKE_MILESTONE_STEP !== 0
+    !Number.isInteger(length) ||
+    length < SNAKE_LENGTH_MILESTONE_STEP ||
+    length > SNAKE_LENGTH_MILESTONE_MAX ||
+    length % SNAKE_LENGTH_MILESTONE_STEP !== 0
   ) {
     return null
   }
-  return score
+  return length
 }
 
 function emptyStore(): RecordsStore {
@@ -340,6 +340,6 @@ export function renamePlayerAcrossRecords(
 export {
   ASTEROIDS_WAVE_MAX,
   ASTEROIDS_HIGHEST_COMBO,
-  SNAKE_MILESTONE_MAX,
-  SNAKE_MILESTONE_STEP,
+  SNAKE_LENGTH_MILESTONE_MAX,
+  SNAKE_LENGTH_MILESTONE_STEP,
 }

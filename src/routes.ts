@@ -4,12 +4,15 @@ import { accountFromRequest } from './auth.js'
 import { assertCanUseName, withAvatarId, withAvatarIds } from './names.js'
 import {
   addScore,
+  ALLOWED_GAMES,
   bestForName,
   bestsForName,
+  boardsSummary,
   getBoard,
   globalRanks,
   isAllowedGame,
   isPeriod,
+  PERIODS,
   qualifies,
   qualifiesAny,
   rankForName,
@@ -53,6 +56,24 @@ leaderboardsRouter.get('/rank', (req, res) => {
     totalPlayers: all.length,
     entries: withAvatarIds(all.slice(0, limit)),
   })
+})
+
+leaderboardsRouter.get('/summary', (req, res) => {
+  const limitRaw = Number(req.query.limit ?? 3)
+  const limit = Number.isFinite(limitRaw)
+    ? Math.min(10, Math.max(1, Math.floor(limitRaw)))
+    : 3
+  const boards = boardsSummary(limit)
+  const games = ALLOWED_GAMES.map((slug) => ({
+    slug,
+    byPeriod: Object.fromEntries(
+      PERIODS.map((period) => [
+        period,
+        { entries: withAvatarIds(boards[slug][period]) },
+      ]),
+    ),
+  }))
+  res.json({ limit, games })
 })
 
 const submitSchema = z.object({

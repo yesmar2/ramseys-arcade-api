@@ -264,6 +264,22 @@ export function getBoard(
   return topBoard(filterByPeriod(historyFor(game), period, now))
 }
 
+export type PeriodBoardSummary = Record<Period, LeaderboardEntry[]>
+
+/** Top N entries per game and period — one pass over local store. */
+export function boardsSummary(limit = 3, now = Date.now()): Record<GameSlug, PeriodBoardSummary> {
+  const capped = Math.min(10, Math.max(1, Math.floor(limit)) || 3)
+  const out = {} as Record<GameSlug, PeriodBoardSummary>
+  for (const game of ALLOWED_GAMES) {
+    const byPeriod = {} as PeriodBoardSummary
+    for (const period of PERIODS) {
+      byPeriod[period] = getBoard(game, period, now).slice(0, capped)
+    }
+    out[game] = byPeriod
+  }
+  return out
+}
+
 export type YouEntry = LeaderboardEntry & { rank: number }
 
 export function bestForName(

@@ -173,6 +173,22 @@ function writeStore(store: RecordsStore) {
   fs.renameSync(tmp, STORE_PATH)
 }
 
+export function replaceAllRecords(next: RecordsStore) {
+  const cleaned: RecordsStore = {}
+  for (const [key, rows] of Object.entries(next ?? {})) {
+    if (!Array.isArray(rows)) continue
+    cleaned[key] = rows
+      .map(normalizeEntry)
+      .filter((e): e is RecordEntry => e != null)
+  }
+  writeStore(cleaned)
+}
+
+export function isRecordsStoreEmpty() {
+  const store = ensureStore()
+  return Object.values(store).every((rows) => !rows?.length)
+}
+
 function sortEntries(entries: RecordEntry[], direction: RecordDirection) {
   return [...entries].sort((a, b) => {
     if (direction === 'lower') {

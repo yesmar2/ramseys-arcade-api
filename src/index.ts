@@ -8,6 +8,7 @@ import { namesRouter } from './namesRoutes.js'
 import { leaderboardsRouter } from './routes.js'
 import { recordsRouter } from './recordsRoutes.js'
 import { seedLeaderboards } from './seedBoards.js'
+import { seedRecords } from './seedRecords.js'
 import { ALLOWED_GAMES } from './store.js'
 import { tournamentsRouter } from './tournamentsRoutes.js'
 
@@ -72,8 +73,12 @@ app.use('/leaderboards', leaderboardsRouter)
 app.use('/records', recordsRouter)
 app.use('/tournaments', tournamentsRouter)
 
-if (seedLeaderboards()) {
-  console.log('Seeded leaderboards (replaced placeholder scores)')
+const forceSeed = process.env.SEED_FORCE === '1' || process.env.SEED_FORCE === 'true'
+if (seedLeaderboards(forceSeed)) {
+  console.log('Seeded leaderboards with sample arcade scores')
+}
+if (seedRecords(forceSeed)) {
+  console.log('Seeded record books with sample times')
 }
 
 app.use((_req, res) => {

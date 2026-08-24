@@ -1,4 +1,5 @@
 import { seedGame, seedLeaderboards } from './seedBoards.js'
+import { seedRecords } from './seedRecords.js'
 import { isAllowedGame } from './store.js'
 
 const game = process.argv[2]
@@ -11,5 +12,6 @@ if (game) {
   console.log(`Seeded ${game} leaderboard`)
 } else {
   seedLeaderboards(true)
-  console.log('Seeded leaderboards with sample arcade scores')
+  seedRecords(true)
+  console.log('Seeded leaderboards + records with ~110 arcade players')
 }

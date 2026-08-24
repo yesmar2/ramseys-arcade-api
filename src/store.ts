@@ -14,6 +14,7 @@ export const ALLOWED_GAMES = [
   'dead-center',
   'asteroids',
   'simon',
+  'crosswalk',
 ] as const
 export type GameSlug = (typeof ALLOWED_GAMES)[number]
 
@@ -87,6 +88,7 @@ function emptyStore(): Store {
     'dead-center': [],
     asteroids: [],
     simon: [],
+    crosswalk: [],
   }
 }
 
@@ -109,6 +111,7 @@ function ensureStore(): Store {
     const deadCenter = normalizeBoard(parsed['dead-center'])
     const asteroids = normalizeBoard(parsed.asteroids)
     const simon = normalizeBoard(parsed.simon)
+    const crosswalk = normalizeBoard(parsed.crosswalk)
     const store: Store = {
       stacker: stacker.entries,
       patriot: patriot.entries,
@@ -117,6 +120,7 @@ function ensureStore(): Store {
       'dead-center': deadCenter.entries,
       asteroids: asteroids.entries,
       simon: simon.entries,
+      crosswalk: crosswalk.entries,
     }
     const changed =
       stacker.changed ||
@@ -125,7 +129,9 @@ function ensureStore(): Store {
       pop.changed ||
       deadCenter.changed ||
       asteroids.changed ||
-      simon.changed
+      simon.changed ||
+      crosswalk.changed ||
+      !Array.isArray(parsed.crosswalk)
     if (changed) writeStore(store)
     return store
   } catch {
@@ -152,6 +158,7 @@ export function replaceAllBoards(next: Store) {
     'dead-center': Array.isArray(next['dead-center']) ? next['dead-center'] : [],
     asteroids: Array.isArray(next.asteroids) ? next.asteroids : [],
     simon: Array.isArray(next.simon) ? next.simon : [],
+    crosswalk: Array.isArray(next.crosswalk) ? next.crosswalk : [],
   })
 }
 

@@ -51,6 +51,7 @@ const GAME_BANDS: Record<GameSlug, ScoreProfile> = {
   'dead-center': { min: 420, max: 7420, step: 10 },
   asteroids: { min: 280, max: 14200, step: 10 },
   simon: { min: 2, max: 26 },
+  crosswalk: { min: 40, max: 1680, step: 10 },
 }
 
 function lerp(a: number, b: number, t: number) {
@@ -130,6 +131,7 @@ export function buildSeed(seed = 20260824) {
     'dead-center': [],
     asteroids: [],
     simon: [],
+    crosswalk: [],
   }
 
   NAMES.forEach((name, i) => {

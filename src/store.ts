@@ -325,9 +325,13 @@ export type GlobalRankEntry = {
   byGame: Partial<Record<GameSlug, GlobalGamePlace>>
 }
 
-/** Unique best-per-name on an all-time board, ordered for placement. */
-function allTimePlacements(game: GameSlug): { name: string; place: number }[] {
-  const pool = sortByScore(filterByPeriod(historyFor(game), 'all'))
+/** Unique best-per-name on a period board, ordered for placement. */
+function periodPlacements(
+  game: GameSlug,
+  period: Period,
+  now = Date.now(),
+): { name: string; place: number }[] {
+  const pool = sortByScore(filterByPeriod(historyFor(game), period, now))
   const seen = new Set<string>()
   const bests: string[] = []
   for (const entry of pool) {
@@ -339,14 +343,14 @@ function allTimePlacements(game: GameSlug): { name: string; place: number }[] {
   return bests.map((name, i) => ({ name, place: i + 1 }))
 }
 
-export function globalRanks(): GlobalRankEntry[] {
+export function globalRanks(period: Period = 'all', now = Date.now()): GlobalRankEntry[] {
   const byName = new Map<
     string,
     { score: number; games: number; byGame: Partial<Record<GameSlug, GlobalGamePlace>> }
   >()
 
   for (const game of ALLOWED_GAMES) {
-    for (const { name, place } of allTimePlacements(game)) {
+    for (const { name, place } of periodPlacements(game, period, now)) {
       const points = placePoints(place)
       if (points <= 0) continue
       const row = byName.get(name) ?? { score: 0, games: 0, byGame: {} }
@@ -377,6 +381,8 @@ export function globalRanks(): GlobalRankEntry[] {
 export function rankForName(
   name: string,
   neighborRadius = 2,
+  period: Period = 'all',
+  now = Date.now(),
 ): {
   rank: number | null
   score: number
@@ -385,7 +391,7 @@ export function rankForName(
   nearby: GlobalRankEntry[]
 } {
   const cleaned = name.trim().slice(0, 12).toUpperCase()
-  const all = globalRanks()
+  const all = globalRanks(period, now)
   if (!cleaned) {
     return {
       rank: null,

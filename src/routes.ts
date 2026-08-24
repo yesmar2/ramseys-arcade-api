@@ -37,11 +37,19 @@ leaderboardsRouter.get('/bests', (req, res) => {
 })
 
 leaderboardsRouter.get('/rank', (req, res) => {
+  const periodParam = req.query.period
+  if (periodParam != null && periodParam !== '' && !isPeriod(periodParam)) {
+    res.status(400).json({ error: 'Invalid period' })
+    return
+  }
+  const period: Period = isPeriod(periodParam) ? periodParam : 'all'
+
   const name = typeof req.query.name === 'string' ? req.query.name.trim() : ''
   if (name) {
-    const data = rankForName(name)
+    const data = rankForName(name, 2, period)
     res.json({
       ...data,
+      period,
       avatarId: withAvatarId({ name: name.slice(0, 12).toUpperCase() }).avatarId,
       nearby: withAvatarIds(data.nearby),
     })
@@ -51,8 +59,9 @@ leaderboardsRouter.get('/rank', (req, res) => {
   const limit = Number.isFinite(limitRaw)
     ? Math.min(100, Math.max(1, Math.floor(limitRaw)))
     : 50
-  const all = globalRanks()
+  const all = globalRanks(period)
   res.json({
+    period,
     totalPlayers: all.length,
     entries: withAvatarIds(all.slice(0, limit)),
   })

@@ -86,5 +86,5 @@ app.use((_req, res) => {
 })
 
 app.listen(PORT, HOST, () => {
-  console.log(`Archivade API listening on http://${HOST}:${PORT}`)
+  console.log(`Acralia API listening on http://${HOST}:${PORT}`)
 })

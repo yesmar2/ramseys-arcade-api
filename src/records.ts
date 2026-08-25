@@ -295,14 +295,24 @@ export function addRecord(
   const key = boardKey(game, recordId)
   const store = ensureStore()
   const history = [...(store[key] ?? [])]
-  const previousBest = sortEntries(
-    history.filter((e) => e.name === cleaned),
-    def.direction,
-  )[0]
-
-  if (previousBest && !isBetter(value, previousBest.score, def.direction)) {
+  const mine = history.filter((e) => e.name === cleaned)
+  const now = Date.now()
+  // Accept when this improves all-time OR any calendar-period best (Today /
+  // This week / This month). All-time-only gating left period boards empty
+  // whenever the player already had a stronger older result.
+  const improvesPeriod = (period: Period) => {
+    const best = sortEntries(filterByPeriod(mine, period, now), def.direction)[0]
+    return !best || isBetter(value, best.score, def.direction)
+  }
+  if (
+    !improvesPeriod('all') &&
+    !improvesPeriod('daily') &&
+    !improvesPeriod('weekly') &&
+    !improvesPeriod('monthly')
+  ) {
     const board = getRecordBoard(game, recordId, 'all')
     const you = bestRecordForName(game, recordId, cleaned, 'all')
+    const previousBest = sortEntries(mine, def.direction)[0] ?? null
     return {
       improved: false,
       entry: previousBest,

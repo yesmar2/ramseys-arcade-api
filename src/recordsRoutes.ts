@@ -113,6 +113,7 @@ recordsRouter.post('/:game/:recordId', (req, res) => {
       entry: result.entry ? withAvatarId(result.entry) : null,
       rank: result.rank,
       ranks: result.ranks,
+      totalEntries: result.totalEntries,
       entries: withAvatarIds(result.board),
       name: claim.name,
       token: claim.token,

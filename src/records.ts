@@ -282,6 +282,7 @@ export function addRecord(
   rank: number | null
   ranks: Partial<Record<Period, number>>
   board: RecordEntry[]
+  totalEntries: number
 } {
   const def = getRecordDef(game, recordId)
   if (!def) {
@@ -319,6 +320,7 @@ export function addRecord(
       rank: you?.rank ?? null,
       ranks: {},
       board,
+      totalEntries: history.length,
     }
   }
 
@@ -348,6 +350,7 @@ export function addRecord(
     rank: ranks.all ?? ranks.daily ?? null,
     ranks,
     board: getRecordBoard(game, recordId, 'all'),
+    totalEntries: store[key]?.length ?? 0,
   }
 }
 

@@ -488,26 +488,41 @@ export function addScore(
   entry: LeaderboardEntry
   rank: number | null
   ranks: Partial<Record<Period, number>>
+  previousBestRanks: Partial<Record<Period, number>>
+  bestRanks: Partial<Record<Period, number>>
 } {
   const cleaned = name.trim().slice(0, 12).toUpperCase() || 'PLAYER'
+  const now = Date.now()
+  const previousBestRanks: Partial<Record<Period, number>> = {}
+  for (const period of PERIODS) {
+    const prior = bestForName(game, cleaned, period, now)
+    if (prior) previousBestRanks[period] = prior.rank
+  }
+
   const entry: LeaderboardEntry = {
-    id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    id: `${now}-${Math.random().toString(36).slice(2, 8)}`,
     name: cleaned,
     score,
-    at: Date.now(),
+    at: now,
     device: isDeviceType(device) ? device : 'desktop',
   }
 
   const store = ensureStore()
-  const next = pruneHistory([...(store[game] ?? []), entry])
+  const next = pruneHistory([...(store[game] ?? []), entry], now)
   store[game] = next
   writeStore(store)
 
   const ranks: Partial<Record<Period, number>> = {}
   for (const period of PERIODS) {
-    const pool = sortByScore(filterByPeriod(next, period))
+    const pool = sortByScore(filterByPeriod(next, period, now))
     const index = pool.findIndex((e) => e.id === entry.id)
     if (index !== -1) ranks[period] = index + 1
+  }
+
+  const bestRanks: Partial<Record<Period, number>> = {}
+  for (const period of PERIODS) {
+    const best = bestForName(game, cleaned, period, now)
+    if (best) bestRanks[period] = best.rank
   }
 
   const rank = ranks.daily ?? ranks.weekly ?? ranks.monthly ?? ranks.all ?? null
@@ -516,6 +531,8 @@ export function addScore(
     entry,
     rank,
     ranks,
+    previousBestRanks,
+    bestRanks,
   }
 }
 

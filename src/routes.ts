@@ -198,6 +198,8 @@ leaderboardsRouter.post('/:game', (req, res) => {
     entry: withAvatarId(result.entry),
     rank: result.rank,
     ranks: result.ranks,
+    previousBestRanks: result.previousBestRanks,
+    bestRanks: result.bestRanks,
     period: 'daily',
     entries: withAvatarIds(result.board),
     name: claim.name,

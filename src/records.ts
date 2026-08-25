@@ -270,6 +270,16 @@ export function listGameRecords(game: GameSlug): {
   return { records }
 }
 
+function wouldQualifyForBoard(
+  entries: RecordEntry[],
+  value: number,
+  direction: RecordDirection,
+): boolean {
+  const sorted = sortEntries(entries, direction)
+  if (sorted.length < MAX_BOARD) return true
+  return isBetter(value, sorted[MAX_BOARD - 1].score, direction)
+}
+
 export function addRecord(
   game: GameSlug,
   recordId: string,
@@ -298,19 +308,28 @@ export function addRecord(
   const history = [...(store[key] ?? [])]
   const mine = history.filter((e) => e.name === cleaned)
   const now = Date.now()
-  // Accept when this improves all-time OR any calendar-period best (Today /
-  // This week / This month). All-time-only gating left period boards empty
-  // whenever the player already had a stronger older result.
+  // Accept when this improves your period best OR the score would land on a
+  // period board (top MAX_BOARD) — even if it is not your personal best.
   const improvesPeriod = (period: Period) => {
     const best = sortEntries(filterByPeriod(mine, period, now), def.direction)[0]
     return !best || isBetter(value, best.score, def.direction)
   }
-  if (
-    !improvesPeriod('all') &&
-    !improvesPeriod('daily') &&
-    !improvesPeriod('weekly') &&
-    !improvesPeriod('monthly')
-  ) {
+  const qualifiesOnBoard = (period: Period) =>
+    wouldQualifyForBoard(
+      filterByPeriod(history, period, now),
+      value,
+      def.direction,
+    )
+  const accept =
+    improvesPeriod('all') ||
+    improvesPeriod('daily') ||
+    improvesPeriod('weekly') ||
+    improvesPeriod('monthly') ||
+    qualifiesOnBoard('all') ||
+    qualifiesOnBoard('daily') ||
+    qualifiesOnBoard('weekly') ||
+    qualifiesOnBoard('monthly')
+  if (!accept) {
     const board = getRecordBoard(game, recordId, 'all')
     const you = bestRecordForName(game, recordId, cleaned, 'all')
     const previousBest = sortEntries(mine, def.direction)[0] ?? null

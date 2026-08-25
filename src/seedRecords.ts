@@ -51,32 +51,31 @@ function entry(
   }
 }
 
-/** Wave clear times in ms — early waves quick, later waves slower. */
+/** Wave clear times in ms — seeded slow so normal clears beat them easily. */
 function waveTimeMs(wave: number, skill: number, rand: () => number) {
-  const base = 14_000 + wave * 9_500 + wave * wave * 420
-  const elite = 0.55 + skill * 0.35
-  const jitter = 0.88 + rand() * 0.28
-  return Math.max(8_000, Math.round(base * (1.55 - elite) * jitter))
+  const baseSec = 36 + wave * 11 + wave * wave * 0.75
+  const slack = 1.08 + (1 - skill) * 0.42 + rand() * 0.22
+  return Math.round(baseSec * 1000 * slack)
 }
 
-/** Fastest-to-length times in ms. */
+/** Fastest-to-length times in ms — seeded slow for testing. */
 function lengthTimeMs(length: number, skill: number, rand: () => number) {
   const foods = Math.max(1, length - 3)
-  const secPerFood = 1.15 - skill * 0.45 + rand() * 0.35
-  return Math.max(4_000, Math.round(foods * secPerFood * 1000))
+  const secPerFood = 2.4 - skill * 0.75 + rand() * 0.55
+  return Math.max(8_000, Math.round(foods * secPerFood * 1000))
 }
 
 function comboValue(skill: number, rand: () => number) {
-  const raw = 2 + Math.pow(skill, 1.1) * 36 * (0.75 + rand() * 0.5)
-  return Math.max(2, Math.min(48, Math.round(raw)))
+  const raw = 2 + skill * 5 + rand() * 4
+  return Math.max(2, Math.min(10, Math.round(raw)))
 }
 
 function directStreakValue(skill: number, rand: () => number) {
-  const raw = 2 + Math.pow(skill, 1.05) * 22 * (0.7 + rand() * 0.55)
-  return Math.max(2, Math.min(28, Math.round(raw)))
+  const raw = 2 + skill * 4 + rand() * 3
+  return Math.max(2, Math.min(8, Math.round(raw)))
 }
 
-export function buildRecordsSeed(seed = 20260824) {
+export function buildRecordsSeed(seed = 20260825) {
   const rand = mulberry32(seed ^ 0x9e3779b9)
   const store: Record<string, RecordEntry[]> = {}
 
@@ -87,11 +86,11 @@ export function buildRecordsSeed(seed = 20260824) {
     return { name, skill, device, i }
   })
 
-  // Highest combo — top ~55 players
+  // Highest combo — a few modest scores
   const comboKey = 'asteroids::highest-combo'
   store[comboKey] = players
-    .filter((p) => p.skill > 0.28 || rand() < 0.2)
-    .slice(0, 70)
+    .filter((p) => p.skill > 0.15 || rand() < 0.35)
+    .slice(0, 12)
     .map((p) =>
       entry(
         p.name,
@@ -104,8 +103,8 @@ export function buildRecordsSeed(seed = 20260824) {
   // Patriot perfect-hit streak
   const patriotStreakKey = 'patriot::direct-streak'
   store[patriotStreakKey] = players
-    .filter((p) => p.skill > 0.22 || rand() < 0.25)
-    .slice(0, 65)
+    .filter((p) => p.skill > 0.12 || rand() < 0.35)
+    .slice(0, 12)
     .map((p) =>
       entry(
         p.name,
@@ -119,11 +118,8 @@ export function buildRecordsSeed(seed = 20260824) {
   for (let wave = 1; wave <= ASTEROIDS_WAVE_MAX; wave++) {
     const key = `asteroids::wave-time-${wave}`
     const depthNeed = wave / ASTEROIDS_WAVE_MAX
-    const pool = players.filter((p) => p.skill >= depthNeed * 0.55 - 0.05)
-    const count = Math.max(
-      8,
-      Math.min(55, Math.round(48 - wave * 1.6 + rand() * 6)),
-    )
+    const pool = players.filter((p) => p.skill >= depthNeed * 0.35 - 0.1)
+    const count = Math.max(4, Math.min(14, Math.round(10 - wave * 0.2 + rand() * 3)))
     store[key] = pool.slice(0, count).map((p) =>
       entry(
         p.name,
@@ -142,11 +138,8 @@ export function buildRecordsSeed(seed = 20260824) {
   ) {
     const key = `snake::fastest-length-${length}`
     const need = length / SNAKE_LENGTH_MILESTONE_MAX
-    const pool = players.filter((p) => p.skill >= need * 0.5)
-    const count = Math.max(
-      10,
-      Math.min(60, Math.round(52 - length * 0.28 + rand() * 5)),
-    )
+    const pool = players.filter((p) => p.skill >= need * 0.35)
+    const count = Math.max(4, Math.min(12, Math.round(10 - length * 0.04 + rand() * 2)))
     store[key] = pool.slice(0, count).map((p) =>
       entry(
         p.name,

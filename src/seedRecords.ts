@@ -4,6 +4,7 @@ import {
   listRecordDefs,
   replaceAllRecords,
   SNAKE_LENGTH_MILESTONE_MAX,
+  SNAKE_LENGTH_MILESTONE_MIN,
   SNAKE_LENGTH_MILESTONE_STEP,
   type RecordEntry,
 } from './records.js'
@@ -116,7 +117,7 @@ export function buildRecordsSeed(seed = 20260824) {
 
   // Snake length milestones
   for (
-    let length = SNAKE_LENGTH_MILESTONE_STEP;
+    let length = SNAKE_LENGTH_MILESTONE_MIN;
     length <= SNAKE_LENGTH_MILESTONE_MAX;
     length += SNAKE_LENGTH_MILESTONE_STEP
   ) {

@@ -18,6 +18,7 @@ const STORE_PATH = path.join(DATA_DIR, 'records.json')
 const MAX_BOARD = 100
 const MAX_HISTORY = 500
 const ASTEROIDS_WAVE_MAX = 20
+const SNAKE_LENGTH_MILESTONE_MIN = 20
 const SNAKE_LENGTH_MILESTONE_MAX = 100
 const SNAKE_LENGTH_MILESTONE_STEP = 10
 
@@ -67,7 +68,7 @@ const ASTEROIDS_HIGHEST_COMBO: RecordDef = {
 function buildSnakeFastestLengthRecords(): RecordDef[] {
   const defs: RecordDef[] = []
   for (
-    let length = SNAKE_LENGTH_MILESTONE_STEP;
+    let length = SNAKE_LENGTH_MILESTONE_MIN;
     length <= SNAKE_LENGTH_MILESTONE_MAX;
     length += SNAKE_LENGTH_MILESTONE_STEP
   ) {
@@ -115,7 +116,7 @@ export function isSnakeFastestLengthRecord(recordId: string): number | null {
   const length = Number(match[1])
   if (
     !Number.isInteger(length) ||
-    length < SNAKE_LENGTH_MILESTONE_STEP ||
+    length < SNAKE_LENGTH_MILESTONE_MIN ||
     length > SNAKE_LENGTH_MILESTONE_MAX ||
     length % SNAKE_LENGTH_MILESTONE_STEP !== 0
   ) {
@@ -356,6 +357,7 @@ export function renamePlayerAcrossRecords(
 export {
   ASTEROIDS_WAVE_MAX,
   ASTEROIDS_HIGHEST_COMBO,
+  SNAKE_LENGTH_MILESTONE_MIN,
   SNAKE_LENGTH_MILESTONE_MAX,
   SNAKE_LENGTH_MILESTONE_STEP,
 }

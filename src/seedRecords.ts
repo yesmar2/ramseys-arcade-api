@@ -71,6 +71,11 @@ function comboValue(skill: number, rand: () => number) {
   return Math.max(2, Math.min(48, Math.round(raw)))
 }
 
+function directStreakValue(skill: number, rand: () => number) {
+  const raw = 2 + Math.pow(skill, 1.05) * 22 * (0.7 + rand() * 0.55)
+  return Math.max(2, Math.min(28, Math.round(raw)))
+}
+
 export function buildRecordsSeed(seed = 20260824) {
   const rand = mulberry32(seed ^ 0x9e3779b9)
   const store: Record<string, RecordEntry[]> = {}
@@ -91,6 +96,20 @@ export function buildRecordsSeed(seed = 20260824) {
       entry(
         p.name,
         comboValue(p.skill, rand),
+        stamp(Math.floor(rand() * 40), rand),
+        p.device,
+      ),
+    )
+
+  // Patriot perfect-hit streak
+  const patriotStreakKey = 'patriot::direct-streak'
+  store[patriotStreakKey] = players
+    .filter((p) => p.skill > 0.22 || rand() < 0.25)
+    .slice(0, 65)
+    .map((p) =>
+      entry(
+        p.name,
+        directStreakValue(p.skill, rand),
         stamp(Math.floor(rand() * 40), rand),
         p.device,
       ),
@@ -142,6 +161,7 @@ export function buildRecordsSeed(seed = 20260824) {
   const allowed = new Set(
     listRecordDefs('asteroids')
       .concat(listRecordDefs('snake'))
+      .concat(listRecordDefs('patriot'))
       .map((d) => `${d.game}::${d.id}`),
   )
   for (const key of Object.keys(store)) {

@@ -65,6 +65,14 @@ const ASTEROIDS_HIGHEST_COMBO: RecordDef = {
   unit: 'count',
 }
 
+const PATRIOT_DIRECT_STREAK: RecordDef = {
+  id: 'direct-streak',
+  game: 'patriot',
+  label: 'Perfect hits in a row',
+  direction: 'higher',
+  unit: 'count',
+}
+
 function buildSnakeFastestLengthRecords(): RecordDef[] {
   const defs: RecordDef[] = []
   for (
@@ -85,6 +93,7 @@ function buildSnakeFastestLengthRecords(): RecordDef[] {
 
 const RECORD_DEFS: RecordDef[] = [
   ASTEROIDS_HIGHEST_COMBO,
+  PATRIOT_DIRECT_STREAK,
   ...buildAsteroidsWaveRecords(),
   ...buildSnakeFastestLengthRecords(),
 ]
@@ -357,6 +366,7 @@ export function renamePlayerAcrossRecords(
 export {
   ASTEROIDS_WAVE_MAX,
   ASTEROIDS_HIGHEST_COMBO,
+  PATRIOT_DIRECT_STREAK,
   SNAKE_LENGTH_MILESTONE_MIN,
   SNAKE_LENGTH_MILESTONE_MAX,
   SNAKE_LENGTH_MILESTONE_STEP,

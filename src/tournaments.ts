@@ -4,6 +4,9 @@ import { fileURLToPath } from 'node:url'
 import { withAvatarIds } from './names.js'
 import { ALLOWED_GAMES, BOARD_TZ, isAllowedGame, type GameSlug } from './store.js'
 
+/** Games eligible for rolling daily/weekly events (excludes unfinished titles). */
+const EVENT_GAMES = ALLOWED_GAMES.filter((g) => g !== 'crosswalk')
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const DATA_DIR = path.resolve(__dirname, '../data')
 const STORE_PATH = path.join(DATA_DIR, 'tournaments.json')
@@ -188,12 +191,16 @@ function mulberry32(seed: number) {
 
 function pickGames(seed: number, count: number): GameSlug[] {
   const rng = mulberry32(seed)
-  const pool = [...ALLOWED_GAMES]
+  const pool = [...EVENT_GAMES]
   for (let i = pool.length - 1; i > 0; i--) {
     const j = Math.floor(rng() * (i + 1))
     ;[pool[i], pool[j]] = [pool[j], pool[i]]
   }
   return pool.slice(0, Math.min(count, pool.length))
+}
+
+function eventGamesReady(games: GameSlug[]) {
+  return games.length > 0 && games.every((g) => EVENT_GAMES.includes(g))
 }
 
 function gameLabel(slug: GameSlug) {
@@ -262,19 +269,28 @@ function pruneCadenceHistory(store: Store): boolean {
   return true
 }
 
+function upsertRollingEvent(store: Store, next: Tournament): boolean {
+  const idx = store.tournaments.findIndex((t) => t.id === next.id)
+  if (idx < 0) {
+    store.tournaments.push(next)
+    return true
+  }
+  const cur = store.tournaments[idx]!
+  if (eventGamesReady(cur.games)) return false
+  // Rebuild if a prior seed included an unfinished game (e.g. Crosswalk).
+  store.tournaments[idx] = {
+    ...next,
+    players: cur.players,
+    scores: cur.scores.filter((s) => next.games.includes(s.game)),
+  }
+  return true
+}
+
 /** Ensure current daily + weekly official events exist (ET calendar). */
 function ensureRollingEvents(store: Store, now = Date.now()): boolean {
   let changed = false
-  const daily = buildDailyEvent(now)
-  if (!store.tournaments.some((t) => t.id === daily.id)) {
-    store.tournaments.push(daily)
-    changed = true
-  }
-  const weekly = buildWeeklyEvent(now)
-  if (!store.tournaments.some((t) => t.id === weekly.id)) {
-    store.tournaments.push(weekly)
-    changed = true
-  }
+  if (upsertRollingEvent(store, buildDailyEvent(now))) changed = true
+  if (upsertRollingEvent(store, buildWeeklyEvent(now))) changed = true
   if (pruneCadenceHistory(store)) changed = true
   return changed
 }

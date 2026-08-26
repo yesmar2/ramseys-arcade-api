@@ -1,4 +1,4 @@
-# Acralia API
+# Fordriva API
 
 Leaderboard + tournament backend for [ramseys-arcade](https://github.com/yesmar2/ramseys-arcade).
 

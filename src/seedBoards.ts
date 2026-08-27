@@ -96,11 +96,22 @@ function stampForBucket(
 }
 
 function pickBucket(i: number, rand: () => number): 'today' | 'week' | 'month' | 'older' {
-  // Spread: plenty on today / week so period tabs feel alive
+  // Elites (low index / high skill) stay off today so the all-time podium
+  // isn’t mirrored on the daily board. Mid/casual names fill today.
+  const rankT = i / Math.max(1, NAMES.length - 1)
+  if (rankT < 0.14) {
+    return rand() < 0.4 ? 'month' : 'older'
+  }
+  if (rankT < 0.32) {
+    const roll = Math.floor(rand() * 100)
+    if (roll < 55) return 'week'
+    if (roll < 85) return 'month'
+    return 'older'
+  }
   const roll = (i * 17 + Math.floor(rand() * 100)) % 100
-  if (roll < 22) return 'today'
-  if (roll < 48) return 'week'
-  if (roll < 78) return 'month'
+  if (roll < 34) return 'today'
+  if (roll < 58) return 'week'
+  if (roll < 82) return 'month'
   return 'older'
 }
 
@@ -120,7 +131,7 @@ function entry(
   }
 }
 
-export function buildSeed(seed = 20260824) {
+export function buildSeed(seed = 20260827) {
   const rand = mulberry32(seed)
   const games = Object.keys(GAME_BANDS) as GameSlug[]
   const store: Record<GameSlug, LeaderboardEntry[]> = {

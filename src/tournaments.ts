@@ -4,8 +4,8 @@ import { fileURLToPath } from 'node:url'
 import { withAvatarIds } from './names.js'
 import { ALLOWED_GAMES, BOARD_TZ, isAllowedGame, type GameSlug } from './store.js'
 
-/** Games eligible for rolling daily/weekly events (excludes unfinished titles). */
-const EVENT_GAMES = ALLOWED_GAMES.filter((g) => g !== 'crosswalk')
+/** Games eligible for rolling daily/weekly events (excludes unfinished / non-event titles). */
+const EVENT_GAMES = ALLOWED_GAMES.filter((g) => g !== 'crosswalk' && g !== 'spotter')
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const DATA_DIR = path.resolve(__dirname, '../data')
@@ -87,6 +87,7 @@ const GAME_LABELS: Record<GameSlug, string> = {
   asteroids: 'Asteroids',
   simon: 'Simon',
   crosswalk: 'Crosswalk',
+  spotter: 'Spotter',
 }
 
 function ymdInTz(ms: number, timeZone = BOARD_TZ): Ymd {
@@ -200,7 +201,7 @@ function pickGames(seed: number, count: number): GameSlug[] {
 }
 
 function eventGamesReady(games: GameSlug[]) {
-  return games.length > 0 && games.every((g) => EVENT_GAMES.includes(g))
+  return games.length > 0 && games.every((g) => (EVENT_GAMES as readonly string[]).includes(g))
 }
 
 function gameLabel(slug: GameSlug) {

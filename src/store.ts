@@ -15,6 +15,7 @@ export const ALLOWED_GAMES = [
   'asteroids',
   'simon',
   'crosswalk',
+  'stride',
   'spotter',
 ] as const
 export type GameSlug = (typeof ALLOWED_GAMES)[number]
@@ -91,6 +92,7 @@ function emptyStore(): Store {
     simon: [],
     crosswalk: [],
     spotter: [],
+    stride: [],
   }
 }
 
@@ -114,6 +116,7 @@ function ensureStore(): Store {
     const asteroids = normalizeBoard(parsed.asteroids)
     const simon = normalizeBoard(parsed.simon)
     const crosswalk = normalizeBoard(parsed.crosswalk)
+    const stride = normalizeBoard(parsed.stride)
     const spotter = normalizeBoard(parsed.spotter)
     const store: Store = {
       stacker: stacker.entries,
@@ -125,6 +128,7 @@ function ensureStore(): Store {
       simon: simon.entries,
       crosswalk: crosswalk.entries,
       spotter: spotter.entries,
+      stride: stride.entries,
     }
     const changed =
       stacker.changed ||
@@ -135,7 +139,10 @@ function ensureStore(): Store {
       asteroids.changed ||
       simon.changed ||
       crosswalk.changed ||
-      !Array.isArray(parsed.crosswalk)
+      stride.changed ||
+      spotter.changed ||
+      !Array.isArray(parsed.crosswalk) ||
+      !Array.isArray(parsed.stride)
     if (changed) writeStore(store)
     return store
   } catch {
@@ -163,6 +170,7 @@ export function replaceAllBoards(next: Store) {
     asteroids: Array.isArray(next.asteroids) ? next.asteroids : [],
     simon: Array.isArray(next.simon) ? next.simon : [],
     crosswalk: Array.isArray(next.crosswalk) ? next.crosswalk : [],
+    stride: Array.isArray(next.stride) ? next.stride : [],
     spotter: Array.isArray(next.spotter) ? next.spotter : [],
   })
 }

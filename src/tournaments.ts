@@ -5,7 +5,7 @@ import { withAvatarIds } from './names.js'
 import { ALLOWED_GAMES, BOARD_TZ, isAllowedGame, type GameSlug } from './store.js'
 
 /** Games eligible for rolling daily/weekly events (excludes unfinished / non-event titles). */
-const EVENT_GAMES = ALLOWED_GAMES.filter((g) => g !== 'crosswalk' && g !== 'spotter')
+const EVENT_GAMES = ALLOWED_GAMES.filter((g) => g !== 'crosswalk' && g !== 'spotter' && g !== 'stride')
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const DATA_DIR = path.resolve(__dirname, '../data')
@@ -87,6 +87,7 @@ const GAME_LABELS: Record<GameSlug, string> = {
   asteroids: 'Asteroids',
   simon: 'Simon',
   crosswalk: 'Crosswalk',
+  stride: 'Stride',
   spotter: 'Spotter',
 }
 

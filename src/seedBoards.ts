@@ -52,6 +52,7 @@ const GAME_BANDS: Record<GameSlug, ScoreProfile> = {
   asteroids: { min: 280, max: 14200, step: 10 },
   simon: { min: 2, max: 26 },
   crosswalk: { min: 40, max: 1680, step: 10 },
+  stride: { min: 12, max: 420, step: 1 },
   spotter: { min: 940_000, max: 999_500, step: 1000 },
 }
 
@@ -144,6 +145,7 @@ export function buildSeed(seed = 20260827) {
     asteroids: [],
     simon: [],
     crosswalk: [],
+    stride: [],
     spotter: [],
   }
 

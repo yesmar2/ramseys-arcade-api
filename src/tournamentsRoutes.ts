@@ -5,11 +5,15 @@ import { assertCanUseName } from './names.js'
 import { isAllowedGame } from './store.js'
 import {
   activeTournamentsForGame,
+  createTournament,
   getTournamentDetail,
   joinTournament,
   listTournaments,
   renamePlayerAcrossTournaments,
   submitTournamentScore,
+  type CreateTournamentInput,
+  type TournamentFormat,
+  type TournamentListFilter,
 } from './tournaments.js'
 
 export const tournamentsRouter = Router()
@@ -34,6 +38,17 @@ const renameSchema = z.object({
   toToken: tokenSchema,
 })
 
+const communityFormats = ['open', 'attempt-limited', 'single-run', 'cumulative'] as const
+
+const createSchema = z.object({
+  title: z.string().min(3).max(60),
+  blurb: z.string().max(280).optional(),
+  game: z.string().min(1),
+  format: z.enum(communityFormats),
+  maxAttempts: z.number().int().min(2).max(20).optional(),
+  durationHours: z.number().int().min(1).max(168),
+})
+
 function claimError(err: unknown, res: import('express').Response) {
   const status = (err as { status?: number }).status ?? 500
   const code = (err as { code?: string }).code
@@ -43,8 +58,45 @@ function claimError(err: unknown, res: import('express').Response) {
   })
 }
 
-tournamentsRouter.get('/', (_req, res) => {
-  res.json({ tournaments: listTournaments() })
+tournamentsRouter.get('/', (req, res) => {
+  const raw = typeof req.query.source === 'string' ? req.query.source : 'all'
+  const filter: TournamentListFilter =
+    raw === 'official' || raw === 'community' ? raw : 'all'
+  res.json({ tournaments: listTournaments(Date.now(), filter) })
+})
+
+tournamentsRouter.post('/', (req, res) => {
+  const parsed = createSchema.safeParse(req.body)
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Invalid body', details: parsed.error.flatten() })
+    return
+  }
+  const account = accountFromRequest(req)
+  if (!account) {
+    res.status(401).json({ error: 'Sign in to create events' })
+    return
+  }
+  if (!isAllowedGame(parsed.data.game)) {
+    res.status(400).json({ error: 'Unknown game' })
+    return
+  }
+  try {
+    const input: CreateTournamentInput = {
+      title: parsed.data.title,
+      blurb: parsed.data.blurb,
+      game: parsed.data.game,
+      format: parsed.data.format as Exclude<TournamentFormat, 'place-points'>,
+      maxAttempts: parsed.data.maxAttempts,
+      durationHours: parsed.data.durationHours,
+    }
+    const tournament = createTournament(input, {
+      accountId: account.id,
+      email: account.email,
+    })
+    res.status(201).json({ tournament })
+  } catch (err) {
+    claimError(err, res)
+  }
 })
 
 tournamentsRouter.post('/rename-player', (req, res) => {
@@ -81,7 +133,10 @@ tournamentsRouter.get('/active-for/:game', (req, res) => {
 })
 
 tournamentsRouter.get('/:id', (req, res) => {
-  const detail = getTournamentDetail(req.params.id)
+  const playerName =
+    typeof req.query.playerName === 'string' ? req.query.playerName : undefined
+  const game = typeof req.query.game === 'string' ? req.query.game : undefined
+  const detail = getTournamentDetail(req.params.id, Date.now(), { playerName, game })
   if (!detail) {
     res.status(404).json({ error: 'Tournament not found' })
     return

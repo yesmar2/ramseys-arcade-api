@@ -13,6 +13,24 @@ const STORE_PATH = path.join(DATA_DIR, 'tournaments.json')
 
 export type TournamentStatus = 'upcoming' | 'active' | 'ended'
 export type TournamentCadence = 'daily' | 'weekly'
+export type TournamentFormat =
+  | 'open'
+  | 'place-points'
+  | 'attempt-limited'
+  | 'single-run'
+  | 'cumulative'
+export type TournamentScoring = 'best' | 'sum'
+export type TournamentVisibility = 'public' | 'unlisted'
+
+export type TournamentRules = {
+  maxAttempts?: number
+  scoring?: TournamentScoring
+}
+
+export type TournamentCreator = {
+  accountId: string
+  email: string
+}
 
 export type TournamentPlayer = {
   id: string
@@ -25,6 +43,8 @@ export type TournamentScore = {
   game: GameSlug
   score: number
   at: number
+  /** 1-based attempt index when multiple runs are stored */
+  attempt?: number
 }
 
 export type Tournament = {
@@ -38,6 +58,10 @@ export type Tournament = {
   official: boolean
   /** Rolling official cadence, if any */
   cadence?: TournamentCadence | null
+  format?: TournamentFormat
+  rules?: TournamentRules
+  createdBy?: TournamentCreator | null
+  visibility?: TournamentVisibility
   players: TournamentPlayer[]
   scores: TournamentScore[]
 }
@@ -56,7 +80,10 @@ export type StandingRow = {
   totalPoints: number
   gamesPlayed: number
   /** Place points earned per game */
-  byGame: Record<string, { score: number | null; place: number | null; points: number }>
+  byGame: Record<
+    string,
+    { score: number | null; place: number | null; points: number; attemptsUsed?: number }
+  >
 }
 
 /** Mario Kart–style place points (place → points). */
@@ -68,6 +95,18 @@ export const PLACE_POINTS: Record<number, number> = {
   5: 2,
   6: 1,
 }
+
+export const FORMAT_LABELS: Record<TournamentFormat, string> = {
+  open: 'Open · Best score',
+  'place-points': 'Place points',
+  'attempt-limited': 'Limited attempts',
+  'single-run': 'One run only',
+  cumulative: 'Total score',
+}
+
+const MAX_COMMUNITY_EVENTS_PER_ACCOUNT = 5
+const MAX_COMMUNITY_DURATION_HOURS = 168
+const MIN_COMMUNITY_DURATION_HOURS = 1
 
 function placePoints(place: number | null): number {
   if (place == null) return 0
@@ -209,6 +248,59 @@ function gameLabel(slug: GameSlug) {
   return GAME_LABELS[slug] ?? slug
 }
 
+function normalizeTournament(t: Tournament): Tournament {
+  const format =
+    t.format ??
+    (t.cadence === 'weekly' || t.games.length > 1 ? 'place-points' : 'open')
+  return {
+    ...t,
+    format,
+    rules: t.rules ?? {},
+    visibility: t.visibility ?? 'public',
+    createdBy: t.createdBy ?? null,
+  }
+}
+
+export function resolveFormat(t: Tournament): TournamentFormat {
+  return normalizeTournament(t).format ?? 'open'
+}
+
+export function getMaxAttempts(t: Tournament): number {
+  const format = resolveFormat(t)
+  if (format === 'single-run') return 1
+  if (format === 'attempt-limited') {
+    return Math.max(1, Math.min(20, t.rules?.maxAttempts ?? 3))
+  }
+  return Number.POSITIVE_INFINITY
+}
+
+function playerAttempts(t: Tournament, playerId: string, game: GameSlug): number {
+  return t.scores.filter((s) => s.playerId === playerId && s.game === game).length
+}
+
+function aggregatePlayerGameScore(
+  t: Tournament,
+  playerId: string,
+  game: GameSlug,
+): number | null {
+  const rows = t.scores.filter((s) => s.playerId === playerId && s.game === game)
+  if (rows.length === 0) return null
+  const format = resolveFormat(t)
+  if (format === 'cumulative') return rows.reduce((sum, s) => sum + s.score, 0)
+  return Math.max(...rows.map((s) => s.score))
+}
+
+function defaultCommunityBlurb(game: GameSlug, format: TournamentFormat, maxAttempts?: number) {
+  const label = gameLabel(game)
+  if (format === 'single-run') return `One run only in ${label}. Make it count!`
+  if (format === 'attempt-limited') {
+    const n = maxAttempts ?? 3
+    return `${n} attempts in ${label}. Best score counts.`
+  }
+  if (format === 'cumulative') return `Every run in ${label} adds up. Highest total wins.`
+  return `Community event for ${label}. Best score wins.`
+}
+
 function buildDailyEvent(now = Date.now()): Tournament {
   const { y, m, d } = ymdInTz(now)
   const key = dateKey(y, m, d)
@@ -224,6 +316,10 @@ function buildDailyEvent(now = Date.now()): Tournament {
     endsAt: zonedDateTimeToUtc(next.y, next.m, next.d, 0, 0),
     official: true,
     cadence: 'daily',
+    format: 'open',
+    rules: {},
+    visibility: 'public',
+    createdBy: null,
     players: [],
     scores: [],
   }
@@ -243,6 +339,10 @@ function buildWeeklyEvent(now = Date.now()): Tournament {
     endsAt: zonedDateTimeToUtc(end.y, end.m, end.d, 0, 0),
     official: true,
     cadence: 'weekly',
+    format: 'place-points',
+    rules: {},
+    visibility: 'public',
+    createdBy: null,
     players: [],
     scores: [],
   }
@@ -319,7 +419,7 @@ function ensureStore(now = Date.now()): Store {
       writeStore(store)
       return store
     }
-    store = { tournaments: parsed.tournaments }
+    store = { tournaments: parsed.tournaments.map(normalizeTournament) }
   } catch {
     store = emptyStore(now)
     writeStore(store)
@@ -346,52 +446,64 @@ export function tournamentStatus(t: Tournament, now = Date.now()): TournamentSta
 }
 
 function publicTournament(t: Tournament, now = Date.now()) {
+  const normalized = normalizeTournament(t)
+  const community = !normalized.official && Boolean(normalized.createdBy)
   return {
-    id: t.id,
-    title: t.title,
-    blurb: t.blurb,
-    games: t.games,
-    startsAt: t.startsAt,
-    endsAt: t.endsAt,
-    official: t.official,
-    cadence: t.cadence ?? null,
-    status: tournamentStatus(t, now),
-    playerCount: t.players.length,
+    id: normalized.id,
+    title: normalized.title,
+    blurb: normalized.blurb,
+    games: normalized.games,
+    startsAt: normalized.startsAt,
+    endsAt: normalized.endsAt,
+    official: normalized.official,
+    cadence: normalized.cadence ?? null,
+    format: normalized.format!,
+    formatLabel: FORMAT_LABELS[normalized.format!],
+    rules: normalized.rules ?? {},
+    community,
+    createdBy: normalized.createdBy ? { accountId: normalized.createdBy.accountId } : null,
+    visibility: normalized.visibility ?? 'public',
+    status: tournamentStatus(normalized, now),
+    playerCount: normalized.players.length,
   }
 }
 
-export function listTournaments(now = Date.now()) {
+export type TournamentListFilter = 'all' | 'official' | 'community'
+
+export function listTournaments(now = Date.now(), filter: TournamentListFilter = 'all') {
   const store = ensureStore(now)
-  return store.tournaments
-    .map((t) => publicTournament(t, now))
-    .sort((a, b) => {
-      const order = { active: 0, upcoming: 1, ended: 2 } as const
-      const statusDiff = order[a.status] - order[b.status]
-      if (statusDiff !== 0) return statusDiff
-      const cadenceRank = (c: string | null | undefined) =>
-        c === 'daily' ? 0 : c === 'weekly' ? 1 : 2
-      const cadenceDiff = cadenceRank(a.cadence) - cadenceRank(b.cadence)
-      if (cadenceDiff !== 0) return cadenceDiff
-      return a.startsAt - b.startsAt
-    })
+  let list = store.tournaments.map((t) => publicTournament(t, now))
+  if (filter === 'official') list = list.filter((t) => t.official)
+  if (filter === 'community') list = list.filter((t) => t.community)
+  return list.sort((a, b) => {
+    const order = { active: 0, upcoming: 1, ended: 2 } as const
+    const statusDiff = order[a.status] - order[b.status]
+    if (statusDiff !== 0) return statusDiff
+    const cadenceRank = (c: string | null | undefined) =>
+      c === 'daily' ? 0 : c === 'weekly' ? 1 : 2
+    const cadenceDiff = cadenceRank(a.cadence) - cadenceRank(b.cadence)
+    if (cadenceDiff !== 0) return cadenceDiff
+    return a.startsAt - b.startsAt
+  })
 }
 
 export function getTournament(id: string): Tournament | null {
-  return ensureStore().tournaments.find((t) => t.id === id) ?? null
+  const t = ensureStore().tournaments.find((x) => x.id === id)
+  return t ? normalizeTournament(t) : null
 }
 
 export function computeStandings(t: Tournament): StandingRow[] {
+  const normalized = normalizeTournament(t)
   const byGamePlaces: Record<string, Map<string, { place: number; score: number }>> = {}
 
-  for (const game of t.games) {
-    const best = new Map<string, number>()
-    for (const s of t.scores) {
-      if (s.game !== game) continue
-      const prev = best.get(s.playerId)
-      if (prev == null || s.score > prev) best.set(s.playerId, s.score)
+  for (const game of normalized.games) {
+    const aggregated = new Map<string, number>()
+    for (const p of normalized.players) {
+      const score = aggregatePlayerGameScore(normalized, p.id, game)
+      if (score != null) aggregated.set(p.id, score)
     }
 
-    const ranked = [...best.entries()].sort((a, b) => b[1] - a[1])
+    const ranked = [...aggregated.entries()].sort((a, b) => b[1] - a[1])
     const places = new Map<string, { place: number; score: number }>()
     let i = 0
     while (i < ranked.length) {
@@ -406,19 +518,25 @@ export function computeStandings(t: Tournament): StandingRow[] {
     byGamePlaces[game] = places
   }
 
-  return t.players
+  return normalized.players
     .map((p) => {
       const byGame: StandingRow['byGame'] = {}
       let totalPoints = 0
       let gamesPlayed = 0
-      for (const game of t.games) {
+      for (const game of normalized.games) {
         const info = byGamePlaces[game]?.get(p.id)
         const place = info?.place ?? null
         const score = info?.score ?? null
-        const points = placePoints(place)
+        const points = resolveFormat(normalized) === 'place-points' ? placePoints(place) : 0
+        const attemptsUsed = playerAttempts(normalized, p.id, game)
         if (score != null) gamesPlayed += 1
         totalPoints += points
-        byGame[game] = { score, place, points }
+        byGame[game] = {
+          score,
+          place,
+          points,
+          ...(attemptsUsed > 0 ? { attemptsUsed } : {}),
+        }
       }
       return {
         playerId: p.id,
@@ -428,29 +546,170 @@ export function computeStandings(t: Tournament): StandingRow[] {
         byGame,
       }
     })
-    .sort(
-      (a, b) => {
+    .sort((a, b) => {
+      const format = resolveFormat(normalized)
+      if (format === 'place-points') {
         const bestScore = (row: StandingRow) =>
-          Math.max(0, ...t.games.map((g) => row.byGame[g]?.score ?? 0))
+          Math.max(0, ...normalized.games.map((g) => row.byGame[g]?.score ?? 0))
         return (
           b.totalPoints - a.totalPoints ||
           bestScore(b) - bestScore(a) ||
           b.gamesPlayed - a.gamesPlayed ||
           a.name.localeCompare(b.name)
         )
-      },
-    )
+      }
+      const primaryScore = (row: StandingRow) =>
+        Math.max(0, ...normalized.games.map((g) => row.byGame[g]?.score ?? 0))
+      return (
+        primaryScore(b) - primaryScore(a) ||
+        b.gamesPlayed - a.gamesPlayed ||
+        a.name.localeCompare(b.name)
+      )
+    })
 }
 
-export function getTournamentDetail(id: string, now = Date.now()) {
-  const t = getTournament(id)
-  if (!t) return null
+export type TournamentPlayerStatus = {
+  attemptsUsed: number
+  maxAttempts: number | null
+  attemptsRemaining: number | null
+  canPlay: boolean
+  best: number | null
+}
+
+export function getTournamentPlayerStatus(
+  t: Tournament,
+  playerName: string,
+  game: GameSlug,
+  now = Date.now(),
+): TournamentPlayerStatus | null {
+  const normalized = normalizeTournament(t)
+  if (!normalized.games.includes(game)) return null
+  const cleaned = cleanName(playerName)
+  const player = normalized.players.find((p) => p.name === cleaned)
+  if (!player) {
+    const max = getMaxAttempts(normalized)
+    return {
+      attemptsUsed: 0,
+      maxAttempts: Number.isFinite(max) ? max : null,
+      attemptsRemaining: Number.isFinite(max) ? max : null,
+      canPlay: tournamentStatus(normalized, now) === 'active',
+      best: null,
+    }
+  }
+  const used = playerAttempts(normalized, player.id, game)
+  const max = getMaxAttempts(normalized)
+  const finiteMax = Number.isFinite(max) ? max : null
+  const remaining = finiteMax == null ? null : Math.max(0, finiteMax - used)
+  return {
+    attemptsUsed: used,
+    maxAttempts: finiteMax,
+    attemptsRemaining: remaining,
+    canPlay: tournamentStatus(normalized, now) === 'active' && (remaining == null || remaining > 0),
+    best: aggregatePlayerGameScore(normalized, player.id, game),
+  }
+}
+
+export function getTournamentDetail(
+  id: string,
+  now = Date.now(),
+  opts?: { playerName?: string; game?: string },
+) {
+  const raw = getTournament(id)
+  if (!raw) return null
+  const t = normalizeTournament(raw)
+  let playerStatus: TournamentPlayerStatus | null = null
+  if (opts?.playerName && opts.game && isAllowedGame(opts.game) && t.games.includes(opts.game)) {
+    playerStatus = getTournamentPlayerStatus(t, opts.playerName, opts.game, now)
+  }
   return {
     ...publicTournament(t, now),
     players: t.players.map((p) => ({ id: p.id, name: p.name, joinedAt: p.joinedAt })),
     standings: withAvatarIds(computeStandings(t)),
     placePoints: PLACE_POINTS,
+    playerStatus,
   }
+}
+
+export type CreateTournamentInput = {
+  title: string
+  blurb?: string
+  game: GameSlug
+  format: Exclude<TournamentFormat, 'place-points'>
+  maxAttempts?: number
+  durationHours: number
+}
+
+export function createTournament(
+  input: CreateTournamentInput,
+  creator: TournamentCreator,
+  now = Date.now(),
+) {
+  const store = ensureStore(now)
+  const title = input.title.trim().slice(0, 60)
+  if (title.length < 3) {
+    throw Object.assign(new Error('Title must be at least 3 characters'), { status: 400 })
+  }
+  if (!isAllowedGame(input.game) || !(EVENT_GAMES as readonly string[]).includes(input.game)) {
+    throw Object.assign(new Error('Game not available for events'), { status: 400 })
+  }
+  const durationHours = Math.floor(input.durationHours)
+  if (
+    !Number.isFinite(durationHours) ||
+    durationHours < MIN_COMMUNITY_DURATION_HOURS ||
+    durationHours > MAX_COMMUNITY_DURATION_HOURS
+  ) {
+    throw Object.assign(new Error('Duration must be between 1 and 168 hours'), { status: 400 })
+  }
+
+  const format = input.format
+  let maxAttempts = input.maxAttempts
+  if (format === 'attempt-limited') {
+    maxAttempts = Math.max(2, Math.min(20, Math.floor(maxAttempts ?? 3)))
+  } else {
+    maxAttempts = undefined
+  }
+
+  const activeCommunity = store.tournaments.filter(
+    (t) =>
+      !t.official &&
+      t.createdBy?.accountId === creator.accountId &&
+      tournamentStatus(t, now) !== 'ended',
+  )
+  if (activeCommunity.length >= MAX_COMMUNITY_EVENTS_PER_ACCOUNT) {
+    throw Object.assign(new Error('You already have 5 active community events'), { status: 409 })
+  }
+
+  const endsAt = now + durationHours * 3_600_000
+  const blurb =
+    input.blurb?.trim().slice(0, 280) ||
+    defaultCommunityBlurb(input.game, format, maxAttempts)
+  const rules: TournamentRules =
+    format === 'attempt-limited'
+      ? { maxAttempts, scoring: 'best' }
+      : format === 'cumulative'
+        ? { scoring: 'sum' }
+        : { scoring: 'best' }
+
+  const tournament: Tournament = {
+    id: `community-${uid()}`,
+    title,
+    blurb,
+    games: [input.game],
+    startsAt: now,
+    endsAt,
+    official: false,
+    cadence: null,
+    format,
+    rules,
+    createdBy: creator,
+    visibility: 'public',
+    players: [],
+    scores: [],
+  }
+
+  store.tournaments.push(tournament)
+  writeStore(store)
+  return getTournamentDetail(tournament.id, now)!
 }
 
 export function joinTournament(
@@ -507,10 +766,14 @@ export function submitTournamentScore(
   accepted: boolean
   best: number
   improved: boolean
+  attemptsUsed: number
+  attemptsRemaining: number | null
+  maxAttempts: number | null
 } {
   const store = ensureStore()
-  const t = store.tournaments.find((x) => x.id === id)
-  if (!t) throw Object.assign(new Error('Tournament not found'), { status: 404 })
+  const raw = store.tournaments.find((x) => x.id === id)
+  if (!raw) throw Object.assign(new Error('Tournament not found'), { status: 404 })
+  const t = normalizeTournament(raw)
 
   if (tournamentStatus(t, now) !== 'active') {
     throw Object.assign(new Error('Tournament is not active'), { status: 409 })
@@ -529,28 +792,60 @@ export function submitTournamentScore(
     t.players.push(player)
   }
 
-  const prev = t.scores
-    .filter((s) => s.playerId === player!.id && s.game === game)
-    .reduce((max, s) => Math.max(max, s.score), 0)
+  const format = resolveFormat(t)
+  const maxAttempts = getMaxAttempts(t)
+  const used = playerAttempts(t, player.id, game)
+  const prevBest =
+    t.scores
+      .filter((s) => s.playerId === player.id && s.game === game)
+      .reduce((max, s) => Math.max(max, s.score), 0) || 0
 
-  const improved = score > prev
-  if (improved) {
-    // Keep a single best row per player/game
-    t.scores = t.scores.filter((s) => !(s.playerId === player!.id && s.game === game))
+  if (format !== 'open' && used >= maxAttempts) {
+    throw Object.assign(new Error('No attempts remaining'), {
+      status: 409,
+      code: 'ATTEMPTS_EXHAUSTED',
+    })
+  }
+
+  let improved = score > prevBest
+
+  if (format === 'open') {
+    if (score > prevBest) {
+      t.scores = t.scores.filter((s) => !(s.playerId === player.id && s.game === game))
+      t.scores.push({
+        playerId: player.id,
+        game,
+        score,
+        at: now,
+      })
+      writeStore(store)
+    } else {
+      improved = false
+    }
+  } else {
     t.scores.push({
       playerId: player.id,
       game,
       score,
       at: now,
+      attempt: used + 1,
     })
     writeStore(store)
   }
 
+  const attemptsUsed = format === 'open' ? used : used + 1
+  const finiteMax = Number.isFinite(maxAttempts) ? maxAttempts : null
+  const attemptsRemaining =
+    finiteMax == null ? null : Math.max(0, finiteMax - attemptsUsed)
+
   return {
     tournament: getTournamentDetail(id, now)!,
     accepted: true,
-    best: Math.max(prev, score),
+    best: Math.max(prevBest, score),
     improved,
+    attemptsUsed,
+    attemptsRemaining,
+    maxAttempts: finiteMax,
   }
 }
 
@@ -568,38 +863,29 @@ function cleanName(name: string) {
 
 type TournamentRecord = Tournament
 
-/** Merge `source` into `target` (best scores win), then drop `source`. */
+/** Merge `source` into `target`, then drop `source`. */
 function mergeTournamentPlayers(
   t: TournamentRecord,
   source: TournamentPlayer,
   target: TournamentPlayer,
 ) {
   if (source.id === target.id) return
-  for (const game of t.games) {
-    const sourceBest = t.scores
-      .filter((s) => s.playerId === source.id && s.game === game)
-      .reduce((max, s) => Math.max(max, s.score), 0)
-    if (sourceBest <= 0) continue
+  for (const s of t.scores) {
+    if (s.playerId === source.id) s.playerId = target.id
+  }
 
-    const targetBest = t.scores
-      .filter((s) => s.playerId === target.id && s.game === game)
-      .reduce((max, s) => Math.max(max, s.score), 0)
-
-    if (sourceBest > targetBest) {
+  const normalized = normalizeTournament(t)
+  if (resolveFormat(normalized) === 'open') {
+    for (const game of t.games) {
+      const rows = t.scores.filter((s) => s.playerId === target.id && s.game === game)
+      if (rows.length <= 1) continue
+      const best = Math.max(...rows.map((s) => s.score))
+      const keep = rows.sort((a, b) => b.at - a.at).find((s) => s.score === best)!
       t.scores = t.scores.filter((s) => !(s.playerId === target.id && s.game === game))
-      const latest = t.scores
-        .filter((s) => s.playerId === source.id && s.game === game)
-        .sort((a, b) => b.at - a.at)[0]
-      t.scores.push({
-        playerId: target.id,
-        game,
-        score: sourceBest,
-        at: latest?.at ?? Date.now(),
-      })
+      t.scores.push(keep)
     }
   }
 
-  t.scores = t.scores.filter((s) => s.playerId !== source.id)
   t.players = t.players.filter((p) => p.id !== source.id)
 }
 

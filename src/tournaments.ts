@@ -20,7 +20,7 @@ export type TournamentFormat =
   | 'single-run'
   | 'cumulative'
 export type TournamentScoring = 'best' | 'sum'
-export type TournamentVisibility = 'public' | 'unlisted'
+export type TournamentVisibility = 'public' | 'private'
 
 export type TournamentRules = {
   maxAttempts?: number
@@ -62,6 +62,8 @@ export type Tournament = {
   rules?: TournamentRules
   createdBy?: TournamentCreator | null
   visibility?: TournamentVisibility
+  /** Required to access private events */
+  inviteCode?: string | null
   players: TournamentPlayer[]
   scores: TournamentScore[]
 }
@@ -104,7 +106,7 @@ export const FORMAT_LABELS: Record<TournamentFormat, string> = {
   cumulative: 'Total score',
 }
 
-const MAX_COMMUNITY_EVENTS_PER_ACCOUNT = 5
+const MAX_PRIVATE_EVENTS_PER_ACCOUNT = 5
 const MAX_COMMUNITY_DURATION_HOURS = 168
 const MIN_COMMUNITY_DURATION_HOURS = 1
 
@@ -256,8 +258,9 @@ function normalizeTournament(t: Tournament): Tournament {
     ...t,
     format,
     rules: t.rules ?? {},
-    visibility: t.visibility ?? 'public',
+    visibility: t.visibility ?? (t.createdBy && !t.official ? 'private' : 'public'),
     createdBy: t.createdBy ?? null,
+    inviteCode: t.inviteCode ?? null,
   }
 }
 
@@ -434,6 +437,18 @@ function ensureStore(now = Date.now()): Store {
       return store
     }
     store = { tournaments: parsed.tournaments.map(normalizeTournament) }
+    let migrated = false
+    for (const t of store.tournaments) {
+      if (t.createdBy && !t.official && t.visibility !== 'private') {
+        t.visibility = 'private'
+        migrated = true
+      }
+      if (t.visibility === 'private' && t.createdBy && !t.inviteCode) {
+        t.inviteCode = generateInviteCode()
+        migrated = true
+      }
+    }
+    if (migrated) writeStore(store)
   } catch {
     store = emptyStore(now)
     writeStore(store)
@@ -453,6 +468,58 @@ function uid() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 }
 
+const INVITE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+
+function generateInviteCode() {
+  let code = ''
+  for (let i = 0; i < 8; i++) {
+    code += INVITE_CHARS[Math.floor(Math.random() * INVITE_CHARS.length)]!
+  }
+  return code
+}
+
+type TournamentAccessOpts = {
+  inviteCode?: string
+  accountId?: string
+  playerName?: string
+}
+
+function isPrivateEvent(t: Tournament): boolean {
+  return normalizeTournament(t).visibility === 'private'
+}
+
+function canAccessTournament(t: Tournament, opts: TournamentAccessOpts = {}): boolean {
+  const normalized = normalizeTournament(t)
+  if (!isPrivateEvent(normalized)) return true
+  if (opts.accountId && normalized.createdBy?.accountId === opts.accountId) return true
+  const invite = opts.inviteCode?.trim().toUpperCase()
+  if (invite && normalized.inviteCode?.toUpperCase() === invite) return true
+  if (opts.playerName) {
+    const cleaned = cleanName(opts.playerName)
+    if (normalized.players.some((p) => p.name === cleaned)) return true
+  }
+  return false
+}
+
+function assertTournamentAccess(t: Tournament, opts: TournamentAccessOpts) {
+  if (!canAccessTournament(t, opts)) {
+    throw Object.assign(new Error('Valid invite required'), {
+      status: 403,
+      code: 'INVITE_REQUIRED',
+    })
+  }
+}
+
+function detailAccessOpts(
+  opts?: TournamentAccessOpts & { playerName?: string; game?: string },
+): TournamentAccessOpts {
+  return {
+    inviteCode: opts?.inviteCode,
+    accountId: opts?.accountId,
+    playerName: opts?.playerName,
+  }
+}
+
 export function tournamentStatus(t: Tournament, now = Date.now()): TournamentStatus {
   if (now < t.startsAt) return 'upcoming'
   if (now > t.endsAt) return 'ended'
@@ -461,7 +528,7 @@ export function tournamentStatus(t: Tournament, now = Date.now()): TournamentSta
 
 function publicTournament(t: Tournament, now = Date.now()) {
   const normalized = normalizeTournament(t)
-  const community = !normalized.official && Boolean(normalized.createdBy)
+  const isPrivate = normalized.visibility === 'private'
   return {
     id: normalized.id,
     title: normalized.title,
@@ -474,7 +541,7 @@ function publicTournament(t: Tournament, now = Date.now()) {
     format: normalized.format!,
     formatLabel: publicFormatLabel(normalized),
     rules: normalized.rules ?? {},
-    community,
+    private: isPrivate,
     createdBy: normalized.createdBy ? { accountId: normalized.createdBy.accountId } : null,
     visibility: normalized.visibility ?? 'public',
     status: tournamentStatus(normalized, now),
@@ -482,13 +549,22 @@ function publicTournament(t: Tournament, now = Date.now()) {
   }
 }
 
-export type TournamentListFilter = 'all' | 'official' | 'community'
+export type TournamentListFilter = 'all' | 'official' | 'mine'
 
-export function listTournaments(now = Date.now(), filter: TournamentListFilter = 'all') {
+export function listTournaments(
+  now = Date.now(),
+  filter: TournamentListFilter = 'all',
+  accountId?: string,
+) {
   const store = ensureStore(now)
   let list = store.tournaments.map((t) => publicTournament(t, now))
   if (filter === 'official') list = list.filter((t) => t.official)
-  if (filter === 'community') list = list.filter((t) => t.community)
+  else if (filter === 'mine') {
+    if (!accountId) return []
+    list = list.filter((t) => t.private && t.createdBy?.accountId === accountId)
+  } else {
+    list = list.filter((t) => !t.private)
+  }
   return list.sort((a, b) => {
     const order = { active: 0, upcoming: 1, ended: 2 } as const
     const statusDiff = order[a.status] - order[b.status]
@@ -633,21 +709,36 @@ export function getTournamentPlayerStatus(
 export function getTournamentDetail(
   id: string,
   now = Date.now(),
-  opts?: { playerName?: string; game?: string },
+  opts?: {
+    playerName?: string
+    game?: string
+    inviteCode?: string
+    accountId?: string
+  },
 ) {
   const raw = getTournament(id)
   if (!raw) return null
   const t = normalizeTournament(raw)
+  if (!canAccessTournament(t, detailAccessOpts(opts))) {
+    throw Object.assign(new Error('Valid invite required'), {
+      status: 403,
+      code: 'INVITE_REQUIRED',
+    })
+  }
+
   let playerStatus: TournamentPlayerStatus | null = null
   if (opts?.playerName && opts.game && isAllowedGame(opts.game) && t.games.includes(opts.game)) {
     playerStatus = getTournamentPlayerStatus(t, opts.playerName, opts.game, now)
   }
+  const isHost = Boolean(opts?.accountId && t.createdBy?.accountId === opts.accountId)
   return {
     ...publicTournament(t, now),
     players: t.players.map((p) => ({ id: p.id, name: p.name, joinedAt: p.joinedAt })),
     standings: withAvatarIds(computeStandings(t)),
     placePoints: PLACE_POINTS,
     playerStatus,
+    inviteCode: isHost ? t.inviteCode ?? null : null,
+    isHost,
   }
 }
 
@@ -660,7 +751,7 @@ export type CreateTournamentInput = {
   durationHours: number
 }
 
-const MAX_COMMUNITY_GAMES = 5
+const MAX_PRIVATE_GAMES = 5
 
 export function createTournament(
   input: CreateTournamentInput,
@@ -674,7 +765,7 @@ export function createTournament(
   }
 
   const games = [...new Set(input.games)]
-  if (games.length < 1 || games.length > MAX_COMMUNITY_GAMES) {
+  if (games.length < 1 || games.length > MAX_PRIVATE_GAMES) {
     throw Object.assign(new Error('Pick 1–5 games'), { status: 400 })
   }
   if (!games.every((g) => isAllowedGame(g) && (EVENT_GAMES as readonly string[]).includes(g))) {
@@ -699,10 +790,11 @@ export function createTournament(
       t.createdBy?.accountId === creator.accountId &&
       tournamentStatus(t, now) !== 'ended',
   )
-  if (activeCommunity.length >= MAX_COMMUNITY_EVENTS_PER_ACCOUNT) {
-    throw Object.assign(new Error('You already have 5 active community events'), { status: 409 })
+  if (activeCommunity.length >= MAX_PRIVATE_EVENTS_PER_ACCOUNT) {
+    throw Object.assign(new Error('You already have 5 active private events'), { status: 409 })
   }
 
+  const inviteCode = generateInviteCode()
   const endsAt = now + durationHours * 3_600_000
   const blurb =
     input.blurb?.trim().slice(0, 280) || defaultCommunityBlurb(games, maxAttempts)
@@ -712,7 +804,7 @@ export function createTournament(
   }
 
   const tournament: Tournament = {
-    id: `community-${uid()}`,
+    id: `private-${uid()}`,
     title,
     blurb,
     games,
@@ -723,14 +815,15 @@ export function createTournament(
     format,
     rules,
     createdBy: creator,
-    visibility: 'public',
+    visibility: 'private',
+    inviteCode,
     players: [],
     scores: [],
   }
 
   store.tournaments.push(tournament)
   writeStore(store)
-  return getTournamentDetail(tournament.id, now)!
+  return getTournamentDetail(tournament.id, now, { accountId: creator.accountId })!
 }
 
 export function joinTournament(
@@ -738,20 +831,31 @@ export function joinTournament(
   name: string,
   now = Date.now(),
   playerId?: string | null,
+  access: TournamentAccessOpts = {},
 ): { tournament: ReturnType<typeof getTournamentDetail>; player: TournamentPlayer } {
   const store = ensureStore()
-  const t = store.tournaments.find((x) => x.id === id)
-  if (!t) throw Object.assign(new Error('Tournament not found'), { status: 404 })
+  const raw = store.tournaments.find((x) => x.id === id)
+  if (!raw) throw Object.assign(new Error('Tournament not found'), { status: 404 })
+  const t = normalizeTournament(raw)
+
+  const cleaned = cleanName(name)
+  assertTournamentAccess(t, { ...access, playerName: cleaned })
 
   const status = tournamentStatus(t, now)
   if (status === 'ended') {
     throw Object.assign(new Error('Tournament has ended'), { status: 409 })
   }
 
-  const cleaned = cleanName(name)
   const existingByName = t.players.find((p) => p.name === cleaned)
   if (existingByName) {
-    return { tournament: getTournamentDetail(id, now)!, player: existingByName }
+    return {
+      tournament: getTournamentDetail(id, now, {
+        ...detailAccessOpts(access),
+        playerName: cleaned,
+        accountId: access.accountId,
+      })!,
+      player: existingByName,
+    }
   }
 
   // Same device / seat after a gamer-tag rename: keep player id + scores.
@@ -762,18 +866,39 @@ export function joinTournament(
       if (conflict) {
         mergeTournamentPlayers(t, seat, conflict)
         writeStore(store)
-        return { tournament: getTournamentDetail(id, now)!, player: conflict }
+        return {
+          tournament: getTournamentDetail(id, now, {
+            ...detailAccessOpts(access),
+            playerName: cleaned,
+            accountId: access.accountId,
+          })!,
+          player: conflict,
+        }
       }
       seat.name = cleaned
       writeStore(store)
-      return { tournament: getTournamentDetail(id, now)!, player: seat }
+      return {
+        tournament: getTournamentDetail(id, now, {
+          ...detailAccessOpts(access),
+          playerName: cleaned,
+          accountId: access.accountId,
+        })!,
+        player: seat,
+      }
     }
   }
 
   const player: TournamentPlayer = { id: uid(), name: cleaned, joinedAt: now }
   t.players.push(player)
   writeStore(store)
-  return { tournament: getTournamentDetail(id, now)!, player }
+  return {
+    tournament: getTournamentDetail(id, now, {
+      ...detailAccessOpts(access),
+      playerName: cleaned,
+      accountId: access.accountId,
+    })!,
+    player,
+  }
 }
 
 export function submitTournamentScore(
@@ -782,6 +907,7 @@ export function submitTournamentScore(
   game: string,
   score: number,
   now = Date.now(),
+  access: TournamentAccessOpts = {},
 ): {
   tournament: ReturnType<typeof getTournamentDetail>
   accepted: boolean
@@ -807,6 +933,7 @@ export function submitTournamentScore(
   }
 
   const cleaned = name.trim().slice(0, 12).toUpperCase() || 'PLAYER'
+  assertTournamentAccess(t, { ...access, playerName: cleaned })
   let player = t.players.find((p) => p.name === cleaned)
   if (!player) {
     player = { id: uid(), name: cleaned, joinedAt: now }
@@ -873,7 +1000,10 @@ export function submitTournamentScore(
 export function activeTournamentsForGame(game: GameSlug, now = Date.now()) {
   return ensureStore()
     .tournaments.filter(
-      (t) => tournamentStatus(t, now) === 'active' && t.games.includes(game),
+      (t) =>
+        tournamentStatus(t, now) === 'active' &&
+        t.games.includes(game) &&
+        normalizeTournament(t).visibility !== 'private',
     )
     .map((t) => publicTournament(t, now))
 }

@@ -23,12 +23,14 @@ const joinSchema = z.object({
   name: nameSchema,
   token: tokenSchema,
   playerId: z.string().min(1).max(64).optional(),
+  invite: z.string().min(4).max(16).optional(),
 })
 const scoreSchema = z.object({
   name: nameSchema,
   game: z.string().min(1),
   score: z.number().int().positive().max(1_000_000),
   token: tokenSchema,
+  invite: z.string().min(4).max(16).optional(),
 })
 const renameSchema = z.object({
   from: nameSchema,
@@ -55,10 +57,11 @@ function claimError(err: unknown, res: import('express').Response) {
 }
 
 tournamentsRouter.get('/', (req, res) => {
+  const account = accountFromRequest(req)
   const raw = typeof req.query.source === 'string' ? req.query.source : 'all'
   const filter: TournamentListFilter =
-    raw === 'official' || raw === 'community' ? raw : 'all'
-  res.json({ tournaments: listTournaments(Date.now(), filter) })
+    raw === 'official' || raw === 'mine' ? raw : 'all'
+  res.json({ tournaments: listTournaments(Date.now(), filter, account?.id) })
 })
 
 tournamentsRouter.post('/', (req, res) => {
@@ -133,12 +136,23 @@ tournamentsRouter.get('/:id', (req, res) => {
   const playerName =
     typeof req.query.playerName === 'string' ? req.query.playerName : undefined
   const game = typeof req.query.game === 'string' ? req.query.game : undefined
-  const detail = getTournamentDetail(req.params.id, Date.now(), { playerName, game })
-  if (!detail) {
-    res.status(404).json({ error: 'Tournament not found' })
-    return
+  const inviteCode = typeof req.query.invite === 'string' ? req.query.invite : undefined
+  const account = accountFromRequest(req)
+  try {
+    const detail = getTournamentDetail(req.params.id, Date.now(), {
+      playerName,
+      game,
+      inviteCode,
+      accountId: account?.id,
+    })
+    if (!detail) {
+      res.status(404).json({ error: 'Tournament not found' })
+      return
+    }
+    res.json(detail)
+  } catch (err) {
+    claimError(err, res)
   }
-  res.json(detail)
 })
 
 tournamentsRouter.post('/:id/join', (req, res) => {
@@ -153,7 +167,13 @@ tournamentsRouter.post('/:id/join', (req, res) => {
       claimToken: parsed.data.token,
       accountId: account?.id,
     })
-    const result = joinTournament(req.params.id, claim.name, Date.now(), parsed.data.playerId)
+    const result = joinTournament(
+      req.params.id,
+      claim.name,
+      Date.now(),
+      parsed.data.playerId,
+      { inviteCode: parsed.data.invite, accountId: account?.id },
+    )
     res.status(201).json({ ...result, name: claim.name, token: claim.token })
   } catch (err) {
     claimError(err, res)
@@ -177,6 +197,8 @@ tournamentsRouter.post('/:id/scores', (req, res) => {
       claim.name,
       parsed.data.game,
       parsed.data.score,
+      Date.now(),
+      { inviteCode: parsed.data.invite, accountId: account?.id },
     )
     res.status(201).json({ ...result, name: claim.name, token: claim.token })
   } catch (err) {

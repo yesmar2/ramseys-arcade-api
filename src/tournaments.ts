@@ -252,14 +252,23 @@ function gameLabel(slug: GameSlug) {
 }
 
 function normalizeTournament(t: Tournament): Tournament {
-  const format =
+  let format =
     t.format ??
     (t.cadence === 'weekly' ? 'place-points' : 'open')
+  const visibility = t.visibility ?? (t.createdBy && !t.official ? 'private' : 'public')
+  if (
+    t.games.length > 1 &&
+    format !== 'place-points' &&
+    format !== 'cumulative' &&
+    (visibility === 'private' || t.createdBy)
+  ) {
+    format = 'place-points'
+  }
   return {
     ...t,
     format,
     rules: t.rules ?? {},
-    visibility: t.visibility ?? (t.createdBy && !t.official ? 'private' : 'public'),
+    visibility,
     createdBy: t.createdBy ?? null,
     inviteCode: t.inviteCode ?? null,
   }
@@ -552,19 +561,26 @@ function publicTournament(t: Tournament, now = Date.now()) {
   }
 }
 
-export type TournamentListFilter = 'all' | 'official' | 'mine'
+export type TournamentListFilter = 'all' | 'official' | 'mine' | 'joined'
 
 export function listTournaments(
   now = Date.now(),
   filter: TournamentListFilter = 'all',
   accountId?: string,
+  playerName?: string,
 ) {
   const store = ensureStore(now)
+  const cleanedPlayer = playerName ? cleanName(playerName) : ''
   let list = store.tournaments.map((t) => publicTournament(t, now))
   if (filter === 'official') list = list.filter((t) => t.official)
   else if (filter === 'mine') {
     if (!accountId) return []
     list = list.filter((t) => t.private && t.createdBy?.accountId === accountId)
+  } else if (filter === 'joined') {
+    if (!cleanedPlayer) return []
+    list = store.tournaments
+      .filter((t) => normalizeTournament(t).players.some((p) => p.name === cleanedPlayer))
+      .map((t) => publicTournament(t, now))
   } else {
     list = list.filter((t) => !t.private)
   }
@@ -789,7 +805,8 @@ export function createTournament(
   }
 
   const maxAttempts = Math.max(0, Math.min(99, Math.floor(input.maxAttempts)))
-  const format = deriveCommunityFormat(maxAttempts)
+  const format =
+    games.length > 1 ? 'place-points' : deriveCommunityFormat(maxAttempts)
 
   const activeCommunity = store.tournaments.filter(
     (t) =>
@@ -804,7 +821,10 @@ export function createTournament(
   const inviteCode = generateInviteCode()
   const endsAt = unlimitedDuration ? now : now + durationHours * 3_600_000
   const blurb =
-    input.blurb?.trim().slice(0, 280) || defaultCommunityBlurb(games, maxAttempts)
+    input.blurb?.trim().slice(0, 280) ||
+    (games.length > 1
+      ? `Private event: ${games.map(gameLabel).join(', ')}. Place points across games — highest total wins.`
+      : defaultCommunityBlurb(games, maxAttempts))
   const rules: TournamentRules = {
     maxAttempts: maxAttempts > 0 ? maxAttempts : 0,
     scoring: 'best',
@@ -995,7 +1015,11 @@ export function submitTournamentScore(
     finiteMax == null ? null : Math.max(0, finiteMax - attemptsUsed)
 
   return {
-    tournament: getTournamentDetail(id, now)!,
+    tournament: getTournamentDetail(id, now, {
+      ...detailAccessOpts(access),
+      playerName: cleaned,
+      accountId: access.accountId,
+    })!,
     accepted: true,
     best: Math.max(prevBest, score),
     improved,

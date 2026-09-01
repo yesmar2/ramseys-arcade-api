@@ -60,8 +60,12 @@ tournamentsRouter.get('/', (req, res) => {
   const account = accountFromRequest(req)
   const raw = typeof req.query.source === 'string' ? req.query.source : 'all'
   const filter: TournamentListFilter =
-    raw === 'official' || raw === 'mine' ? raw : 'all'
-  res.json({ tournaments: listTournaments(Date.now(), filter, account?.id) })
+    raw === 'official' || raw === 'mine' || raw === 'joined' ? raw : 'all'
+  const playerName =
+    typeof req.query.playerName === 'string' ? req.query.playerName : undefined
+  res.json({
+    tournaments: listTournaments(Date.now(), filter, account?.id, playerName),
+  })
 })
 
 tournamentsRouter.post('/', (req, res) => {

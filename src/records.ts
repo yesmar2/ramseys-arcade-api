@@ -260,11 +260,15 @@ export function bestRecordForName(
   return { ...best, rank: pool.findIndex((e) => e.id === best.id) + 1 }
 }
 
-export function listGameRecords(game: GameSlug): {
+export function listGameRecords(
+  game: GameSlug,
+  period: Period = 'all',
+  now = Date.now(),
+): {
   records: Array<RecordDef & { top: RecordEntry | null }>
 } {
   const records = listRecordDefs(game).map((def) => {
-    const board = getRecordBoard(game, def.id, 'all')
+    const board = getRecordBoard(game, def.id, period, now)
     return { ...def, top: board[0] ?? null }
   })
   return { records }

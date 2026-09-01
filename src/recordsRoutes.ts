@@ -31,9 +31,11 @@ recordsRouter.get('/:game', (req, res) => {
     res.status(404).json({ error: 'Unknown game' })
     return
   }
-  const { records } = listGameRecords(game)
+  const period = parsePeriod(req.query.period)
+  const { records } = listGameRecords(game, period)
   res.json({
     game,
+    period,
     records,
   })
 })

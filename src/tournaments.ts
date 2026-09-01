@@ -298,11 +298,13 @@ export function resolveFormat(t: Tournament): TournamentFormat {
 }
 
 export function getMaxAttempts(t: Tournament): number {
-  const format = resolveFormat(t)
-  if (format === 'open') return Number.POSITIVE_INFINITY
+  const normalized = normalizeTournament(t)
+  const format = resolveFormat(normalized)
+  const rulesMax = normalized.rules?.maxAttempts ?? 0
+  if (format === 'open' || rulesMax <= 0) return Number.POSITIVE_INFINITY
   if (format === 'single-run') return 1
-  if (format === 'attempt-limited') {
-    return Math.max(1, Math.min(99, t.rules?.maxAttempts ?? 3))
+  if (format === 'attempt-limited' || format === 'place-points') {
+    return Math.max(1, Math.min(99, rulesMax))
   }
   return Number.POSITIVE_INFINITY
 }
@@ -324,15 +326,20 @@ function playerFinishedAllGames(t: Tournament, playerId: string): boolean {
   return true
 }
 
+function rosterReadyForAutoEnd(t: Tournament): boolean {
+  const normalized = normalizeTournament(t)
+  const cap = getMaxPlayers(normalized)
+  if (cap != null) return normalized.players.length >= cap
+  return normalized.players.length > 0
+}
+
 function allPlayersFinishedAttempts(t: Tournament): boolean {
   const normalized = normalizeTournament(t)
-  if (!normalized.rules?.unlimitedDuration) return false
-  if (normalized.players.length === 0) return false
+  if (!rosterReadyForAutoEnd(normalized)) return false
   return normalized.players.every((p) => playerFinishedAllGames(normalized, p.id))
 }
 
-function maybeEndUnlimitedDurationEvent(t: Tournament, now: number): boolean {
-  if (!normalizeTournament(t).rules?.unlimitedDuration) return false
+function maybeEndWhenAllFinished(t: Tournament, now: number): boolean {
   if (!allPlayersFinishedAttempts(t)) return false
   t.endsAt = now
   return true
@@ -566,10 +573,8 @@ function detailAccessOpts(
 export function tournamentStatus(t: Tournament, now = Date.now()): TournamentStatus {
   const normalized = normalizeTournament(t)
   if (now < normalized.startsAt) return 'upcoming'
-  if (normalized.rules?.unlimitedDuration) {
-    if (allPlayersFinishedAttempts(normalized)) return 'ended'
-    return 'active'
-  }
+  if (allPlayersFinishedAttempts(normalized)) return 'ended'
+  if (normalized.rules?.unlimitedDuration) return 'active'
   if (now > normalized.endsAt) return 'ended'
   return 'active'
 }
@@ -1066,7 +1071,7 @@ export function submitTournamentScore(
     writeStore(store)
   }
 
-  maybeEndUnlimitedDurationEvent(t, now)
+  maybeEndWhenAllFinished(t, now)
   writeStore(store)
 
   const attemptsUsed = format === 'open' ? used : used + 1

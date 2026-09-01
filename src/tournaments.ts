@@ -25,6 +25,7 @@ export type TournamentVisibility = 'public' | 'private'
 export type TournamentRules = {
   maxAttempts?: number
   scoring?: TournamentScoring
+  unlimitedDuration?: boolean
 }
 
 export type TournamentCreator = {
@@ -521,8 +522,10 @@ function detailAccessOpts(
 }
 
 export function tournamentStatus(t: Tournament, now = Date.now()): TournamentStatus {
-  if (now < t.startsAt) return 'upcoming'
-  if (now > t.endsAt) return 'ended'
+  const normalized = normalizeTournament(t)
+  if (now < normalized.startsAt) return 'upcoming'
+  if (normalized.rules?.unlimitedDuration) return 'active'
+  if (now > normalized.endsAt) return 'ended'
   return 'active'
 }
 
@@ -773,12 +776,16 @@ export function createTournament(
   }
 
   const durationHours = Math.floor(input.durationHours)
+  const unlimitedDuration = durationHours <= 0
   if (
     !Number.isFinite(durationHours) ||
-    durationHours < MIN_COMMUNITY_DURATION_HOURS ||
-    durationHours > MAX_COMMUNITY_DURATION_HOURS
+    (!unlimitedDuration &&
+      (durationHours < MIN_COMMUNITY_DURATION_HOURS ||
+        durationHours > MAX_COMMUNITY_DURATION_HOURS))
   ) {
-    throw Object.assign(new Error('Duration must be between 1 and 168 hours'), { status: 400 })
+    throw Object.assign(new Error('Duration must be between 1 and 168 hours, or unlimited'), {
+      status: 400,
+    })
   }
 
   const maxAttempts = Math.max(0, Math.min(99, Math.floor(input.maxAttempts)))
@@ -795,12 +802,13 @@ export function createTournament(
   }
 
   const inviteCode = generateInviteCode()
-  const endsAt = now + durationHours * 3_600_000
+  const endsAt = unlimitedDuration ? now : now + durationHours * 3_600_000
   const blurb =
     input.blurb?.trim().slice(0, 280) || defaultCommunityBlurb(games, maxAttempts)
   const rules: TournamentRules = {
     maxAttempts: maxAttempts > 0 ? maxAttempts : 0,
     scoring: 'best',
+    ...(unlimitedDuration ? { unlimitedDuration: true } : {}),
   }
 
   const tournament: Tournament = {

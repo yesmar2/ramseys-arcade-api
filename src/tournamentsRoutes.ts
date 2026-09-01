@@ -44,7 +44,7 @@ const createSchema = z.object({
   blurb: z.string().max(280).optional(),
   games: z.array(z.string().min(1)).min(1).max(5),
   maxAttempts: z.number().int().min(0).max(99),
-  durationHours: z.number().int().min(1).max(168),
+  durationHours: z.number().int().min(0).max(168),
 })
 
 function claimError(err: unknown, res: import('express').Response) {

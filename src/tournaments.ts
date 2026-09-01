@@ -251,7 +251,7 @@ function gameLabel(slug: GameSlug) {
 function normalizeTournament(t: Tournament): Tournament {
   const format =
     t.format ??
-    (t.cadence === 'weekly' || t.games.length > 1 ? 'place-points' : 'open')
+    (t.cadence === 'weekly' ? 'place-points' : 'open')
   return {
     ...t,
     format,
@@ -261,15 +261,33 @@ function normalizeTournament(t: Tournament): Tournament {
   }
 }
 
+function publicFormatLabel(t: Tournament): string {
+  const normalized = normalizeTournament(t)
+  if (normalized.format === 'place-points') return FORMAT_LABELS['place-points']
+  if (normalized.format === 'cumulative') return FORMAT_LABELS.cumulative
+  const n = normalized.rules?.maxAttempts
+  if (normalized.format === 'open' || n === 0) return FORMAT_LABELS.open
+  if (normalized.format === 'single-run' || n === 1) return '1 attempt per game'
+  if (n) return `${n} attempts per game`
+  return FORMAT_LABELS.open
+}
+
+function deriveCommunityFormat(maxAttempts: number): TournamentFormat {
+  if (maxAttempts <= 0) return 'open'
+  if (maxAttempts === 1) return 'single-run'
+  return 'attempt-limited'
+}
+
 export function resolveFormat(t: Tournament): TournamentFormat {
   return normalizeTournament(t).format ?? 'open'
 }
 
 export function getMaxAttempts(t: Tournament): number {
   const format = resolveFormat(t)
+  if (format === 'open') return Number.POSITIVE_INFINITY
   if (format === 'single-run') return 1
   if (format === 'attempt-limited') {
-    return Math.max(1, Math.min(20, t.rules?.maxAttempts ?? 3))
+    return Math.max(1, Math.min(99, t.rules?.maxAttempts ?? 3))
   }
   return Number.POSITIVE_INFINITY
 }
@@ -290,15 +308,11 @@ function aggregatePlayerGameScore(
   return Math.max(...rows.map((s) => s.score))
 }
 
-function defaultCommunityBlurb(game: GameSlug, format: TournamentFormat, maxAttempts?: number) {
-  const label = gameLabel(game)
-  if (format === 'single-run') return `One run only in ${label}. Make it count!`
-  if (format === 'attempt-limited') {
-    const n = maxAttempts ?? 3
-    return `${n} attempts in ${label}. Best score counts.`
-  }
-  if (format === 'cumulative') return `Every run in ${label} adds up. Highest total wins.`
-  return `Community event for ${label}. Best score wins.`
+function defaultCommunityBlurb(games: GameSlug[], maxAttempts: number) {
+  const labels = games.map(gameLabel).join(', ')
+  if (maxAttempts <= 0) return `Community event: ${labels}. Best score wins.`
+  if (maxAttempts === 1) return `One attempt per game: ${labels}.`
+  return `${maxAttempts} attempts per game: ${labels}. Best score counts.`
 }
 
 function buildDailyEvent(now = Date.now()): Tournament {
@@ -458,7 +472,7 @@ function publicTournament(t: Tournament, now = Date.now()) {
     official: normalized.official,
     cadence: normalized.cadence ?? null,
     format: normalized.format!,
-    formatLabel: FORMAT_LABELS[normalized.format!],
+    formatLabel: publicFormatLabel(normalized),
     rules: normalized.rules ?? {},
     community,
     createdBy: normalized.createdBy ? { accountId: normalized.createdBy.accountId } : null,
@@ -558,8 +572,15 @@ export function computeStandings(t: Tournament): StandingRow[] {
           a.name.localeCompare(b.name)
         )
       }
-      const primaryScore = (row: StandingRow) =>
-        Math.max(0, ...normalized.games.map((g) => row.byGame[g]?.score ?? 0))
+      const primaryScore = (row: StandingRow) => {
+        if (normalized.games.length === 1) {
+          return row.byGame[normalized.games[0]!]?.score ?? 0
+        }
+        return normalized.games.reduce(
+          (sum, g) => sum + (row.byGame[g]?.score ?? 0),
+          0,
+        )
+      }
       return (
         primaryScore(b) - primaryScore(a) ||
         b.gamesPlayed - a.gamesPlayed ||
@@ -633,11 +654,13 @@ export function getTournamentDetail(
 export type CreateTournamentInput = {
   title: string
   blurb?: string
-  game: GameSlug
-  format: Exclude<TournamentFormat, 'place-points'>
-  maxAttempts?: number
+  games: GameSlug[]
+  /** 0 = unlimited attempts per game */
+  maxAttempts: number
   durationHours: number
 }
+
+const MAX_COMMUNITY_GAMES = 5
 
 export function createTournament(
   input: CreateTournamentInput,
@@ -649,9 +672,15 @@ export function createTournament(
   if (title.length < 3) {
     throw Object.assign(new Error('Title must be at least 3 characters'), { status: 400 })
   }
-  if (!isAllowedGame(input.game) || !(EVENT_GAMES as readonly string[]).includes(input.game)) {
-    throw Object.assign(new Error('Game not available for events'), { status: 400 })
+
+  const games = [...new Set(input.games)]
+  if (games.length < 1 || games.length > MAX_COMMUNITY_GAMES) {
+    throw Object.assign(new Error('Pick 1–5 games'), { status: 400 })
   }
+  if (!games.every((g) => isAllowedGame(g) && (EVENT_GAMES as readonly string[]).includes(g))) {
+    throw Object.assign(new Error('One or more games are not available for events'), { status: 400 })
+  }
+
   const durationHours = Math.floor(input.durationHours)
   if (
     !Number.isFinite(durationHours) ||
@@ -661,13 +690,8 @@ export function createTournament(
     throw Object.assign(new Error('Duration must be between 1 and 168 hours'), { status: 400 })
   }
 
-  const format = input.format
-  let maxAttempts = input.maxAttempts
-  if (format === 'attempt-limited') {
-    maxAttempts = Math.max(2, Math.min(20, Math.floor(maxAttempts ?? 3)))
-  } else {
-    maxAttempts = undefined
-  }
+  const maxAttempts = Math.max(0, Math.min(99, Math.floor(input.maxAttempts)))
+  const format = deriveCommunityFormat(maxAttempts)
 
   const activeCommunity = store.tournaments.filter(
     (t) =>
@@ -681,20 +705,17 @@ export function createTournament(
 
   const endsAt = now + durationHours * 3_600_000
   const blurb =
-    input.blurb?.trim().slice(0, 280) ||
-    defaultCommunityBlurb(input.game, format, maxAttempts)
-  const rules: TournamentRules =
-    format === 'attempt-limited'
-      ? { maxAttempts, scoring: 'best' }
-      : format === 'cumulative'
-        ? { scoring: 'sum' }
-        : { scoring: 'best' }
+    input.blurb?.trim().slice(0, 280) || defaultCommunityBlurb(games, maxAttempts)
+  const rules: TournamentRules = {
+    maxAttempts: maxAttempts > 0 ? maxAttempts : 0,
+    scoring: 'best',
+  }
 
   const tournament: Tournament = {
     id: `community-${uid()}`,
     title,
     blurb,
-    games: [input.game],
+    games,
     startsAt: now,
     endsAt,
     official: false,

@@ -2,7 +2,7 @@ import { Router } from 'express'
 import { z } from 'zod'
 import { accountFromRequest } from './auth.js'
 import { assertCanUseName } from './names.js'
-import { isAllowedGame } from './store.js'
+import { isAllowedGame, type GameSlug } from './store.js'
 import {
   activeTournamentsForGame,
   createTournament,
@@ -12,7 +12,6 @@ import {
   renamePlayerAcrossTournaments,
   submitTournamentScore,
   type CreateTournamentInput,
-  type TournamentFormat,
   type TournamentListFilter,
 } from './tournaments.js'
 
@@ -38,14 +37,11 @@ const renameSchema = z.object({
   toToken: tokenSchema,
 })
 
-const communityFormats = ['open', 'attempt-limited', 'single-run', 'cumulative'] as const
-
 const createSchema = z.object({
   title: z.string().min(3).max(60),
   blurb: z.string().max(280).optional(),
-  game: z.string().min(1),
-  format: z.enum(communityFormats),
-  maxAttempts: z.number().int().min(2).max(20).optional(),
+  games: z.array(z.string().min(1)).min(1).max(5),
+  maxAttempts: z.number().int().min(0).max(99),
   durationHours: z.number().int().min(1).max(168),
 })
 
@@ -76,16 +72,17 @@ tournamentsRouter.post('/', (req, res) => {
     res.status(401).json({ error: 'Sign in to create events' })
     return
   }
-  if (!isAllowedGame(parsed.data.game)) {
-    res.status(400).json({ error: 'Unknown game' })
-    return
+  for (const game of parsed.data.games) {
+    if (!isAllowedGame(game)) {
+      res.status(400).json({ error: 'Unknown game' })
+      return
+    }
   }
   try {
     const input: CreateTournamentInput = {
       title: parsed.data.title,
       blurb: parsed.data.blurb,
-      game: parsed.data.game,
-      format: parsed.data.format as Exclude<TournamentFormat, 'place-points'>,
+      games: parsed.data.games as GameSlug[],
       maxAttempts: parsed.data.maxAttempts,
       durationHours: parsed.data.durationHours,
     }

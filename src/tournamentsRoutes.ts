@@ -44,6 +44,7 @@ const createSchema = z.object({
   blurb: z.string().max(280).optional(),
   games: z.array(z.string().min(1)).min(1).max(5),
   maxAttempts: z.number().int().min(0).max(99),
+  maxPlayers: z.number().int().min(0).max(99),
   durationHours: z.number().int().min(0).max(168),
 })
 
@@ -91,6 +92,7 @@ tournamentsRouter.post('/', (req, res) => {
       blurb: parsed.data.blurb,
       games: parsed.data.games as GameSlug[],
       maxAttempts: parsed.data.maxAttempts,
+      maxPlayers: parsed.data.maxPlayers,
       durationHours: parsed.data.durationHours,
     }
     const tournament = createTournament(input, {

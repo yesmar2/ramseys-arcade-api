@@ -24,6 +24,8 @@ export type TournamentVisibility = 'public' | 'private'
 
 export type TournamentRules = {
   maxAttempts?: number
+  /** Max roster size; 0 = unlimited */
+  maxPlayers?: number
   scoring?: TournamentScoring
   unlimitedDuration?: boolean
 }
@@ -305,6 +307,37 @@ export function getMaxAttempts(t: Tournament): number {
   return Number.POSITIVE_INFINITY
 }
 
+export function getMaxPlayers(t: Tournament): number | null {
+  const n = normalizeTournament(t).rules?.maxPlayers
+  if (n == null || n <= 0) return null
+  return n
+}
+
+function playerFinishedAllGames(t: Tournament, playerId: string): boolean {
+  const normalized = normalizeTournament(t)
+  const format = resolveFormat(normalized)
+  const maxAttempts = getMaxAttempts(normalized)
+  if (format === 'open' || !Number.isFinite(maxAttempts)) return false
+  for (const game of normalized.games) {
+    if (playerAttempts(normalized, playerId, game) < maxAttempts) return false
+  }
+  return true
+}
+
+function allPlayersFinishedAttempts(t: Tournament): boolean {
+  const normalized = normalizeTournament(t)
+  if (!normalized.rules?.unlimitedDuration) return false
+  if (normalized.players.length === 0) return false
+  return normalized.players.every((p) => playerFinishedAllGames(normalized, p.id))
+}
+
+function maybeEndUnlimitedDurationEvent(t: Tournament, now: number): boolean {
+  if (!normalizeTournament(t).rules?.unlimitedDuration) return false
+  if (!allPlayersFinishedAttempts(t)) return false
+  t.endsAt = now
+  return true
+}
+
 function playerAttempts(t: Tournament, playerId: string, game: GameSlug): number {
   return t.scores.filter((s) => s.playerId === playerId && s.game === game).length
 }
@@ -533,7 +566,10 @@ function detailAccessOpts(
 export function tournamentStatus(t: Tournament, now = Date.now()): TournamentStatus {
   const normalized = normalizeTournament(t)
   if (now < normalized.startsAt) return 'upcoming'
-  if (normalized.rules?.unlimitedDuration) return 'active'
+  if (normalized.rules?.unlimitedDuration) {
+    if (allPlayersFinishedAttempts(normalized)) return 'ended'
+    return 'active'
+  }
   if (now > normalized.endsAt) return 'ended'
   return 'active'
 }
@@ -767,6 +803,8 @@ export type CreateTournamentInput = {
   games: GameSlug[]
   /** 0 = unlimited attempts per game */
   maxAttempts: number
+  /** 0 = unlimited roster size */
+  maxPlayers: number
   durationHours: number
 }
 
@@ -805,6 +843,10 @@ export function createTournament(
   }
 
   const maxAttempts = Math.max(0, Math.min(99, Math.floor(input.maxAttempts)))
+  const maxPlayers = Math.max(0, Math.min(99, Math.floor(input.maxPlayers)))
+  if (maxPlayers > 0 && maxPlayers < 2) {
+    throw Object.assign(new Error('Player limit must be at least 2, or unlimited'), { status: 400 })
+  }
   const format =
     games.length > 1 ? 'place-points' : deriveCommunityFormat(maxAttempts)
 
@@ -827,6 +869,7 @@ export function createTournament(
       : defaultCommunityBlurb(games, maxAttempts))
   const rules: TournamentRules = {
     maxAttempts: maxAttempts > 0 ? maxAttempts : 0,
+    maxPlayers: maxPlayers > 0 ? maxPlayers : 0,
     scoring: 'best',
     ...(unlimitedDuration ? { unlimitedDuration: true } : {}),
   }
@@ -917,6 +960,13 @@ export function joinTournament(
   }
 
   const player: TournamentPlayer = { id: uid(), name: cleaned, joinedAt: now }
+  const cap = getMaxPlayers(t)
+  if (cap != null && t.players.length >= cap) {
+    throw Object.assign(new Error('This event is full'), {
+      status: 409,
+      code: 'EVENT_FULL',
+    })
+  }
   t.players.push(player)
   writeStore(store)
   return {
@@ -964,6 +1014,13 @@ export function submitTournamentScore(
   assertTournamentAccess(t, { ...access, playerName: cleaned })
   let player = t.players.find((p) => p.name === cleaned)
   if (!player) {
+    const cap = getMaxPlayers(t)
+    if (cap != null && t.players.length >= cap) {
+      throw Object.assign(new Error('This event is full'), {
+        status: 409,
+        code: 'EVENT_FULL',
+      })
+    }
     player = { id: uid(), name: cleaned, joinedAt: now }
     t.players.push(player)
   }
@@ -1008,6 +1065,9 @@ export function submitTournamentScore(
     })
     writeStore(store)
   }
+
+  maybeEndUnlimitedDurationEvent(t, now)
+  writeStore(store)
 
   const attemptsUsed = format === 'open' ? used : used + 1
   const finiteMax = Number.isFinite(maxAttempts) ? maxAttempts : null

@@ -286,6 +286,20 @@ export function getBoard(
 
 export type PeriodBoardSummary = Record<Period, LeaderboardEntry[]>
 
+/** Top N entries per game for one period — one pass over local store. */
+export function boardsSummaryForPeriod(
+  period: Period,
+  limit = 3,
+  now = Date.now(),
+): Record<GameSlug, LeaderboardEntry[]> {
+  const capped = Math.min(10, Math.max(1, Math.floor(limit)) || 3)
+  const out = {} as Record<GameSlug, LeaderboardEntry[]>
+  for (const game of ALLOWED_GAMES) {
+    out[game] = getBoard(game, period, now).slice(0, capped)
+  }
+  return out
+}
+
 /** Top N entries per game and period — one pass over local store. */
 export function boardsSummary(limit = 3, now = Date.now()): Record<GameSlug, PeriodBoardSummary> {
   const capped = Math.min(10, Math.max(1, Math.floor(limit)) || 3)

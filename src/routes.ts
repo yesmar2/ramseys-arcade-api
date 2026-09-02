@@ -7,12 +7,11 @@ import {
   ALLOWED_GAMES,
   bestForName,
   bestsForName,
-  boardsSummary,
+  boardsSummaryForPeriod,
   getBoard,
   globalRanks,
   isAllowedGame,
   isPeriod,
-  PERIODS,
   qualifies,
   qualifiesAny,
   rankForName,
@@ -72,17 +71,13 @@ leaderboardsRouter.get('/summary', (req, res) => {
   const limit = Number.isFinite(limitRaw)
     ? Math.min(10, Math.max(1, Math.floor(limitRaw)))
     : 3
-  const boards = boardsSummary(limit)
+  const period = parsePeriod(req.query.period)
+  const boards = boardsSummaryForPeriod(period, limit)
   const games = ALLOWED_GAMES.map((slug) => ({
     slug,
-    byPeriod: Object.fromEntries(
-      PERIODS.map((period) => [
-        period,
-        { entries: withAvatarIds(boards[slug][period]) },
-      ]),
-    ),
+    entries: withAvatarIds(boards[slug]),
   }))
-  res.json({ limit, games })
+  res.json({ limit, period, games })
 })
 
 const submitSchema = z.object({

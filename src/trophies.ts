@@ -231,3 +231,40 @@ export function renamePlayerAcrossTrophies(from: string, to: string) {
   if (updated) writeTrophiesStore(store)
   return updated
 }
+
+export type TrophySummary = {
+  total: number
+  podium: number
+  topTen: number
+}
+
+export type TrophyCount = Pick<TrophySummary, 'total' | 'podium'>
+
+function summarizeAwards(awards: TrophyAward[]): TrophySummary {
+  let podium = 0
+  let topTen = 0
+  for (const award of awards) {
+    if (award.rank <= 3) podium++
+    else topTen++
+  }
+  return { total: awards.length, podium, topTen }
+}
+
+export function trophySummaryForName(name: string): TrophySummary {
+  return summarizeAwards(trophiesForName(name))
+}
+
+export function trophySummariesForNames(names: string[]): Record<string, TrophyCount> {
+  const wanted = new Set(
+    names.map((n) => n.trim().slice(0, 12).toUpperCase()).filter(Boolean),
+  )
+  const out: Record<string, TrophyCount> = {}
+  for (const award of ensureTrophiesStore().awards) {
+    if (!wanted.has(award.name)) continue
+    const row = out[award.name] ?? { total: 0, podium: 0 }
+    row.total++
+    if (award.rank <= 3) row.podium++
+    out[award.name] = row
+  }
+  return out
+}

@@ -2,12 +2,10 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
-  ALLOWED_GAMES,
-  getClosedBoard,
+  globalRanksForClosedPeriod,
   loadStore,
   monthKey,
   weekStartKey,
-  type GameSlug,
 } from './store.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -16,16 +14,17 @@ const TROPHIES_PATH = path.join(DATA_DIR, 'trophies.json')
 const CLAIMS_PATH = path.join(DATA_DIR, 'name-claims.json')
 
 export type TrophyPeriod = 'weekly' | 'monthly'
+export const MAX_TROPHY_RANK = 10
 
 export type TrophyAward = {
   id: string
-  game: GameSlug
   period: TrophyPeriod
   periodKey: number
   name: string
-  accountId?: string
+  rank: number
   score: number
-  entryId: string
+  games: number
+  accountId?: string
   awardedAt: number
 }
 
@@ -37,12 +36,27 @@ type TrophiesStore = {
   }
 }
 
-function awardId(game: GameSlug, period: TrophyPeriod, periodKey: number) {
-  return `${game}-${period}-${periodKey}`
+function awardId(period: TrophyPeriod, periodKey: number, name: string) {
+  return `${period}-${periodKey}-${name}`
 }
 
 function emptyStore(): TrophiesStore {
   return { awards: [], cursor: {} }
+}
+
+function isTrophyAward(raw: unknown): raw is TrophyAward {
+  if (!raw || typeof raw !== 'object') return false
+  const row = raw as Partial<TrophyAward>
+  return (
+    typeof row.id === 'string' &&
+    (row.period === 'weekly' || row.period === 'monthly') &&
+    typeof row.periodKey === 'number' &&
+    typeof row.name === 'string' &&
+    typeof row.rank === 'number' &&
+    typeof row.score === 'number' &&
+    typeof row.games === 'number' &&
+    typeof row.awardedAt === 'number'
+  )
 }
 
 function ensureTrophiesStore(): TrophiesStore {
@@ -57,7 +71,14 @@ function ensureTrophiesStore(): TrophiesStore {
   try {
     const parsed = JSON.parse(fs.readFileSync(TROPHIES_PATH, 'utf8')) as TrophiesStore
     if (!parsed || !Array.isArray(parsed.awards)) return emptyStore()
-    return { awards: parsed.awards, cursor: parsed.cursor ?? {} }
+    const awards = parsed.awards.filter(isTrophyAward)
+    const migrated = awards.length !== parsed.awards.length
+    return {
+      awards,
+      cursor: migrated
+        ? {}
+        : (parsed.cursor ?? {}),
+    }
   } catch {
     return emptyStore()
   }
@@ -81,32 +102,32 @@ function lookupAccountId(name: string): string | undefined {
   }
 }
 
-function hasAward(store: TrophiesStore, game: GameSlug, period: TrophyPeriod, periodKey: number) {
-  return store.awards.some((a) => a.id === awardId(game, period, periodKey))
-}
-
-function tryAward(
+function awardClosedPeriod(
   store: TrophiesStore,
-  game: GameSlug,
   period: TrophyPeriod,
   periodKey: number,
   now: number,
 ): boolean {
-  if (hasAward(store, game, period, periodKey)) return false
-  const winner = getClosedBoard(game, period, periodKey)[0]
-  if (!winner) return false
-  store.awards.push({
-    id: awardId(game, period, periodKey),
-    game,
-    period,
-    periodKey,
-    name: winner.name,
-    accountId: lookupAccountId(winner.name),
-    score: winner.score,
-    entryId: winner.id,
-    awardedAt: now,
-  })
-  return true
+  const ranked = globalRanksForClosedPeriod(period, periodKey).slice(0, MAX_TROPHY_RANK)
+  if (ranked.length === 0) return false
+  let changed = false
+  for (const row of ranked) {
+    const id = awardId(period, periodKey, row.name)
+    if (store.awards.some((a) => a.id === id)) continue
+    store.awards.push({
+      id,
+      period,
+      periodKey,
+      name: row.name,
+      rank: row.rank,
+      score: row.score,
+      games: row.games,
+      accountId: lookupAccountId(row.name),
+      awardedAt: now,
+    })
+    changed = true
+  }
+  return changed
 }
 
 function addDaysToDateKey(key: number, days: number) {
@@ -153,7 +174,7 @@ function listMonthKeysBefore(now: number, count: number) {
   return keys
 }
 
-/** Award weekly/monthly #1 trophies for completed periods (lazy rollover). */
+/** Award global-rank trophies for completed weekly/monthly periods (lazy rollover). */
 export function ensurePeriodTrophies(now = Date.now()) {
   loadStore()
   const store = ensureTrophiesStore()
@@ -163,15 +184,11 @@ export function ensurePeriodTrophies(now = Date.now()) {
   const monthCount = store.cursor.monthlyInitialized ? 1 : 6
 
   for (const weekKey of listWeekKeysBefore(now, weekCount)) {
-    for (const game of ALLOWED_GAMES) {
-      if (tryAward(store, game, 'weekly', weekKey, now)) changed = true
-    }
+    if (awardClosedPeriod(store, 'weekly', weekKey, now)) changed = true
   }
 
   for (const monthKeyVal of listMonthKeysBefore(now, monthCount)) {
-    for (const game of ALLOWED_GAMES) {
-      if (tryAward(store, game, 'monthly', monthKeyVal, now)) changed = true
-    }
+    if (awardClosedPeriod(store, 'monthly', monthKeyVal, now)) changed = true
   }
 
   if (!store.cursor.weeklyInitialized) {
@@ -191,13 +208,13 @@ export function trophiesForName(name: string): TrophyAward[] {
   if (!cleaned) return []
   return ensureTrophiesStore()
     .awards.filter((a) => a.name === cleaned)
-    .sort((a, b) => b.awardedAt - a.awardedAt)
+    .sort((a, b) => b.awardedAt - a.awardedAt || a.rank - b.rank)
 }
 
 export function recentTrophies(limit = 20): TrophyAward[] {
   const capped = Math.min(50, Math.max(1, Math.floor(limit)) || 20)
   return [...ensureTrophiesStore().awards]
-    .sort((a, b) => b.awardedAt - a.awardedAt)
+    .sort((a, b) => b.awardedAt - a.awardedAt || a.rank - b.rank)
     .slice(0, capped)
 }
 
@@ -207,6 +224,7 @@ export function renamePlayerAcrossTrophies(from: string, to: string) {
   for (const award of store.awards) {
     if (award.name === from) {
       award.name = to
+      award.id = awardId(award.period, award.periodKey, to)
       updated++
     }
   }

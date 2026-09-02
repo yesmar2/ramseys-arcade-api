@@ -403,13 +403,7 @@ export type GlobalRankEntry = {
   byGame: Partial<Record<GameSlug, GlobalGamePlace>>
 }
 
-/** Unique best-per-name on a period board, ordered for placement. */
-function periodPlacements(
-  game: GameSlug,
-  period: Period,
-  now = Date.now(),
-): { name: string; place: number }[] {
-  const pool = sortByScore(filterByPeriod(historyFor(game), period, now))
+function placementsFromPool(pool: LeaderboardEntry[]): { name: string; place: number }[] {
   const seen = new Set<string>()
   const bests: string[] = []
   for (const entry of pool) {
@@ -421,14 +415,35 @@ function periodPlacements(
   return bests.map((name, i) => ({ name, place: i + 1 }))
 }
 
-export function globalRanks(period: Period = 'all', now = Date.now()): GlobalRankEntry[] {
+/** Unique best-per-name on a period board, ordered for placement. */
+function periodPlacements(
+  game: GameSlug,
+  period: Period,
+  now = Date.now(),
+): { name: string; place: number }[] {
+  return placementsFromPool(sortByScore(filterByPeriod(historyFor(game), period, now)))
+}
+
+function closedPeriodPlacements(
+  game: GameSlug,
+  period: ClosedPeriod,
+  periodKey: number,
+): { name: string; place: number }[] {
+  return placementsFromPool(
+    sortByScore(filterByClosedPeriod(historyFor(game), period, periodKey)),
+  )
+}
+
+function aggregateGlobalRanks(
+  placementsForGame: (game: GameSlug) => { name: string; place: number }[],
+): GlobalRankEntry[] {
   const byName = new Map<
     string,
     { score: number; games: number; byGame: Partial<Record<GameSlug, GlobalGamePlace>> }
   >()
 
   for (const game of ALLOWED_GAMES) {
-    for (const { name, place } of periodPlacements(game, period, now)) {
+    for (const { name, place } of placementsForGame(game)) {
       const points = placePoints(place)
       if (points <= 0) continue
       const row = byName.get(name) ?? { score: 0, games: 0, byGame: {} }
@@ -454,6 +469,18 @@ export function globalRanks(period: Period = 'all', now = Date.now()): GlobalRan
     games: row.games,
     byGame: row.byGame,
   }))
+}
+
+export function globalRanks(period: Period = 'all', now = Date.now()): GlobalRankEntry[] {
+  return aggregateGlobalRanks((game) => periodPlacements(game, period, now))
+}
+
+/** Global ranks for a completed weekly or monthly period. */
+export function globalRanksForClosedPeriod(
+  period: ClosedPeriod,
+  periodKey: number,
+): GlobalRankEntry[] {
+  return aggregateGlobalRanks((game) => closedPeriodPlacements(game, period, periodKey))
 }
 
 export function rankForName(

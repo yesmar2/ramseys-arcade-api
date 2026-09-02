@@ -11,7 +11,6 @@ import { seedLeaderboards } from './seedBoards.js'
 import { seedRecords } from './seedRecords.js'
 import { ALLOWED_GAMES } from './store.js'
 import { tournamentsRouter } from './tournamentsRoutes.js'
-import { ensurePeriodTrophies } from './trophies.js'
 import { trophiesRouter } from './trophiesRoutes.js'
 
 /** Load .env into process.env when present (does not override existing vars). */
@@ -64,15 +63,6 @@ app.use(
   }),
 )
 app.use(express.json({ limit: '32kb' }))
-
-app.use((_req, _res, next) => {
-  try {
-    ensurePeriodTrophies()
-  } catch (err) {
-    console.error('trophy rollover failed', err)
-  }
-  next()
-})
 
 app.get('/health', (_req, res) => {
   res.json({ ok: true, games: ALLOWED_GAMES })

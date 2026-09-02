@@ -1083,6 +1083,7 @@ export function submitTournamentScore(
     tournament: getTournamentDetail(id, now, {
       ...detailAccessOpts(access),
       playerName: cleaned,
+      game,
       accountId: access.accountId,
     })!,
     accepted: true,

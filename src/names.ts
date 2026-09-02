@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { renamePlayerAcrossLeaderboards } from './store.js'
 import { renamePlayerAcrossRecords } from './records.js'
 import { renamePlayerAcrossTournaments } from './tournaments.js'
+import { renamePlayerAcrossTrophies } from './trophies.js'
 import {
   defaultAvatarId,
   isAvatarId,
@@ -98,6 +99,7 @@ export function migratePlayerScores(fromRaw: string, toRaw: string) {
   const boards = renamePlayerAcrossLeaderboards(from, to)
   renamePlayerAcrossTournaments(from, to)
   renamePlayerAcrossRecords(from, to)
+  renamePlayerAcrossTrophies(from, to)
   return boards
 }
 

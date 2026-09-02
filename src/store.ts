@@ -218,7 +218,7 @@ function keyOf(ms: number) {
 }
 
 /** Monday-start week key (YYYYMMDD of that Monday) in BOARD_TZ. */
-function weekStartKey(ms: number) {
+export function weekStartKey(ms: number) {
   const { y, m, d, weekday } = ymdInTz(ms)
   const sunFirst: Record<string, number> = {
     Sun: 0,
@@ -270,6 +270,50 @@ export function filterByPeriod(
     const k = keyOf(e.at)
     return k >= start && k <= today
   })
+}
+
+export function monthKey(ms: number) {
+  const { y, m } = ymdInTz(ms)
+  return y * 100 + m
+}
+
+function addDaysToDateKey(key: number, days: number) {
+  const y = Math.floor(key / 10_000)
+  const m = Math.floor((key % 10_000) / 100)
+  const d = key % 100
+  const dt = new Date(Date.UTC(y, m - 1, d))
+  dt.setUTCDate(dt.getUTCDate() + days)
+  return dateKey(dt.getUTCFullYear(), dt.getUTCMonth() + 1, dt.getUTCDate())
+}
+
+export type ClosedPeriod = 'weekly' | 'monthly'
+
+export function filterByClosedPeriod(
+  entries: LeaderboardEntry[],
+  period: ClosedPeriod,
+  periodKey: number,
+) {
+  if (period === 'weekly') {
+    const end = addDaysToDateKey(periodKey, 6)
+    return entries.filter((e) => {
+      const k = keyOf(e.at)
+      return k >= periodKey && k <= end
+    })
+  }
+  const y = Math.floor(periodKey / 100)
+  const m = periodKey % 100
+  return entries.filter((e) => {
+    const p = ymdInTz(e.at)
+    return p.y === y && p.m === m
+  })
+}
+
+export function getClosedBoard(
+  game: GameSlug,
+  period: ClosedPeriod,
+  periodKey: number,
+): LeaderboardEntry[] {
+  return topBoard(filterByClosedPeriod(historyFor(game), period, periodKey))
 }
 
 function historyFor(game: GameSlug): LeaderboardEntry[] {

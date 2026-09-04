@@ -3,6 +3,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { seedLeaderboards } from './seedBoards.js'
 import { seedRecords } from './seedRecords.js'
+import { ensureShowcaseTrophies } from './trophies.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const DATA_DIR = path.resolve(__dirname, '../data')

@@ -13,7 +13,7 @@ const REV_PATH = path.join(DATA_DIR, '.seed-rev')
  * Bump this to wipe + reseed leaderboards/records on the next API boot.
  * Keeps accounts, sessions, and name claims.
  */
-export const SEED_REVISION = '2026-09-04-stacker-perfect'
+export const SEED_REVISION = '2026-09-04-jeff-trophies'
 
 function readRev(): string | null {
   try {
@@ -50,6 +50,7 @@ export function applySeedRevision(forceEnv = false): boolean {
   seedLeaderboards(true)
   seedRecords(true)
   clearTrophies()
+  ensureShowcaseTrophies()
   writeRev(SEED_REVISION)
   return true
 }

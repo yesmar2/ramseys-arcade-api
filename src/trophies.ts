@@ -201,6 +201,7 @@ export function ensurePeriodTrophies(now = Date.now()) {
   }
 
   if (changed) writeTrophiesStore(store)
+  ensureShowcaseTrophies()
 }
 
 export function trophiesForName(name: string): TrophyAward[] {

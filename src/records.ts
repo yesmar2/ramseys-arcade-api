@@ -21,6 +21,9 @@ const ASTEROIDS_WAVE_MAX = 20
 const SNAKE_LENGTH_MILESTONE_MIN = 20
 const SNAKE_LENGTH_MILESTONE_MAX = 100
 const SNAKE_LENGTH_MILESTONE_STEP = 10
+const STRIDE_ROW_MILESTONE_MIN = 25
+const STRIDE_ROW_MILESTONE_MAX = 200
+const STRIDE_ROW_MILESTONE_STEP = 25
 
 export type RecordDirection = 'lower' | 'higher'
 
@@ -91,11 +94,48 @@ function buildSnakeFastestLengthRecords(): RecordDef[] {
   return defs
 }
 
+function buildStrideFastestRowRecords(): RecordDef[] {
+  const defs: RecordDef[] = []
+  for (
+    let rows = STRIDE_ROW_MILESTONE_MIN;
+    rows <= STRIDE_ROW_MILESTONE_MAX;
+    rows += STRIDE_ROW_MILESTONE_STEP
+  ) {
+    defs.push({
+      id: `fastest-row-${rows}`,
+      game: 'stride',
+      label: `Fastest to ${rows}`,
+      direction: 'lower',
+      unit: 'ms',
+    })
+  }
+  return defs
+}
+
+const STRIDE_MOST_COINS: RecordDef = {
+  id: 'most-coins',
+  game: 'stride',
+  label: 'Most coins in a run',
+  direction: 'higher',
+  unit: 'count',
+}
+
+const POP_CENTER_STREAK: RecordDef = {
+  id: 'center-streak',
+  game: 'pop',
+  label: 'Perfect centers in a row',
+  direction: 'higher',
+  unit: 'count',
+}
+
 const RECORD_DEFS: RecordDef[] = [
   ASTEROIDS_HIGHEST_COMBO,
   PATRIOT_DIRECT_STREAK,
+  STRIDE_MOST_COINS,
+  POP_CENTER_STREAK,
   ...buildAsteroidsWaveRecords(),
   ...buildSnakeFastestLengthRecords(),
+  ...buildStrideFastestRowRecords(),
 ]
 
 const DEFS_BY_KEY = new Map(
@@ -132,6 +172,21 @@ export function isSnakeFastestLengthRecord(recordId: string): number | null {
     return null
   }
   return length
+}
+
+export function isStrideFastestRowRecord(recordId: string): number | null {
+  const match = /^fastest-row-(\d+)$/.exec(recordId)
+  if (!match) return null
+  const rows = Number(match[1])
+  if (
+    !Number.isInteger(rows) ||
+    rows < STRIDE_ROW_MILESTONE_MIN ||
+    rows > STRIDE_ROW_MILESTONE_MAX ||
+    rows % STRIDE_ROW_MILESTONE_STEP !== 0
+  ) {
+    return null
+  }
+  return rows
 }
 
 function emptyStore(): RecordsStore {

@@ -6,10 +6,13 @@ import {
   SNAKE_LENGTH_MILESTONE_MAX,
   SNAKE_LENGTH_MILESTONE_MIN,
   SNAKE_LENGTH_MILESTONE_STEP,
+  STRIDE_ROW_MILESTONE_MAX,
+  STRIDE_ROW_MILESTONE_MIN,
+  STRIDE_ROW_MILESTONE_STEP,
   type RecordEntry,
 } from './records.js'
 import { SEED_NAMES } from './seedBoards.js'
-import type { DeviceType } from './store.js'
+import type { DeviceType, GameSlug } from './store.js'
 
 function mulberry32(seed: number) {
   let t = seed >>> 0
@@ -22,6 +25,7 @@ function mulberry32(seed: number) {
 }
 
 const DEVICES: DeviceType[] = ['phone', 'tablet', 'desktop']
+const RECORD_GAMES: GameSlug[] = ['asteroids', 'snake', 'patriot', 'stride', 'pop']
 
 function stamp(daysAgo: number, rand: () => number) {
   const hour = 9 + Math.floor(rand() * 12)
@@ -51,31 +55,44 @@ function entry(
   }
 }
 
-/** Wave clear times in ms — seeded slow so normal clears beat them easily. */
 function waveTimeMs(wave: number, skill: number, rand: () => number) {
-  const baseSec = 36 + wave * 11 + wave * wave * 0.75
-  const slack = 1.08 + (1 - skill) * 0.42 + rand() * 0.22
+  const baseSec = 28 + wave * 9 + wave * wave * 0.55
+  const slack = 1.02 + (1 - skill) * 0.38 + rand() * 0.18
   return Math.round(baseSec * 1000 * slack)
 }
 
-/** Fastest-to-length times in ms — seeded slow for testing. */
 function lengthTimeMs(length: number, skill: number, rand: () => number) {
   const foods = Math.max(1, length - 3)
-  const secPerFood = 2.4 - skill * 0.75 + rand() * 0.55
-  return Math.max(8_000, Math.round(foods * secPerFood * 1000))
+  const secPerFood = 1.85 - skill * 0.65 + rand() * 0.45
+  return Math.max(6_500, Math.round(foods * secPerFood * 1000))
+}
+
+function strideRowTimeMs(rows: number, skill: number, rand: () => number) {
+  const secPerRow = 0.95 - skill * 0.35 + rand() * 0.28
+  return Math.max(8_000, Math.round(rows * secPerRow * 1000))
 }
 
 function comboValue(skill: number, rand: () => number) {
-  const raw = 2 + skill * 5 + rand() * 4
-  return Math.max(2, Math.min(10, Math.round(raw)))
+  const raw = 3 + skill * 8 + rand() * 5
+  return Math.max(2, Math.min(18, Math.round(raw)))
 }
 
 function directStreakValue(skill: number, rand: () => number) {
-  const raw = 2 + skill * 4 + rand() * 3
-  return Math.max(2, Math.min(8, Math.round(raw)))
+  const raw = 3 + skill * 7 + rand() * 4
+  return Math.max(2, Math.min(16, Math.round(raw)))
 }
 
-export function buildRecordsSeed(seed = 20260825) {
+function coinsValue(skill: number, rand: () => number) {
+  const raw = 4 + skill * 28 + rand() * 12
+  return Math.max(2, Math.min(48, Math.round(raw)))
+}
+
+function centerStreakValue(skill: number, rand: () => number) {
+  const raw = 2 + skill * 9 + rand() * 4
+  return Math.max(2, Math.min(18, Math.round(raw)))
+}
+
+export function buildRecordsSeed(seed = 20260904) {
   const rand = mulberry32(seed ^ 0x9e3779b9)
   const store: Record<string, RecordEntry[]> = {}
 
@@ -86,11 +103,9 @@ export function buildRecordsSeed(seed = 20260825) {
     return { name, skill, device, i }
   })
 
-  // Highest combo — a few modest scores
-  const comboKey = 'asteroids::highest-combo'
-  store[comboKey] = players
-    .filter((p) => p.skill > 0.15 || rand() < 0.35)
-    .slice(0, 12)
+  store['asteroids::highest-combo'] = players
+    .filter((p) => p.skill > 0.12 || rand() < 0.4)
+    .slice(0, 18)
     .map((p) =>
       entry(
         p.name,
@@ -100,11 +115,9 @@ export function buildRecordsSeed(seed = 20260825) {
       ),
     )
 
-  // Patriot perfect-hit streak
-  const patriotStreakKey = 'patriot::direct-streak'
-  store[patriotStreakKey] = players
-    .filter((p) => p.skill > 0.12 || rand() < 0.35)
-    .slice(0, 12)
+  store['patriot::direct-streak'] = players
+    .filter((p) => p.skill > 0.1 || rand() < 0.4)
+    .slice(0, 16)
     .map((p) =>
       entry(
         p.name,
@@ -114,12 +127,35 @@ export function buildRecordsSeed(seed = 20260825) {
       ),
     )
 
-  // Wave times — denser on early waves, thinner later
+  store['stride::most-coins'] = players
+    .filter((p) => p.skill > 0.08 || rand() < 0.45)
+    .slice(0, 20)
+    .map((p) =>
+      entry(
+        p.name,
+        coinsValue(p.skill, rand),
+        stamp(Math.floor(rand() * 35), rand),
+        p.device,
+      ),
+    )
+
+  store['pop::center-streak'] = players
+    .filter((p) => p.skill > 0.1 || rand() < 0.42)
+    .slice(0, 18)
+    .map((p) =>
+      entry(
+        p.name,
+        centerStreakValue(p.skill, rand),
+        stamp(Math.floor(rand() * 35), rand),
+        p.device,
+      ),
+    )
+
   for (let wave = 1; wave <= ASTEROIDS_WAVE_MAX; wave++) {
     const key = `asteroids::wave-time-${wave}`
     const depthNeed = wave / ASTEROIDS_WAVE_MAX
-    const pool = players.filter((p) => p.skill >= depthNeed * 0.35 - 0.1)
-    const count = Math.max(4, Math.min(14, Math.round(10 - wave * 0.2 + rand() * 3)))
+    const pool = players.filter((p) => p.skill >= depthNeed * 0.32 - 0.08)
+    const count = Math.max(5, Math.min(16, Math.round(12 - wave * 0.18 + rand() * 3)))
     store[key] = pool.slice(0, count).map((p) =>
       entry(
         p.name,
@@ -130,7 +166,6 @@ export function buildRecordsSeed(seed = 20260825) {
     )
   }
 
-  // Snake length milestones
   for (
     let length = SNAKE_LENGTH_MILESTONE_MIN;
     length <= SNAKE_LENGTH_MILESTONE_MAX;
@@ -138,8 +173,8 @@ export function buildRecordsSeed(seed = 20260825) {
   ) {
     const key = `snake::fastest-length-${length}`
     const need = length / SNAKE_LENGTH_MILESTONE_MAX
-    const pool = players.filter((p) => p.skill >= need * 0.35)
-    const count = Math.max(4, Math.min(12, Math.round(10 - length * 0.04 + rand() * 2)))
+    const pool = players.filter((p) => p.skill >= need * 0.32)
+    const count = Math.max(5, Math.min(14, Math.round(11 - length * 0.035 + rand() * 2)))
     store[key] = pool.slice(0, count).map((p) =>
       entry(
         p.name,
@@ -150,12 +185,27 @@ export function buildRecordsSeed(seed = 20260825) {
     )
   }
 
-  // Sanity: only known defs
+  for (
+    let rows = STRIDE_ROW_MILESTONE_MIN;
+    rows <= STRIDE_ROW_MILESTONE_MAX;
+    rows += STRIDE_ROW_MILESTONE_STEP
+  ) {
+    const key = `stride::fastest-row-${rows}`
+    const need = rows / STRIDE_ROW_MILESTONE_MAX
+    const pool = players.filter((p) => p.skill >= need * 0.28)
+    const count = Math.max(5, Math.min(16, Math.round(12 - rows * 0.02 + rand() * 3)))
+    store[key] = pool.slice(0, count).map((p) =>
+      entry(
+        p.name,
+        strideRowTimeMs(rows, p.skill, rand),
+        stamp(Math.floor(rand() * 30), rand),
+        p.device,
+      ),
+    )
+  }
+
   const allowed = new Set(
-    listRecordDefs('asteroids')
-      .concat(listRecordDefs('snake'))
-      .concat(listRecordDefs('patriot'))
-      .map((d) => `${d.game}::${d.id}`),
+    RECORD_GAMES.flatMap((game) => listRecordDefs(game).map((d) => `${d.game}::${d.id}`)),
   )
   for (const key of Object.keys(store)) {
     if (!allowed.has(key)) delete store[key]

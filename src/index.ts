@@ -10,6 +10,7 @@ import { recordsRouter } from './recordsRoutes.js'
 import { seedLeaderboards } from './seedBoards.js'
 import { seedRecords } from './seedRecords.js'
 import { ALLOWED_GAMES } from './store.js'
+import { applySeedRevision } from './seedRevision.js'
 import { tournamentsRouter } from './tournamentsRoutes.js'
 import { trophiesRouter } from './trophiesRoutes.js'
 
@@ -76,11 +77,15 @@ app.use('/tournaments', tournamentsRouter)
 app.use('/trophies', trophiesRouter)
 
 const forceSeed = process.env.SEED_FORCE === '1' || process.env.SEED_FORCE === 'true'
-if (seedLeaderboards(forceSeed)) {
-  console.log('Seeded leaderboards with sample arcade scores')
-}
-if (seedRecords(forceSeed)) {
-  console.log('Seeded record books with sample times')
+if (applySeedRevision(forceSeed)) {
+  console.log('Reseeded leaderboards + records (revision bump or SEED_FORCE)')
+} else {
+  if (seedLeaderboards(false)) {
+    console.log('Seeded leaderboards with sample arcade scores')
+  }
+  if (seedRecords(false)) {
+    console.log('Seeded record books with sample times')
+  }
 }
 
 app.use((_req, res) => {

@@ -1,4 +1,4 @@
-# Fordriva API
+# Skermix API
 
 Leaderboard + tournament backend for [ramseys-arcade](https://github.com/yesmar2/ramseys-arcade).
 

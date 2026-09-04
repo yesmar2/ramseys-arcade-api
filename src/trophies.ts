@@ -270,14 +270,15 @@ export function trophySummariesForNames(names: string[]): Record<string, TrophyC
   return out
 }
 
-/** Curated showcase awards so JEFF's case shows every trophy art variant. */
-const SHOWCASE_NAME = 'JEFF'
+/** Curated showcase awards so demo profiles show every trophy art variant. */
+type ShowcaseAward = Omit<TrophyAward, 'id' | 'accountId' | 'name'> & { name: string }
 
-const SHOWCASE_AWARDS: Omit<TrophyAward, 'id' | 'accountId'>[] = [
+const SHOWCASE_AWARDS: ShowcaseAward[] = [
+  // JEFF — full mix of weekly/monthly podium + honor ribbons
   {
     period: 'weekly',
     periodKey: 20260825,
-    name: SHOWCASE_NAME,
+    name: 'JEFF',
     rank: 1,
     score: 842,
     games: 7,
@@ -286,7 +287,7 @@ const SHOWCASE_AWARDS: Omit<TrophyAward, 'id' | 'accountId'>[] = [
   {
     period: 'weekly',
     periodKey: 20260818,
-    name: SHOWCASE_NAME,
+    name: 'JEFF',
     rank: 2,
     score: 791,
     games: 6,
@@ -295,7 +296,7 @@ const SHOWCASE_AWARDS: Omit<TrophyAward, 'id' | 'accountId'>[] = [
   {
     period: 'weekly',
     periodKey: 20260811,
-    name: SHOWCASE_NAME,
+    name: 'JEFF',
     rank: 7,
     score: 612,
     games: 5,
@@ -304,7 +305,7 @@ const SHOWCASE_AWARDS: Omit<TrophyAward, 'id' | 'accountId'>[] = [
   {
     period: 'monthly',
     periodKey: 202608,
-    name: SHOWCASE_NAME,
+    name: 'JEFF',
     rank: 1,
     score: 2140,
     games: 8,
@@ -313,7 +314,7 @@ const SHOWCASE_AWARDS: Omit<TrophyAward, 'id' | 'accountId'>[] = [
   {
     period: 'monthly',
     periodKey: 202607,
-    name: SHOWCASE_NAME,
+    name: 'JEFF',
     rank: 3,
     score: 1884,
     games: 8,
@@ -322,22 +323,68 @@ const SHOWCASE_AWARDS: Omit<TrophyAward, 'id' | 'accountId'>[] = [
   {
     period: 'monthly',
     periodKey: 202606,
-    name: SHOWCASE_NAME,
+    name: 'JEFF',
     rank: 8,
     score: 1340,
     games: 6,
     awardedAt: Date.UTC(2026, 6, 1, 12, 0, 0),
   },
+  // MOBILE — weekly medal set + a monthly cup
+  {
+    period: 'weekly',
+    periodKey: 20260825,
+    name: 'MOBILE',
+    rank: 1,
+    score: 910,
+    games: 8,
+    awardedAt: Date.UTC(2026, 7, 31, 12, 5, 0),
+  },
+  {
+    period: 'weekly',
+    periodKey: 20260818,
+    name: 'MOBILE',
+    rank: 3,
+    score: 744,
+    games: 6,
+    awardedAt: Date.UTC(2026, 7, 24, 12, 5, 0),
+  },
+  {
+    period: 'weekly',
+    periodKey: 20260811,
+    name: 'MOBILE',
+    rank: 2,
+    score: 802,
+    games: 7,
+    awardedAt: Date.UTC(2026, 7, 17, 12, 5, 0),
+  },
+  {
+    period: 'weekly',
+    periodKey: 20260804,
+    name: 'MOBILE',
+    rank: 5,
+    score: 680,
+    games: 5,
+    awardedAt: Date.UTC(2026, 7, 10, 12, 5, 0),
+  },
+  {
+    period: 'monthly',
+    periodKey: 202608,
+    name: 'MOBILE',
+    rank: 2,
+    score: 2010,
+    games: 8,
+    awardedAt: Date.UTC(2026, 8, 1, 12, 5, 0),
+  },
 ]
 
-/** Idempotent: fills JEFF's trophy case with weekly/monthly podium + honor ribbons. */
+/** Idempotent: fills showcase profiles with weekly/monthly podium + honor ribbons. */
 export function ensureShowcaseTrophies() {
   const store = ensureTrophiesStore()
   let changed = false
-  const accountId = lookupAccountId(SHOWCASE_NAME)
   for (const row of SHOWCASE_AWARDS) {
     const id = awardId(row.period, row.periodKey, row.name)
     if (store.awards.some((a) => a.id === id)) continue
+    const accountId = lookupAccountId(row.name)
     store.awards.push({
       ...row,
       id,

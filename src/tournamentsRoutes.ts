@@ -2,7 +2,7 @@ import { Router } from 'express'
 import { z } from 'zod'
 import { accountFromRequest } from './auth.js'
 import { assertCanUseName } from './names.js'
-import { isAllowedGame, type GameSlug } from './store.js'
+import { resolveGameSlug, type GameSlug } from './store.js'
 import {
   activeTournamentsForGame,
   createTournament,
@@ -80,17 +80,20 @@ tournamentsRouter.post('/', (req, res) => {
     res.status(401).json({ error: 'Sign in to create events' })
     return
   }
+  const games: GameSlug[] = []
   for (const game of parsed.data.games) {
-    if (!isAllowedGame(game)) {
+    const slug = resolveGameSlug(game)
+    if (!slug) {
       res.status(400).json({ error: 'Unknown game' })
       return
     }
+    games.push(slug)
   }
   try {
     const input: CreateTournamentInput = {
       title: parsed.data.title,
       blurb: parsed.data.blurb,
-      games: parsed.data.games as GameSlug[],
+      games,
       maxAttempts: parsed.data.maxAttempts,
       maxPlayers: parsed.data.maxPlayers,
       durationHours: parsed.data.durationHours,
@@ -130,8 +133,8 @@ tournamentsRouter.post('/rename-player', (req, res) => {
 })
 
 tournamentsRouter.get('/active-for/:game', (req, res) => {
-  const game = req.params.game
-  if (!isAllowedGame(game)) {
+  const game = resolveGameSlug(req.params.game)
+  if (!game) {
     res.status(404).json({ error: 'Unknown game' })
     return
   }

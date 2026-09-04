@@ -9,7 +9,7 @@ import {
   getRecordDef,
   listGameRecords,
 } from './records.js'
-import { isAllowedGame, isPeriod, type Period } from './store.js'
+import { isPeriod, resolveGameSlug, type Period } from './store.js'
 
 export const recordsRouter = Router()
 
@@ -26,8 +26,8 @@ function parsePeriod(raw: unknown): Period {
 }
 
 recordsRouter.get('/:game', (req, res) => {
-  const game = req.params.game
-  if (!isAllowedGame(game)) {
+  const game = resolveGameSlug(req.params.game)
+  if (!game) {
     res.status(404).json({ error: 'Unknown game' })
     return
   }
@@ -41,9 +41,9 @@ recordsRouter.get('/:game', (req, res) => {
 })
 
 recordsRouter.get('/:game/:recordId', (req, res) => {
-  const game = req.params.game
+  const game = resolveGameSlug(req.params.game)
   const recordId = req.params.recordId
-  if (!isAllowedGame(game)) {
+  if (!game) {
     res.status(404).json({ error: 'Unknown game' })
     return
   }
@@ -69,9 +69,9 @@ recordsRouter.get('/:game/:recordId', (req, res) => {
 })
 
 recordsRouter.post('/:game/:recordId', (req, res) => {
-  const game = req.params.game
+  const game = resolveGameSlug(req.params.game)
   const recordId = req.params.recordId
-  if (!isAllowedGame(game)) {
+  if (!game) {
     res.status(404).json({ error: 'Unknown game' })
     return
   }

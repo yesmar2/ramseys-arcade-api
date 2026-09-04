@@ -11,7 +11,7 @@ export const ALLOWED_GAMES = [
   'patriot',
   'snake',
   'pop',
-  'dead-center',
+  'centroid',
   'asteroids',
   'simon',
   'crosswalk',
@@ -19,6 +19,17 @@ export const ALLOWED_GAMES = [
   'spotter',
 ] as const
 export type GameSlug = (typeof ALLOWED_GAMES)[number]
+
+/** Legacy API / board keys → current slug. */
+const GAME_SLUG_ALIASES: Record<string, string> = {
+  'dead-center': 'centroid',
+  whack: 'pop',
+  'whack-a-mole': 'pop',
+}
+
+export function canonicalizeGameSlug(game: string): string {
+  return GAME_SLUG_ALIASES[game] ?? game
+}
 
 export const PERIODS = ['daily', 'weekly', 'monthly', 'all'] as const
 export type Period = (typeof PERIODS)[number]
@@ -86,8 +97,8 @@ function emptyStore(): Store {
     stacker: [],
     patriot: [],
     snake: [],
-    'pop': [],
-    'dead-center': [],
+    pop: [],
+    centroid: [],
     asteroids: [],
     simon: [],
     crosswalk: [],
@@ -107,12 +118,13 @@ function ensureStore(): Store {
   }
   try {
     const raw = fs.readFileSync(STORE_PATH, 'utf8')
-    const parsed = JSON.parse(raw) as Store
+    const parsed = JSON.parse(raw) as Record<string, unknown>
     const stacker = normalizeBoard(parsed.stacker)
     const patriot = normalizeBoard(parsed.patriot)
     const snake = normalizeBoard(parsed.snake)
     const pop = normalizeBoard(parsed.pop)
-    const deadCenter = normalizeBoard(parsed['dead-center'])
+    const centroidRaw = parsed.centroid ?? parsed['dead-center']
+    const centroid = normalizeBoard(centroidRaw)
     const asteroids = normalizeBoard(parsed.asteroids)
     const simon = normalizeBoard(parsed.simon)
     const crosswalk = normalizeBoard(parsed.crosswalk)
@@ -123,24 +135,26 @@ function ensureStore(): Store {
       patriot: patriot.entries,
       snake: snake.entries,
       pop: pop.entries,
-      'dead-center': deadCenter.entries,
+      centroid: centroid.entries,
       asteroids: asteroids.entries,
       simon: simon.entries,
       crosswalk: crosswalk.entries,
       spotter: spotter.entries,
       stride: stride.entries,
     }
+    const renamedCentroid = parsed.centroid == null && Array.isArray(parsed['dead-center'])
     const changed =
       stacker.changed ||
       patriot.changed ||
       snake.changed ||
       pop.changed ||
-      deadCenter.changed ||
+      centroid.changed ||
       asteroids.changed ||
       simon.changed ||
       crosswalk.changed ||
       stride.changed ||
       spotter.changed ||
+      renamedCentroid ||
       !Array.isArray(parsed.crosswalk) ||
       !Array.isArray(parsed.stride)
     if (changed) writeStore(store)
@@ -165,8 +179,8 @@ export function replaceAllBoards(next: Store) {
     stacker: Array.isArray(next.stacker) ? next.stacker : [],
     patriot: Array.isArray(next.patriot) ? next.patriot : [],
     snake: Array.isArray(next.snake) ? next.snake : [],
-    'pop': Array.isArray(next['pop']) ? next['pop'] : [],
-    'dead-center': Array.isArray(next['dead-center']) ? next['dead-center'] : [],
+    pop: Array.isArray(next.pop) ? next.pop : [],
+    centroid: Array.isArray(next.centroid) ? next.centroid : [],
     asteroids: Array.isArray(next.asteroids) ? next.asteroids : [],
     simon: Array.isArray(next.simon) ? next.simon : [],
     crosswalk: Array.isArray(next.crosswalk) ? next.crosswalk : [],
@@ -236,7 +250,15 @@ export function weekStartKey(ms: number) {
 }
 
 export function isAllowedGame(game: string): game is GameSlug {
-  return (ALLOWED_GAMES as readonly string[]).includes(game)
+  return (ALLOWED_GAMES as readonly string[]).includes(canonicalizeGameSlug(game))
+}
+
+/** Resolve a request game id (including legacy aliases) to a store key. */
+export function resolveGameSlug(game: string): GameSlug | null {
+  const canonical = canonicalizeGameSlug(game)
+  return (ALLOWED_GAMES as readonly string[]).includes(canonical)
+    ? (canonical as GameSlug)
+    : null
 }
 
 export function isPeriod(value: unknown): value is Period {

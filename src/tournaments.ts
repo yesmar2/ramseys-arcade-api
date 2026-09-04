@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { withAvatarIds } from './names.js'
-import { ALLOWED_GAMES, BOARD_TZ, isAllowedGame, type GameSlug } from './store.js'
+import { ALLOWED_GAMES, BOARD_TZ, canonicalizeGameSlug, isAllowedGame, resolveGameSlug, type GameSlug } from './store.js'
 
 /** Games eligible for rolling daily/weekly events (excludes unfinished / non-event titles). */
 const EVENT_GAMES = ALLOWED_GAMES.filter((g) => g !== 'crosswalk' && g !== 'spotter' && g !== 'stride')
@@ -127,7 +127,7 @@ const GAME_LABELS: Record<GameSlug, string> = {
   patriot: 'Patriot',
   snake: 'Snake',
   pop: 'Pop',
-  'dead-center': 'Dead Center',
+  centroid: 'Centroid',
   asteroids: 'Asteroids',
   simon: 'Simon',
   crosswalk: 'Crosswalk',
@@ -258,8 +258,15 @@ function normalizeTournament(t: Tournament): Tournament {
     t.format ??
     (t.cadence === 'weekly' ? 'place-points' : 'open')
   const visibility = t.visibility ?? (t.createdBy && !t.official ? 'private' : 'public')
+  const games = t.games
+    .map((g) => resolveGameSlug(g) ?? (canonicalizeGameSlug(g) as GameSlug))
+    .filter((g): g is GameSlug => isAllowedGame(g))
+  const scores = t.scores.map((s) => {
+    const game = resolveGameSlug(s.game)
+    return game && game !== s.game ? { ...s, game } : s
+  })
   if (
-    t.games.length > 1 &&
+    games.length > 1 &&
     format !== 'place-points' &&
     format !== 'cumulative' &&
     (visibility === 'private' || t.createdBy)
@@ -268,6 +275,8 @@ function normalizeTournament(t: Tournament): Tournament {
   }
   return {
     ...t,
+    games: games.length > 0 ? games : t.games,
+    scores,
     format,
     rules: t.rules ?? {},
     visibility,
@@ -488,13 +497,23 @@ function ensureStore(now = Date.now()): Store {
     }
     store = { tournaments: parsed.tournaments.map(normalizeTournament) }
     let migrated = false
-    for (const t of store.tournaments) {
+    for (let i = 0; i < store.tournaments.length; i++) {
+      const t = store.tournaments[i]!
+      const raw = parsed.tournaments[i]
       if (t.createdBy && !t.official && t.visibility !== 'private') {
         t.visibility = 'private'
         migrated = true
       }
       if (t.visibility === 'private' && t.createdBy && !t.inviteCode) {
         t.inviteCode = generateInviteCode()
+        migrated = true
+      }
+      if (
+        raw &&
+        (JSON.stringify(raw.games) !== JSON.stringify(t.games) ||
+          JSON.stringify(raw.scores.map((s) => s.game)) !==
+            JSON.stringify(t.scores.map((s) => s.game)))
+      ) {
         migrated = true
       }
     }
@@ -787,8 +806,9 @@ export function getTournamentDetail(
   }
 
   let playerStatus: TournamentPlayerStatus | null = null
-  if (opts?.playerName && opts.game && isAllowedGame(opts.game) && t.games.includes(opts.game)) {
-    playerStatus = getTournamentPlayerStatus(t, opts.playerName, opts.game, now)
+  const detailGame = opts?.game ? resolveGameSlug(opts.game) : null
+  if (opts?.playerName && detailGame && t.games.includes(detailGame)) {
+    playerStatus = getTournamentPlayerStatus(t, opts.playerName, detailGame, now)
   }
   const isHost = Boolean(opts?.accountId && t.createdBy?.accountId === opts.accountId)
   return {
@@ -1008,7 +1028,8 @@ export function submitTournamentScore(
   if (tournamentStatus(t, now) !== 'active') {
     throw Object.assign(new Error('Tournament is not active'), { status: 409 })
   }
-  if (!isAllowedGame(game) || !t.games.includes(game)) {
+  const gameSlug = resolveGameSlug(game)
+  if (!gameSlug || !t.games.includes(gameSlug)) {
     throw Object.assign(new Error('Game not in this tournament'), { status: 400 })
   }
   if (!Number.isFinite(score) || score <= 0) {
@@ -1032,10 +1053,10 @@ export function submitTournamentScore(
 
   const format = resolveFormat(t)
   const maxAttempts = getMaxAttempts(t)
-  const used = playerAttempts(t, player.id, game)
+  const used = playerAttempts(t, player.id, gameSlug)
   const prevBest =
     t.scores
-      .filter((s) => s.playerId === player.id && s.game === game)
+      .filter((s) => s.playerId === player.id && s.game === gameSlug)
       .reduce((max, s) => Math.max(max, s.score), 0) || 0
 
   if (format !== 'open' && used >= maxAttempts) {
@@ -1049,10 +1070,10 @@ export function submitTournamentScore(
 
   if (format === 'open') {
     if (score > prevBest) {
-      t.scores = t.scores.filter((s) => !(s.playerId === player.id && s.game === game))
+      t.scores = t.scores.filter((s) => !(s.playerId === player.id && s.game === gameSlug))
       t.scores.push({
         playerId: player.id,
-        game,
+        game: gameSlug,
         score,
         at: now,
       })
@@ -1063,7 +1084,7 @@ export function submitTournamentScore(
   } else {
     t.scores.push({
       playerId: player.id,
-      game,
+      game: gameSlug,
       score,
       at: now,
       attempt: used + 1,

@@ -10,13 +10,13 @@ import {
   boardsSummaryForPeriod,
   getBoard,
   globalRanks,
-  isAllowedGame,
   isPeriod,
   qualifies,
   qualifiesAny,
   rankForName,
   rankForScore,
   ranksForScore,
+  resolveGameSlug,
   type Period,
 } from './store.js'
 
@@ -93,8 +93,8 @@ function parsePeriod(raw: unknown): Period {
 }
 
 leaderboardsRouter.get('/:game', (req, res) => {
-  const game = req.params.game
-  if (!isAllowedGame(game)) {
+  const game = resolveGameSlug(req.params.game)
+  if (!game) {
     res.status(404).json({ error: 'Unknown game' })
     return
   }
@@ -114,8 +114,8 @@ leaderboardsRouter.get('/:game', (req, res) => {
 })
 
 leaderboardsRouter.get('/:game/qualifies', (req, res) => {
-  const game = req.params.game
-  if (!isAllowedGame(game)) {
+  const game = resolveGameSlug(req.params.game)
+  if (!game) {
     res.status(404).json({ error: 'Unknown game' })
     return
   }
@@ -156,8 +156,8 @@ leaderboardsRouter.get('/:game/qualifies', (req, res) => {
 })
 
 leaderboardsRouter.post('/:game', (req, res) => {
-  const game = req.params.game
-  if (!isAllowedGame(game)) {
+  const game = resolveGameSlug(req.params.game)
+  if (!game) {
     res.status(404).json({ error: 'Unknown game' })
     return
   }

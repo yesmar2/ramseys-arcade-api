@@ -25,7 +25,14 @@ function mulberry32(seed: number) {
 }
 
 const DEVICES: DeviceType[] = ['phone', 'tablet', 'desktop']
-const RECORD_GAMES: GameSlug[] = ['asteroids', 'snake', 'patriot', 'stride', 'pop']
+const RECORD_GAMES: GameSlug[] = [
+  'asteroids',
+  'snake',
+  'patriot',
+  'stride',
+  'pop',
+  'stacker',
+]
 
 function stamp(daysAgo: number, rand: () => number) {
   const hour = 9 + Math.floor(rand() * 12)
@@ -147,6 +154,18 @@ export function buildRecordsSeed(seed = 20260904) {
         p.name,
         centerStreakValue(p.skill, rand),
         stamp(Math.floor(rand() * 35), rand),
+        p.device,
+      ),
+    )
+
+  store['stacker::perfect-streak'] = players
+    .filter((p) => p.skill > 0.1 || rand() < 0.4)
+    .slice(0, 16)
+    .map((p) =>
+      entry(
+        p.name,
+        directStreakValue(p.skill, rand),
+        stamp(Math.floor(rand() * 40), rand),
         p.device,
       ),
     )

@@ -128,11 +128,20 @@ const POP_CENTER_STREAK: RecordDef = {
   unit: 'count',
 }
 
+const STACKER_PERFECT_STREAK: RecordDef = {
+  id: 'perfect-streak',
+  game: 'stacker',
+  label: 'Perfects in a row',
+  direction: 'higher',
+  unit: 'count',
+}
+
 const RECORD_DEFS: RecordDef[] = [
   ASTEROIDS_HIGHEST_COMBO,
   PATRIOT_DIRECT_STREAK,
   STRIDE_MOST_COINS,
   POP_CENTER_STREAK,
+  STACKER_PERFECT_STREAK,
   ...buildAsteroidsWaveRecords(),
   ...buildSnakeFastestLengthRecords(),
   ...buildStrideFastestRowRecords(),

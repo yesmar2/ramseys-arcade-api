@@ -1,5 +1,4 @@
-import { seedGame, seedLeaderboards } from './seedBoards.js'
-import { seedRecords } from './seedRecords.js'
+import { seedGame } from './seedBoards.js'
 import { applySeedRevision, SEED_REVISION } from './seedRevision.js'
 import { isAllowedGame } from './store.js'
 

@@ -7,15 +7,15 @@ const DATA_DIR = path.resolve(__dirname, '../data')
 const STORE_PATH = path.join(DATA_DIR, 'leaderboards.json')
 
 export const ALLOWED_GAMES = [
-  'stacker',
+  'asteroids',
   'patriot',
   'snake',
-  'pop',
+  'stride',
+  'stacker',
   'centroid',
-  'asteroids',
+  'pop',
   'simon',
   'crosswalk',
-  'stride',
   'spotter',
 ] as const
 export type GameSlug = (typeof ALLOWED_GAMES)[number]

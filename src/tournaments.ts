@@ -533,6 +533,13 @@ function writeStore(store: Store) {
   fs.renameSync(tmp, STORE_PATH)
 }
 
+/** Put a normalized copy back so score-array replacements persist. */
+function putTournament(store: Store, t: Tournament) {
+  const idx = store.tournaments.findIndex((x) => x.id === t.id)
+  if (idx >= 0) store.tournaments[idx] = t
+  else store.tournaments.push(t)
+}
+
 function uid() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 }
@@ -961,6 +968,7 @@ export function joinTournament(
       const conflict = t.players.find((p) => p.name === cleaned && p.id !== seat.id)
       if (conflict) {
         mergeTournamentPlayers(t, seat, conflict)
+        putTournament(store, t)
         writeStore(store)
         return {
           tournament: getTournamentDetail(id, now, {
@@ -972,6 +980,7 @@ export function joinTournament(
         }
       }
       seat.name = cleaned
+      putTournament(store, t)
       writeStore(store)
       return {
         tournament: getTournamentDetail(id, now, {
@@ -993,6 +1002,7 @@ export function joinTournament(
     })
   }
   t.players.push(player)
+  putTournament(store, t)
   writeStore(store)
   return {
     tournament: getTournamentDetail(id, now, {
@@ -1077,7 +1087,6 @@ export function submitTournamentScore(
         score,
         at: now,
       })
-      writeStore(store)
     } else {
       improved = false
     }
@@ -1089,10 +1098,10 @@ export function submitTournamentScore(
       at: now,
       attempt: used + 1,
     })
-    writeStore(store)
   }
 
   maybeEndWhenAllFinished(t, now)
+  putTournament(store, t)
   writeStore(store)
 
   const attemptsUsed = format === 'open' ? used : used + 1

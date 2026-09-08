@@ -185,9 +185,21 @@ export function resolveMatchIfReady(
   force = false,
 ): boolean {
   if (match.winnerId || !match.playerIds[0] || !match.playerIds[1]) return false
-  const usedA = matchAttempts(t, match.playerIds[0], match.id)
-  const usedB = matchAttempts(t, match.playerIds[1], match.id)
-  if (!force && (usedA < maxAttempts || usedB < maxAttempts)) return false
+  const a = match.playerIds[0]
+  const b = match.playerIds[1]
+  const usedA = matchAttempts(t, a, match.id)
+  const usedB = matchAttempts(t, b, match.id)
+  const finite = Number.isFinite(maxAttempts)
+  const doneA = finite && usedA >= maxAttempts
+  const doneB = finite && usedB >= maxAttempts
+  if (!force && !doneA && !doneB) return false
+  if (!force && (!doneA || !doneB)) {
+    const scoreA = bestInMatch(t, a, match.id)?.score ?? 0
+    const scoreB = bestInMatch(t, b, match.id)?.score ?? 0
+    const aheadPastCatchup =
+      (doneB && scoreA > scoreB) || (doneA && scoreB > scoreA)
+    if (!aheadPastCatchup) return false
+  }
   const winner = pickWinner(t, match)
   if (!winner) return false
   match.winnerId = winner

@@ -46,6 +46,7 @@ const createSchema = z.object({
   maxAttempts: z.number().int().min(0).max(99),
   maxPlayers: z.number().int().min(0).max(99),
   durationHours: z.number().int().min(0).max(168),
+  kind: z.enum(['scores', 'bracket']).optional(),
 })
 
 function claimError(err: unknown, res: import('express').Response) {
@@ -97,6 +98,7 @@ tournamentsRouter.post('/', (req, res) => {
       maxAttempts: parsed.data.maxAttempts,
       maxPlayers: parsed.data.maxPlayers,
       durationHours: parsed.data.durationHours,
+      kind: parsed.data.kind,
     }
     const tournament = createTournament(input, {
       accountId: account.id,

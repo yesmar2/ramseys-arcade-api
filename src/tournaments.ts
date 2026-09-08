@@ -1,8 +1,24 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import {
+  bracketHasChampion,
+  findOpenMatch,
+  isBracketSize,
+  matchAttempts,
+  maybeEndWhenBracketFinished,
+  maybeLockBracket,
+  publicBracket,
+  resolveKind,
+  resolveReadyMatches,
+  type TournamentBracket,
+  type TournamentKind,
+} from './bracket.js'
 import { withAvatarIds } from './names.js'
 import { ALLOWED_GAMES, BOARD_TZ, canonicalizeGameSlug, isAllowedGame, resolveGameSlug, type GameSlug } from './store.js'
+
+export type { TournamentKind } from './bracket.js'
+export type { PublicBracket, PublicBracketMatch, PublicBracketSide } from './bracket.js'
 
 /** Games eligible for rolling daily/weekly events (excludes unfinished / non-event titles). */
 const EVENT_GAMES = ALLOWED_GAMES.filter((g) => g !== 'crosswalk' && g !== 'spotter' && g !== 'stride')
@@ -48,6 +64,8 @@ export type TournamentScore = {
   at: number
   /** 1-based attempt index when multiple runs are stored */
   attempt?: number
+  /** Bracket match this attempt belongs to */
+  matchId?: string
 }
 
 export type Tournament = {
@@ -62,6 +80,8 @@ export type Tournament = {
   /** Rolling official cadence, if any */
   cadence?: TournamentCadence | null
   format?: TournamentFormat
+  /** scores = standings event; bracket = single-elim. Default scores. */
+  kind?: TournamentKind
   rules?: TournamentRules
   createdBy?: TournamentCreator | null
   visibility?: TournamentVisibility
@@ -69,6 +89,7 @@ export type Tournament = {
   inviteCode?: string | null
   players: TournamentPlayer[]
   scores: TournamentScore[]
+  bracket?: TournamentBracket
 }
 
 export type GameStandingRow = {
@@ -278,6 +299,7 @@ function normalizeTournament(t: Tournament): Tournament {
     games: games.length > 0 ? games : t.games,
     scores,
     format,
+    kind: resolveKind(t),
     rules: t.rules ?? {},
     visibility,
     createdBy: t.createdBy ?? null,
@@ -308,6 +330,10 @@ export function resolveFormat(t: Tournament): TournamentFormat {
 
 export function getMaxAttempts(t: Tournament): number {
   const normalized = normalizeTournament(t)
+  if (resolveKind(normalized) === 'bracket') {
+    const n = normalized.rules?.maxAttempts ?? 1
+    return Math.max(1, Math.min(99, n))
+  }
   const format = resolveFormat(normalized)
   const rulesMax = normalized.rules?.maxAttempts ?? 0
   if (format === 'open' || rulesMax <= 0) return Number.POSITIVE_INFINITY
@@ -596,9 +622,25 @@ function detailAccessOpts(
   }
 }
 
+function syncBracketClock(t: Tournament, now: number): boolean {
+  if (resolveKind(t) !== 'bracket' || !t.bracket) return false
+  let changed = false
+  if (resolveReadyMatches(t, getMaxAttempts(t), false)) changed = true
+  const timedOut = !t.rules?.unlimitedDuration && now > t.endsAt
+  if (timedOut && resolveReadyMatches(t, getMaxAttempts(t), true)) changed = true
+  if (maybeEndWhenBracketFinished(t, now)) changed = true
+  return changed
+}
+
 export function tournamentStatus(t: Tournament, now = Date.now()): TournamentStatus {
   const normalized = normalizeTournament(t)
   if (now < normalized.startsAt) return 'upcoming'
+  if (resolveKind(normalized) === 'bracket') {
+    if (bracketHasChampion(normalized)) return 'ended'
+    if (normalized.rules?.unlimitedDuration) return 'active'
+    if (now > normalized.endsAt) return 'ended'
+    return 'active'
+  }
   if (allPlayersFinishedAttempts(normalized)) return 'ended'
   if (normalized.rules?.unlimitedDuration) return 'active'
   if (now > normalized.endsAt) return 'ended'
@@ -619,6 +661,7 @@ function publicTournament(t: Tournament, now = Date.now()) {
     cadence: normalized.cadence ?? null,
     format: normalized.format!,
     formatLabel: publicFormatLabel(normalized),
+    kind: resolveKind(normalized),
     rules: normalized.rules ?? {},
     private: isPrivate,
     createdBy: normalized.createdBy ? { accountId: normalized.createdBy.accountId } : null,
@@ -769,25 +812,60 @@ export function getTournamentPlayerStatus(
   if (!normalized.games.includes(game)) return null
   const cleaned = cleanName(playerName)
   const player = normalized.players.find((p) => p.name === cleaned)
+  const max = getMaxAttempts(normalized)
+  const finiteMax = Number.isFinite(max) ? max : null
+  const active = tournamentStatus(normalized, now) === 'active'
+
+  if (resolveKind(normalized) === 'bracket') {
+    if (!player) {
+      return {
+        attemptsUsed: 0,
+        maxAttempts: finiteMax,
+        attemptsRemaining: finiteMax,
+        canPlay: false,
+        best: null,
+      }
+    }
+    const open = findOpenMatch(normalized, player.id)
+    if (!open) {
+      return {
+        attemptsUsed: 0,
+        maxAttempts: finiteMax,
+        attemptsRemaining: finiteMax,
+        canPlay: false,
+        best: null,
+      }
+    }
+    const used = matchAttempts(normalized, player.id, open.id)
+    const remaining = Math.max(0, max - used)
+    const bestRow = normalized.scores
+      .filter((s) => s.playerId === player.id && s.matchId === open.id)
+      .reduce((m, s) => Math.max(m, s.score), 0)
+    return {
+      attemptsUsed: used,
+      maxAttempts: finiteMax,
+      attemptsRemaining: remaining,
+      canPlay: active && remaining > 0,
+      best: bestRow > 0 ? bestRow : null,
+    }
+  }
+
   if (!player) {
-    const max = getMaxAttempts(normalized)
     return {
       attemptsUsed: 0,
-      maxAttempts: Number.isFinite(max) ? max : null,
-      attemptsRemaining: Number.isFinite(max) ? max : null,
-      canPlay: tournamentStatus(normalized, now) === 'active',
+      maxAttempts: finiteMax,
+      attemptsRemaining: finiteMax,
+      canPlay: active,
       best: null,
     }
   }
   const used = playerAttempts(normalized, player.id, game)
-  const max = getMaxAttempts(normalized)
-  const finiteMax = Number.isFinite(max) ? max : null
   const remaining = finiteMax == null ? null : Math.max(0, finiteMax - used)
   return {
     attemptsUsed: used,
     maxAttempts: finiteMax,
     attemptsRemaining: remaining,
-    canPlay: tournamentStatus(normalized, now) === 'active' && (remaining == null || remaining > 0),
+    canPlay: active && (remaining == null || remaining > 0),
     best: aggregatePlayerGameScore(normalized, player.id, game),
   }
 }
@@ -812,6 +890,12 @@ export function getTournamentDetail(
     })
   }
 
+  if (syncBracketClock(t, now)) {
+    const store = ensureStore(now)
+    putTournament(store, t)
+    writeStore(store)
+  }
+
   let playerStatus: TournamentPlayerStatus | null = null
   const detailGame = opts?.game ? resolveGameSlug(opts.game) : null
   if (opts?.playerName && detailGame && t.games.includes(detailGame)) {
@@ -823,6 +907,7 @@ export function getTournamentDetail(
     players: t.players.map((p) => ({ id: p.id, name: p.name, joinedAt: p.joinedAt })),
     standings: withAvatarIds(computeStandings(t)),
     placePoints: PLACE_POINTS,
+    bracket: publicBracket(t),
     playerStatus,
     inviteCode: isHost ? t.inviteCode ?? null : null,
     isHost,
@@ -838,6 +923,7 @@ export type CreateTournamentInput = {
   /** 0 = unlimited roster size */
   maxPlayers: number
   durationHours: number
+  kind?: TournamentKind
 }
 
 const MAX_PRIVATE_GAMES = 5
@@ -853,8 +939,13 @@ export function createTournament(
     throw Object.assign(new Error('Title must be at least 3 characters'), { status: 400 })
   }
 
+  const kind: TournamentKind = input.kind === 'bracket' ? 'bracket' : 'scores'
   const games = [...new Set(input.games)]
-  if (games.length < 1 || games.length > MAX_PRIVATE_GAMES) {
+  if (kind === 'bracket') {
+    if (games.length !== 1) {
+      throw Object.assign(new Error('Bracket events use one game'), { status: 400 })
+    }
+  } else if (games.length < 1 || games.length > MAX_PRIVATE_GAMES) {
     throw Object.assign(new Error('Pick 1–5 games'), { status: 400 })
   }
   if (!games.every((g) => isAllowedGame(g) && (EVENT_GAMES as readonly string[]).includes(g))) {
@@ -876,7 +967,14 @@ export function createTournament(
 
   const maxAttempts = Math.max(0, Math.min(99, Math.floor(input.maxAttempts)))
   const maxPlayers = Math.max(0, Math.min(99, Math.floor(input.maxPlayers)))
-  if (maxPlayers > 0 && maxPlayers < 2) {
+  if (kind === 'bracket') {
+    if (!isBracketSize(maxPlayers)) {
+      throw Object.assign(new Error('Bracket events need 4, 8, or 16 players'), { status: 400 })
+    }
+    if (maxAttempts < 1) {
+      throw Object.assign(new Error('Bracket events need a finite attempt limit'), { status: 400 })
+    }
+  } else if (maxPlayers > 0 && maxPlayers < 2) {
     throw Object.assign(new Error('Player limit must be at least 2, or unlimited'), { status: 400 })
   }
   const format =
@@ -896,9 +994,11 @@ export function createTournament(
   const endsAt = unlimitedDuration ? now : now + durationHours * 3_600_000
   const blurb =
     input.blurb?.trim().slice(0, 280) ||
-    (games.length > 1
-      ? `Private event: ${games.map(gameLabel).join(', ')}. Place points across games — highest total wins.`
-      : defaultCommunityBlurb(games, maxAttempts))
+    (kind === 'bracket'
+      ? `Single-elim bracket — higher score wins each match. ${gameLabel(games[0]!)}.`
+      : games.length > 1
+        ? `Private event: ${games.map(gameLabel).join(', ')}. Place points across games — highest total wins.`
+        : defaultCommunityBlurb(games, maxAttempts))
   const rules: TournamentRules = {
     maxAttempts: maxAttempts > 0 ? maxAttempts : 0,
     maxPlayers: maxPlayers > 0 ? maxPlayers : 0,
@@ -916,6 +1016,7 @@ export function createTournament(
     official: false,
     cadence: null,
     format,
+    kind,
     rules,
     createdBy: creator,
     visibility: 'private',
@@ -994,6 +1095,12 @@ export function joinTournament(
   }
 
   const player: TournamentPlayer = { id: uid(), name: cleaned, joinedAt: now }
+  if (resolveKind(t) === 'bracket' && t.bracket?.lockedAt) {
+    throw Object.assign(new Error('The bracket is already drawn'), {
+      status: 409,
+      code: 'BRACKET_LOCKED',
+    })
+  }
   const cap = getMaxPlayers(t)
   if (cap != null && t.players.length >= cap) {
     throw Object.assign(new Error('This event is full'), {
@@ -1002,6 +1109,7 @@ export function joinTournament(
     })
   }
   t.players.push(player)
+  maybeLockBracket(t, now)
   putTournament(store, t)
   writeStore(store)
   return {
@@ -1050,6 +1158,12 @@ export function submitTournamentScore(
   assertTournamentAccess(t, { ...access, playerName: cleaned })
   let player = t.players.find((p) => p.name === cleaned)
   if (!player) {
+    if (resolveKind(t) === 'bracket' && t.bracket?.lockedAt) {
+      throw Object.assign(new Error('The bracket is already drawn'), {
+        status: 409,
+        code: 'BRACKET_LOCKED',
+      })
+    }
     const cap = getMaxPlayers(t)
     if (cap != null && t.players.length >= cap) {
       throw Object.assign(new Error('This event is full'), {
@@ -1059,14 +1173,39 @@ export function submitTournamentScore(
     }
     player = { id: uid(), name: cleaned, joinedAt: now }
     t.players.push(player)
+    maybeLockBracket(t, now)
   }
 
   const format = resolveFormat(t)
   const maxAttempts = getMaxAttempts(t)
-  const used = playerAttempts(t, player.id, gameSlug)
+  const openMatch =
+    resolveKind(t) === 'bracket' ? findOpenMatch(t, player.id) : null
+  if (resolveKind(t) === 'bracket') {
+    if (!t.bracket?.lockedAt) {
+      throw Object.assign(new Error('Bracket has not started yet'), {
+        status: 409,
+        code: 'BRACKET_NOT_READY',
+      })
+    }
+    if (!openMatch) {
+      throw Object.assign(new Error('It is not your match'), {
+        status: 409,
+        code: 'NOT_YOUR_MATCH',
+      })
+    }
+  }
+
+  const used =
+    openMatch
+      ? matchAttempts(t, player.id, openMatch.id)
+      : playerAttempts(t, player.id, gameSlug)
   const prevBest =
     t.scores
-      .filter((s) => s.playerId === player.id && s.game === gameSlug)
+      .filter((s) =>
+        openMatch
+          ? s.playerId === player.id && s.matchId === openMatch.id
+          : s.playerId === player.id && s.game === gameSlug,
+      )
       .reduce((max, s) => Math.max(max, s.score), 0) || 0
 
   if (format !== 'open' && used >= maxAttempts) {
@@ -1078,7 +1217,7 @@ export function submitTournamentScore(
 
   let improved = score > prevBest
 
-  if (format === 'open') {
+  if (format === 'open' && resolveKind(t) !== 'bracket') {
     if (score > prevBest) {
       t.scores = t.scores.filter((s) => !(s.playerId === player.id && s.game === gameSlug))
       t.scores.push({
@@ -1097,14 +1236,20 @@ export function submitTournamentScore(
       score,
       at: now,
       attempt: used + 1,
+      ...(openMatch ? { matchId: openMatch.id } : {}),
     })
   }
 
-  maybeEndWhenAllFinished(t, now)
+  if (resolveKind(t) === 'bracket') {
+    resolveReadyMatches(t, maxAttempts, false)
+    maybeEndWhenBracketFinished(t, now)
+  } else {
+    maybeEndWhenAllFinished(t, now)
+  }
   putTournament(store, t)
   writeStore(store)
 
-  const attemptsUsed = format === 'open' ? used : used + 1
+  const attemptsUsed = format === 'open' && resolveKind(t) !== 'bracket' ? used : used + 1
   const finiteMax = Number.isFinite(maxAttempts) ? maxAttempts : null
   const attemptsRemaining =
     finiteMax == null ? null : Math.max(0, finiteMax - attemptsUsed)

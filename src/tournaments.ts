@@ -969,7 +969,7 @@ export function createTournament(
   const maxPlayers = Math.max(0, Math.min(99, Math.floor(input.maxPlayers)))
   if (kind === 'bracket') {
     if (!isBracketSize(maxPlayers)) {
-      throw Object.assign(new Error('Bracket events need 4, 8, or 16 players'), { status: 400 })
+      throw Object.assign(new Error('Bracket events need 2–64 players'), { status: 400 })
     }
     if (maxAttempts < 1) {
       throw Object.assign(new Error('Bracket events need a finite attempt limit'), { status: 400 })

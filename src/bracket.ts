@@ -3,8 +3,18 @@ import type { Tournament, TournamentPlayer, TournamentScore } from './tournament
 
 export type TournamentKind = 'scores' | 'bracket'
 
-export const BRACKET_SIZES = [4, 8, 16] as const
-export type BracketSize = (typeof BRACKET_SIZES)[number]
+export const BRACKET_PLAYERS_MIN = 2
+export const BRACKET_PLAYERS_MAX = 64
+
+export function isBracketSize(n: number): boolean {
+  return Number.isInteger(n) && n >= BRACKET_PLAYERS_MIN && n <= BRACKET_PLAYERS_MAX
+}
+
+/** Next power of two that can hold this roster (2…64). */
+export function bracketDrawSize(n: number): number {
+  const capped = Math.max(BRACKET_PLAYERS_MIN, Math.min(BRACKET_PLAYERS_MAX, Math.floor(n)))
+  return 2 ** Math.ceil(Math.log2(capped))
+}
 
 export type BracketMatch = {
   id: string
@@ -39,10 +49,6 @@ export type PublicBracket = {
   matches: PublicBracketMatch[]
 }
 
-export function isBracketSize(n: number): n is BracketSize {
-  return (BRACKET_SIZES as readonly number[]).includes(n)
-}
-
 export function resolveKind(t: Pick<Tournament, 'kind'>): TournamentKind {
   return t.kind === 'bracket' ? 'bracket' : 'scores'
 }
@@ -74,6 +80,30 @@ function shuffleInPlace<T>(items: T[], rng: () => number) {
   }
 }
 
+function byeSlotIndexes(firstRound: number, byeCount: number): Set<number> {
+  const slots = new Set<number>()
+  for (let i = 0; i < byeCount; i++) {
+    const slot = i % 2 === 0 ? Math.floor(i / 2) : firstRound - 1 - Math.floor(i / 2)
+    slots.add(slot)
+  }
+  return slots
+}
+
+function applyByes(t: Tournament) {
+  if (!t.bracket) return
+  for (const match of t.bracket.matches) {
+    if (match.winnerId) continue
+    const [a, b] = match.playerIds
+    if (a && !b) {
+      match.winnerId = a
+      propagateWinner(t, match)
+    } else if (b && !a) {
+      match.winnerId = b
+      propagateWinner(t, match)
+    }
+  }
+}
+
 export function lockBracket(t: Tournament, now: number): boolean {
   if (t.bracket?.lockedAt) return false
   const n = t.players.length
@@ -81,19 +111,26 @@ export function lockBracket(t: Tournament, now: number): boolean {
   const rng = mulberry32(hashSeed(t.id))
   const order = [...t.players]
   shuffleInPlace(order, rng)
-  const rounds = Math.log2(n)
+  const size = bracketDrawSize(n)
+  const byeCount = size - n
+  const firstRound = size / 2
+  const byeSlots = byeSlotIndexes(firstRound, byeCount)
   const matches: BracketMatch[] = []
-  for (let slot = 0; slot < n / 2; slot++) {
+  let next = 0
+  for (let slot = 0; slot < firstRound; slot++) {
+    const a = order[next++]!.id
+    const b = byeSlots.has(slot) ? null : order[next++]!.id
     matches.push({
       id: `m-1-${slot}`,
       round: 1,
       slot,
-      playerIds: [order[slot * 2]!.id, order[slot * 2 + 1]!.id],
+      playerIds: [a, b],
       winnerId: null,
     })
   }
+  const rounds = Math.log2(size)
   for (let round = 2; round <= rounds; round++) {
-    const count = n / 2 ** round
+    const count = size / 2 ** round
     for (let slot = 0; slot < count; slot++) {
       matches.push({
         id: `m-${round}-${slot}`,
@@ -105,6 +142,7 @@ export function lockBracket(t: Tournament, now: number): boolean {
     }
   }
   t.bracket = { lockedAt: now, matches }
+  applyByes(t)
   return true
 }
 
@@ -246,7 +284,13 @@ export function publicBracket(t: Tournament): PublicBracket | null {
       slot: m.slot,
       winnerId: m.winnerId,
       players: m.playerIds.map((id) => {
-        if (!id) return null
+        if (!id) {
+          const filled = m.playerIds.filter(Boolean).length
+          if (m.round === 1 && filled === 1 && m.winnerId) {
+            return { id: '', name: 'BYE', score: null, attemptsUsed: 0 }
+          }
+          return null
+        }
         const player = byId.get(id)
         const best = bestInMatch(t, id, m.id)
         return {

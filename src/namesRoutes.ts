@@ -2,6 +2,7 @@ import { Router } from 'express'
 import { z } from 'zod'
 import { accountFromRequest } from './auth.js'
 import {
+  assumeNameForDev,
   assertCanUseName,
   cleanPlayerName,
   isNameAvailable,
@@ -49,6 +50,25 @@ namesRouter.post('/rename', (req, res) => {
     const code = (err as { code?: string }).code
     res.status(status).json({
       error: err instanceof Error ? err.message : 'Rename failed',
+      code,
+    })
+  }
+})
+
+namesRouter.post('/assume', (req, res) => {
+  const parsed = claimSchema.safeParse(req.body)
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Invalid body', details: parsed.error.flatten() })
+    return
+  }
+  try {
+    const result = assumeNameForDev(parsed.data.name)
+    res.json(result)
+  } catch (err) {
+    const status = (err as { status?: number }).status ?? 500
+    const code = (err as { code?: string }).code
+    res.status(status).json({
+      error: err instanceof Error ? err.message : 'Assume failed',
       code,
     })
   }

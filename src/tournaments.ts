@@ -1067,6 +1067,16 @@ export function joinTournament(
     const seat = t.players.find((p) => p.id === playerId)
     if (seat) {
       const conflict = t.players.find((p) => p.name === cleaned && p.id !== seat.id)
+      if (t.bracket?.lockedAt && seat.name !== cleaned) {
+        return {
+          tournament: getTournamentDetail(id, now, {
+            ...detailAccessOpts(access),
+            playerName: seat.name,
+            accountId: access.accountId,
+          })!,
+          player: seat,
+        }
+      }
       if (conflict) {
         mergeTournamentPlayers(t, seat, conflict)
         putTournament(store, t)
@@ -1287,6 +1297,15 @@ function cleanName(name: string) {
 
 type TournamentRecord = Tournament
 
+function retargetBracketIds(t: TournamentRecord, fromId: string, toId: string) {
+  if (!t.bracket || fromId === toId) return
+  for (const match of t.bracket.matches) {
+    if (match.playerIds[0] === fromId) match.playerIds[0] = toId
+    if (match.playerIds[1] === fromId) match.playerIds[1] = toId
+    if (match.winnerId === fromId) match.winnerId = toId
+  }
+}
+
 /** Merge `source` into `target`, then drop `source`. */
 function mergeTournamentPlayers(
   t: TournamentRecord,
@@ -1297,6 +1316,7 @@ function mergeTournamentPlayers(
   for (const s of t.scores) {
     if (s.playerId === source.id) s.playerId = target.id
   }
+  retargetBracketIds(t, source.id, target.id)
 
   const normalized = normalizeTournament(t)
   if (resolveFormat(normalized) === 'open') {
@@ -1340,6 +1360,9 @@ export function renamePlayerAcrossTournaments(fromRaw: string, toRaw: string): {
       updatedTournaments.push(t.id)
       continue
     }
+
+    // Two drawn bracket seats are opponents, not the same person.
+    if (t.bracket?.lockedAt) continue
 
     mergeTournamentPlayers(t, source, target)
     updatedTournaments.push(t.id)

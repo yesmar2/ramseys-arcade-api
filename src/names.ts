@@ -73,6 +73,36 @@ export function getClaim(name: string): NameClaim | null {
   return ensureStore().claims[cleaned] ?? null
 }
 
+/** Local/dev only. Production Render sets NODE_ENV=production. */
+export function isDevToolsEnabled() {
+  if (process.env.ALLOW_DEV_TOOLS === '0') return false
+  if (process.env.ALLOW_DEV_TOOLS === '1') return true
+  return process.env.NODE_ENV !== 'production'
+}
+
+/** Hand out an existing (or new) claim token so a local client can act as that tag. */
+export function assumeNameForDev(name: string): { name: string; token: string } {
+  if (!isDevToolsEnabled()) {
+    throw Object.assign(new Error('Impersonation is disabled'), {
+      status: 403,
+      code: 'DEV_TOOLS_DISABLED',
+    })
+  }
+  const cleaned = cleanPlayerName(name)
+  if (!cleaned) {
+    throw Object.assign(new Error('Name required'), { status: 400, code: 'NAME_REQUIRED' })
+  }
+  const store = ensureStore()
+  const existing = store.claims[cleaned]
+  if (existing) {
+    return { name: cleaned, token: existing.token }
+  }
+  const next: NameClaim = { token: mintToken(), claimedAt: Date.now() }
+  store.claims[cleaned] = next
+  writeStore(store)
+  return { name: cleaned, token: next.token }
+}
+
 export function isNameAvailable(
   name: string,
   token?: string | null,

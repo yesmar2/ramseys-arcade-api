@@ -80,19 +80,26 @@ function shuffleInPlace<T>(items: T[], rng: () => number) {
   }
 }
 
-function byeSlotIndexes(firstRound: number, byeCount: number): Set<number> {
-  const slots = new Set<number>()
-  for (let i = 0; i < byeCount; i++) {
-    const slot = i % 2 === 0 ? Math.floor(i / 2) : firstRound - 1 - Math.floor(i / 2)
-    slots.add(slot)
+/** Standard single-elim seed order: 1vN, then 2 vs N-1 on the opposite half, and so on. */
+export function seededBracketOrder(size: number): number[] {
+  let seeds = [1]
+  while (seeds.length < size) {
+    const n = seeds.length * 2
+    const next: number[] = []
+    for (const seed of seeds) {
+      next.push(seed)
+      next.push(n + 1 - seed)
+    }
+    seeds = next
   }
-  return slots
+  return seeds
 }
 
 function applyByes(t: Tournament) {
   if (!t.bracket) return
   for (const match of t.bracket.matches) {
-    if (match.winnerId) continue
+    // Only first-round vacancies are byes. Later empty slots are waiting on a feeder.
+    if (match.round !== 1 || match.winnerId) continue
     const [a, b] = match.playerIds
     if (a && !b) {
       match.winnerId = a
@@ -109,17 +116,17 @@ export function lockBracket(t: Tournament, now: number): boolean {
   const n = t.players.length
   if (!isBracketSize(n)) return false
   const rng = mulberry32(hashSeed(t.id))
-  const order = [...t.players]
-  shuffleInPlace(order, rng)
+  const field = [...t.players]
+  shuffleInPlace(field, rng)
   const size = bracketDrawSize(n)
-  const byeCount = size - n
   const firstRound = size / 2
-  const byeSlots = byeSlotIndexes(firstRound, byeCount)
+  const seeds = seededBracketOrder(size)
   const matches: BracketMatch[] = []
-  let next = 0
   for (let slot = 0; slot < firstRound; slot++) {
-    const a = order[next++]!.id
-    const b = byeSlots.has(slot) ? null : order[next++]!.id
+    const seedA = seeds[slot * 2]!
+    const seedB = seeds[slot * 2 + 1]!
+    const a = seedA <= n ? field[seedA - 1]!.id : null
+    const b = seedB <= n ? field[seedB - 1]!.id : null
     matches.push({
       id: `m-1-${slot}`,
       round: 1,

@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import { z } from 'zod'
 import { accountFromRequest } from './auth.js'
+import { resolveBoardScope } from './groups.js'
 import { assertCanUseName, withAvatarId, withAvatarIds } from './names.js'
 import {
   addRecord,
@@ -25,6 +26,23 @@ function parsePeriod(raw: unknown): Period {
   return 'all'
 }
 
+function boardAccess(req: import('express').Request) {
+  const account = accountFromRequest(req)
+  const playerName =
+    typeof req.query.playerName === 'string' ? req.query.playerName : undefined
+  const groupId = typeof req.query.group === 'string' ? req.query.group : undefined
+  return resolveBoardScope(groupId, { accountId: account?.id, playerName })
+}
+
+function scopeError(err: unknown, res: import('express').Response) {
+  const status = (err as { status?: number }).status ?? 500
+  const code = (err as { code?: string }).code
+  res.status(status).json({
+    error: err instanceof Error ? err.message : 'Request failed',
+    code,
+  })
+}
+
 recordsRouter.get('/:game', (req, res) => {
   const game = resolveGameSlug(req.params.game)
   if (!game) {
@@ -32,7 +50,14 @@ recordsRouter.get('/:game', (req, res) => {
     return
   }
   const period = parsePeriod(req.query.period)
-  const { records } = listGameRecords(game, period)
+  let scope
+  try {
+    scope = boardAccess(req)?.names
+  } catch (err) {
+    scopeError(err, res)
+    return
+  }
+  const { records } = listGameRecords(game, period, Date.now(), scope)
   res.json({
     game,
     period,
@@ -54,14 +79,21 @@ recordsRouter.get('/:game/:recordId', (req, res) => {
   }
   const period = parsePeriod(req.query.period)
   const name = typeof req.query.name === 'string' ? req.query.name : ''
+  let scope
+  try {
+    scope = boardAccess(req)?.names
+  } catch (err) {
+    scopeError(err, res)
+    return
+  }
   res.json({
     game,
     record: def,
     period,
-    entries: withAvatarIds(getRecordBoard(game, recordId, period)),
+    entries: withAvatarIds(getRecordBoard(game, recordId, period, Date.now(), scope)),
     you: name
       ? (() => {
-          const you = bestRecordForName(game, recordId, name, period)
+          const you = bestRecordForName(game, recordId, name, period, Date.now(), scope)
           return you ? withAvatarId(you) : null
         })()
       : null,

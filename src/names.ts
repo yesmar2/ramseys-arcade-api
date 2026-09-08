@@ -2,6 +2,7 @@ import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { renamePlayerAcrossGroups } from './groups.js'
 import { renamePlayerAcrossLeaderboards } from './store.js'
 import { renamePlayerAcrossRecords } from './records.js'
 import { renamePlayerAcrossTournaments } from './tournaments.js'
@@ -100,6 +101,7 @@ export function migratePlayerScores(fromRaw: string, toRaw: string) {
   renamePlayerAcrossTournaments(from, to)
   renamePlayerAcrossRecords(from, to)
   renamePlayerAcrossTrophies(from, to)
+  renamePlayerAcrossGroups(from, to)
   return boards
 }
 

@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import { z } from 'zod'
 import { accountFromRequest } from './auth.js'
+import { resolveBoardScope } from './groups.js'
 import { assertCanUseName, withAvatarId, withAvatarIds } from './names.js'
 import {
   addScore,
@@ -43,9 +44,17 @@ leaderboardsRouter.get('/rank', (req, res) => {
   }
   const period: Period = isPeriod(periodParam) ? periodParam : 'all'
 
+  let scope
+  try {
+    scope = boardAccess(req)?.names
+  } catch (err) {
+    scopeError(err, res)
+    return
+  }
+
   const name = typeof req.query.name === 'string' ? req.query.name.trim() : ''
   if (name) {
-    const data = rankForName(name, 2, period)
+    const data = rankForName(name, 2, period, Date.now(), scope)
     res.json({
       ...data,
       period,
@@ -58,7 +67,7 @@ leaderboardsRouter.get('/rank', (req, res) => {
   const limit = Number.isFinite(limitRaw)
     ? Math.min(100, Math.max(1, Math.floor(limitRaw)))
     : 50
-  const all = globalRanks(period)
+  const all = globalRanks(period, Date.now(), scope)
   res.json({
     period,
     totalPlayers: all.length,
@@ -72,7 +81,14 @@ leaderboardsRouter.get('/summary', (req, res) => {
     ? Math.min(10, Math.max(1, Math.floor(limitRaw)))
     : 3
   const period = parsePeriod(req.query.period)
-  const boards = boardsSummaryForPeriod(period, limit)
+  let scope
+  try {
+    scope = boardAccess(req)?.names
+  } catch (err) {
+    scopeError(err, res)
+    return
+  }
+  const boards = boardsSummaryForPeriod(period, limit, Date.now(), scope)
   const games = ALLOWED_GAMES.map((slug) => ({
     slug,
     entries: withAvatarIds(boards[slug]),
@@ -92,6 +108,23 @@ function parsePeriod(raw: unknown): Period {
   return 'all'
 }
 
+function boardAccess(req: import('express').Request) {
+  const account = accountFromRequest(req)
+  const playerName =
+    typeof req.query.playerName === 'string' ? req.query.playerName : undefined
+  const groupId = typeof req.query.group === 'string' ? req.query.group : undefined
+  return resolveBoardScope(groupId, { accountId: account?.id, playerName })
+}
+
+function scopeError(err: unknown, res: import('express').Response) {
+  const status = (err as { status?: number }).status ?? 500
+  const code = (err as { code?: string }).code
+  res.status(status).json({
+    error: err instanceof Error ? err.message : 'Request failed',
+    code,
+  })
+}
+
 leaderboardsRouter.get('/:game', (req, res) => {
   const game = resolveGameSlug(req.params.game)
   if (!game) {
@@ -100,13 +133,20 @@ leaderboardsRouter.get('/:game', (req, res) => {
   }
   const period = parsePeriod(req.query.period)
   const name = typeof req.query.name === 'string' ? req.query.name : ''
+  let scope
+  try {
+    scope = boardAccess(req)?.names
+  } catch (err) {
+    scopeError(err, res)
+    return
+  }
   res.json({
     game,
     period,
-    entries: withAvatarIds(getBoard(game, period)),
+    entries: withAvatarIds(getBoard(game, period, Date.now(), scope)),
     you: name
       ? (() => {
-          const you = bestForName(game, name, period)
+          const you = bestForName(game, name, period, Date.now(), scope)
           return you ? withAvatarId(you) : null
         })()
       : null,

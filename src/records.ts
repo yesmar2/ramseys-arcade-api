@@ -8,6 +8,7 @@ import {
   type DeviceType,
   type GameSlug,
   type LeaderboardEntry,
+  type NameScope,
   type Period,
 } from './store.js'
 
@@ -291,15 +292,21 @@ function pruneHistory(entries: RecordEntry[]): RecordEntry[] {
   return entries.slice(entries.length - MAX_HISTORY)
 }
 
+function filterByNames<T extends { name: string }>(entries: T[], scope?: NameScope): T[] {
+  if (!scope) return entries
+  return entries.filter((e) => scope.has(e.name))
+}
+
 export function getRecordBoard(
   game: GameSlug,
   recordId: string,
   period: Period = 'all',
   now = Date.now(),
+  scope?: NameScope,
 ): RecordEntry[] {
   const def = getRecordDef(game, recordId)
   if (!def) return []
-  const pool = filterByPeriod(historyFor(game, recordId), period, now)
+  const pool = filterByNames(filterByPeriod(historyFor(game, recordId), period, now), scope)
   return sortEntries(pool, def.direction).slice(0, MAX_BOARD)
 }
 
@@ -309,13 +316,14 @@ export function bestRecordForName(
   name: string,
   period: Period = 'all',
   now = Date.now(),
+  scope?: NameScope,
 ): YouRecordEntry | null {
   const def = getRecordDef(game, recordId)
   if (!def) return null
   const cleaned = name.trim().slice(0, 12).toUpperCase()
   if (!cleaned) return null
   const pool = sortEntries(
-    filterByPeriod(historyFor(game, recordId), period, now),
+    filterByNames(filterByPeriod(historyFor(game, recordId), period, now), scope),
     def.direction,
   )
   const mine = pool.filter((e) => e.name === cleaned)
@@ -328,11 +336,12 @@ export function listGameRecords(
   game: GameSlug,
   period: Period = 'all',
   now = Date.now(),
+  scope?: NameScope,
 ): {
   records: Array<RecordDef & { top: RecordEntry | null }>
 } {
   const records = listRecordDefs(game).map((def) => {
-    const board = getRecordBoard(game, def.id, period, now)
+    const board = getRecordBoard(game, def.id, period, now, scope)
     return { ...def, top: board[0] ?? null }
   })
   return { records }

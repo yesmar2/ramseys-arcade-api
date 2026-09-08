@@ -265,6 +265,13 @@ export function isPeriod(value: unknown): value is Period {
   return typeof value === 'string' && (PERIODS as readonly string[]).includes(value)
 }
 
+export type NameScope = ReadonlySet<string> | null | undefined
+
+function filterByNames<T extends { name: string }>(entries: T[], scope?: NameScope): T[] {
+  if (!scope) return entries
+  return entries.filter((e) => scope.has(e.name))
+}
+
 export function filterByPeriod(
   entries: LeaderboardEntry[],
   period: Period,
@@ -346,8 +353,9 @@ export function getBoard(
   game: GameSlug,
   period: Period = 'all',
   now = Date.now(),
+  scope?: NameScope,
 ): LeaderboardEntry[] {
-  return topBoard(filterByPeriod(historyFor(game), period, now))
+  return topBoard(filterByNames(filterByPeriod(historyFor(game), period, now), scope))
 }
 
 export type PeriodBoardSummary = Record<Period, LeaderboardEntry[]>
@@ -357,11 +365,12 @@ export function boardsSummaryForPeriod(
   period: Period,
   limit = 3,
   now = Date.now(),
+  scope?: NameScope,
 ): Record<GameSlug, LeaderboardEntry[]> {
   const capped = Math.min(10, Math.max(1, Math.floor(limit)) || 3)
   const out = {} as Record<GameSlug, LeaderboardEntry[]>
   for (const game of ALLOWED_GAMES) {
-    out[game] = getBoard(game, period, now).slice(0, capped)
+    out[game] = getBoard(game, period, now, scope).slice(0, capped)
   }
   return out
 }
@@ -387,10 +396,11 @@ export function bestForName(
   name: string,
   period: Period = 'all',
   now = Date.now(),
+  scope?: NameScope,
 ): YouEntry | null {
   const cleaned = name.trim().slice(0, 12).toUpperCase()
   if (!cleaned) return null
-  const pool = sortByScore(filterByPeriod(historyFor(game), period, now))
+  const pool = sortByScore(filterByNames(filterByPeriod(historyFor(game), period, now), scope))
   const mine = pool.filter((e) => e.name === cleaned)
   if (!mine.length) return null
   const best = mine[0]
@@ -442,8 +452,11 @@ function periodPlacements(
   game: GameSlug,
   period: Period,
   now = Date.now(),
+  scope?: NameScope,
 ): { name: string; place: number }[] {
-  return placementsFromPool(sortByScore(filterByPeriod(historyFor(game), period, now)))
+  return placementsFromPool(
+    sortByScore(filterByNames(filterByPeriod(historyFor(game), period, now), scope)),
+  )
 }
 
 function closedPeriodPlacements(
@@ -493,8 +506,12 @@ function aggregateGlobalRanks(
   }))
 }
 
-export function globalRanks(period: Period = 'all', now = Date.now()): GlobalRankEntry[] {
-  return aggregateGlobalRanks((game) => periodPlacements(game, period, now))
+export function globalRanks(
+  period: Period = 'all',
+  now = Date.now(),
+  scope?: NameScope,
+): GlobalRankEntry[] {
+  return aggregateGlobalRanks((game) => periodPlacements(game, period, now, scope))
 }
 
 /** Global ranks for a completed weekly or monthly period. */
@@ -510,6 +527,7 @@ export function rankForName(
   neighborRadius = 2,
   period: Period = 'all',
   now = Date.now(),
+  scope?: NameScope,
 ): {
   rank: number | null
   score: number
@@ -518,7 +536,7 @@ export function rankForName(
   nearby: GlobalRankEntry[]
 } {
   const cleaned = name.trim().slice(0, 12).toUpperCase()
-  const all = globalRanks(period, now)
+  const all = globalRanks(period, now, scope)
   if (!cleaned) {
     return {
       rank: null,

@@ -154,6 +154,7 @@ const GAME_LABELS: Record<GameSlug, string> = {
   crosswalk: 'Crosswalk',
   stride: 'Stride',
   spotter: 'Spotter',
+  pellets: 'Pellets',
 }
 
 function ymdInTz(ms: number, timeZone = BOARD_TZ): Ymd {

@@ -17,6 +17,7 @@ export const ALLOWED_GAMES = [
   'simon',
   'crosswalk',
   'spotter',
+  'pellets',
 ] as const
 export type GameSlug = (typeof ALLOWED_GAMES)[number]
 
@@ -104,6 +105,7 @@ function emptyStore(): Store {
     crosswalk: [],
     spotter: [],
     stride: [],
+    pellets: [],
   }
 }
 
@@ -130,6 +132,7 @@ function ensureStore(): Store {
     const crosswalk = normalizeBoard(parsed.crosswalk)
     const stride = normalizeBoard(parsed.stride)
     const spotter = normalizeBoard(parsed.spotter)
+    const pellets = normalizeBoard(parsed.pellets)
     const store: Store = {
       stacker: stacker.entries,
       patriot: patriot.entries,
@@ -141,6 +144,7 @@ function ensureStore(): Store {
       crosswalk: crosswalk.entries,
       spotter: spotter.entries,
       stride: stride.entries,
+      pellets: pellets.entries,
     }
     const renamedCentroid = parsed.centroid == null && Array.isArray(parsed['dead-center'])
     const changed =
@@ -154,6 +158,7 @@ function ensureStore(): Store {
       crosswalk.changed ||
       stride.changed ||
       spotter.changed ||
+      pellets.changed ||
       renamedCentroid ||
       !Array.isArray(parsed.crosswalk) ||
       !Array.isArray(parsed.stride)
@@ -186,6 +191,7 @@ export function replaceAllBoards(next: Store) {
     crosswalk: Array.isArray(next.crosswalk) ? next.crosswalk : [],
     stride: Array.isArray(next.stride) ? next.stride : [],
     spotter: Array.isArray(next.spotter) ? next.spotter : [],
+    pellets: Array.isArray(next.pellets) ? next.pellets : [],
   })
 }
 

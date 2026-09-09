@@ -81,9 +81,12 @@ app.use('/invites', invitesRouter)
 app.use('/trophies', trophiesRouter)
 
 const forceSeed = process.env.SEED_FORCE === '1' || process.env.SEED_FORCE === 'true'
+const sampleSeed =
+  process.env.SEED_SAMPLE === '1' || process.env.SEED_SAMPLE === 'true'
 if (applySeedRevision(forceSeed)) {
-  console.log('Reseeded leaderboards + records (revision bump or SEED_FORCE)')
-} else {
+  console.log('Cleared leaderboards + records (revision bump or SEED_FORCE)')
+} else if (sampleSeed) {
+  // Opt-in only — empty boards stay empty so prod can be tested without filler.
   if (seedLeaderboards(false)) {
     console.log('Seeded leaderboards with sample arcade scores')
   }

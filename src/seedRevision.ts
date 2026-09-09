@@ -1,19 +1,18 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { seedLeaderboards } from './seedBoards.js'
-import { seedRecords } from './seedRecords.js'
-import { ensureShowcaseTrophies } from './trophies.js'
+import { replaceAllRecords } from './records.js'
+import { replaceAllBoards } from './store.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const DATA_DIR = path.resolve(__dirname, '../data')
 const REV_PATH = path.join(DATA_DIR, '.seed-rev')
 
 /**
- * Bump this to wipe + reseed leaderboards/records on the next API boot.
- * Keeps accounts, sessions, and name claims.
+ * Bump this to wipe leaderboards/records/trophies on the next API boot.
+ * Keeps accounts, sessions, and name claims. Does not re-add sample scores.
  */
-export const SEED_REVISION = '2026-09-04-mobile-trophies'
+export const SEED_REVISION = '2026-09-09-clear-for-testing'
 
 function readRev(): string | null {
   try {
@@ -41,16 +40,31 @@ function clearTrophies() {
   }
 }
 
-/** Force-refresh sample boards when {@link SEED_REVISION} changes (or SEED_FORCE). */
+function clearBoardsAndRecords() {
+  replaceAllBoards({
+    stacker: [],
+    patriot: [],
+    snake: [],
+    pop: [],
+    centroid: [],
+    asteroids: [],
+    simon: [],
+    crosswalk: [],
+    spotter: [],
+    stride: [],
+    pellets: [],
+  })
+  replaceAllRecords({})
+  clearTrophies()
+}
+
+/** Wipe sample boards when {@link SEED_REVISION} changes (or SEED_FORCE). */
 export function applySeedRevision(forceEnv = false): boolean {
   const force = forceEnv || process.env.SEED_FORCE === '1' || process.env.SEED_FORCE === 'true'
   const current = readRev()
   if (!force && current === SEED_REVISION) return false
 
-  seedLeaderboards(true)
-  seedRecords(true)
-  clearTrophies()
-  ensureShowcaseTrophies()
+  clearBoardsAndRecords()
   writeRev(SEED_REVISION)
   return true
 }

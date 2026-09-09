@@ -1,5 +1,6 @@
-import { seedGame } from './seedBoards.js'
-import { applySeedRevision, SEED_REVISION } from './seedRevision.js'
+import { seedGame, seedLeaderboards } from './seedBoards.js'
+import { seedRecords } from './seedRecords.js'
+import { ensureShowcaseTrophies } from './trophies.js'
 import { isAllowedGame } from './store.js'
 
 const game = process.argv[2]
@@ -11,6 +12,8 @@ if (game) {
   seedGame(game)
   console.log(`Seeded ${game} leaderboard`)
 } else {
-  applySeedRevision(true)
-  console.log(`Reseeded boards + records (rev ${SEED_REVISION})`)
+  seedLeaderboards(true)
+  seedRecords(true)
+  ensureShowcaseTrophies()
+  console.log('Seeded sample boards + records + showcase trophies')
 }

@@ -12,6 +12,7 @@ import { seedRecords } from './seedRecords.js'
 import { ALLOWED_GAMES } from './store.js'
 import { applySeedRevision } from './seedRevision.js'
 import { groupsRouter } from './groupsRoutes.js'
+import { invitesRouter } from './invitesRoutes.js'
 import { tournamentsRouter } from './tournamentsRoutes.js'
 import { trophiesRouter } from './trophiesRoutes.js'
 
@@ -76,6 +77,7 @@ app.use('/leaderboards', leaderboardsRouter)
 app.use('/records', recordsRouter)
 app.use('/tournaments', tournamentsRouter)
 app.use('/groups', groupsRouter)
+app.use('/invites', invitesRouter)
 app.use('/trophies', trophiesRouter)
 
 const forceSeed = process.env.SEED_FORCE === '1' || process.env.SEED_FORCE === 'true'

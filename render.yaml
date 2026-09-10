@@ -12,3 +12,6 @@ services:
         value: "22"
       - key: CORS_ORIGIN
         value: https://ramseys-arcade.vercel.app
+      # Set in Render dashboard → Neon pooled connection string
+      - key: DATABASE_URL
+        sync: false

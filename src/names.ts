@@ -1,7 +1,7 @@
 import crypto from 'node:crypto'
-import fs from 'node:fs'
-import path from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { eq, inArray } from 'drizzle-orm'
+import { db } from './db/client.js'
+import { nameClaims } from './db/schema.js'
 import { renamePlayerAcrossGroups } from './groups.js'
 import { renamePlayerAcrossLeaderboards } from './store.js'
 import { renamePlayerAcrossRecords } from './records.js'
@@ -13,10 +13,6 @@ import {
   type AvatarId,
 } from './avatars.js'
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url))
-const DATA_DIR = path.resolve(__dirname, '../data')
-const CLAIMS_PATH = path.join(DATA_DIR, 'name-claims.json')
-
 export type NameClaim = {
   token: string
   claimedAt: number
@@ -24,53 +20,34 @@ export type NameClaim = {
   avatarId?: AvatarId
 }
 
-type ClaimsStore = {
-  claims: Record<string, NameClaim>
-}
-
-function emptyStore(): ClaimsStore {
-  return { claims: {} }
-}
-
-function ensureStore(): ClaimsStore {
-  if (!fs.existsSync(DATA_DIR)) {
-    fs.mkdirSync(DATA_DIR, { recursive: true })
-  }
-  if (!fs.existsSync(CLAIMS_PATH)) {
-    const empty = emptyStore()
-    fs.writeFileSync(CLAIMS_PATH, JSON.stringify(empty, null, 2))
-    return empty
-  }
-  try {
-    const raw = fs.readFileSync(CLAIMS_PATH, 'utf8')
-    const parsed = JSON.parse(raw) as ClaimsStore
-    if (!parsed || typeof parsed.claims !== 'object' || parsed.claims == null) {
-      return emptyStore()
-    }
-    return { claims: parsed.claims }
-  } catch {
-    return emptyStore()
-  }
-}
-
-function writeStore(store: ClaimsStore) {
-  const tmp = `${CLAIMS_PATH}.tmp`
-  fs.writeFileSync(tmp, JSON.stringify(store, null, 2))
-  fs.renameSync(tmp, CLAIMS_PATH)
+function mintToken() {
+  return crypto.randomBytes(24).toString('base64url')
 }
 
 export function cleanPlayerName(name: string) {
   return name.trim().slice(0, 12).toUpperCase()
 }
 
-function mintToken() {
-  return crypto.randomBytes(24).toString('base64url')
+function claimFromRow(row: {
+  name: string
+  token: string
+  claimedAt: number
+  accountId: string | null
+  avatarId: string | null
+}): NameClaim {
+  return {
+    token: row.token,
+    claimedAt: row.claimedAt,
+    ...(row.accountId ? { accountId: row.accountId } : {}),
+    ...(row.avatarId && isAvatarId(row.avatarId) ? { avatarId: row.avatarId } : {}),
+  }
 }
 
-export function getClaim(name: string): NameClaim | null {
+export async function getClaim(name: string): Promise<NameClaim | null> {
   const cleaned = cleanPlayerName(name)
   if (!cleaned) return null
-  return ensureStore().claims[cleaned] ?? null
+  const rows = await db().select().from(nameClaims).where(eq(nameClaims.name, cleaned)).limit(1)
+  return rows[0] ? claimFromRow(rows[0]) : null
 }
 
 /** Local/dev only. Production Render sets NODE_ENV=production. */
@@ -81,7 +58,7 @@ export function isDevToolsEnabled() {
 }
 
 /** Hand out an existing (or new) claim token so a local client can act as that tag. */
-export function assumeNameForDev(name: string): { name: string; token: string } {
+export async function assumeNameForDev(name: string): Promise<{ name: string; token: string }> {
   if (!isDevToolsEnabled()) {
     throw Object.assign(new Error('Impersonation is disabled'), {
       status: 403,
@@ -92,25 +69,29 @@ export function assumeNameForDev(name: string): { name: string; token: string } 
   if (!cleaned) {
     throw Object.assign(new Error('Name required'), { status: 400, code: 'NAME_REQUIRED' })
   }
-  const store = ensureStore()
-  const existing = store.claims[cleaned]
+  const existing = await getClaim(cleaned)
   if (existing) {
     return { name: cleaned, token: existing.token }
   }
   const next: NameClaim = { token: mintToken(), claimedAt: Date.now() }
-  store.claims[cleaned] = next
-  writeStore(store)
+  await db().insert(nameClaims).values({
+    name: cleaned,
+    token: next.token,
+    claimedAt: next.claimedAt,
+    accountId: null,
+    avatarId: null,
+  })
   return { name: cleaned, token: next.token }
 }
 
-export function isNameAvailable(
+export async function isNameAvailable(
   name: string,
   token?: string | null,
   accountId?: string | null,
-): boolean {
+): Promise<boolean> {
   const cleaned = cleanPlayerName(name)
   if (!cleaned) return false
-  const claim = getClaim(cleaned)
+  const claim = await getClaim(cleaned)
   if (!claim) return true
   if (token && token === claim.token) return true
   if (accountId && claim.accountId === accountId) return true
@@ -123,43 +104,42 @@ export type UseNameAuth = {
 }
 
 /** Move leaderboard + tournament rows from one tag to another. */
-export function migratePlayerScores(fromRaw: string, toRaw: string) {
+export async function migratePlayerScores(fromRaw: string, toRaw: string) {
   const from = cleanPlayerName(fromRaw)
   const to = cleanPlayerName(toRaw)
   if (!from || !to || from === to) return { from, to, updated: 0 }
-  const boards = renamePlayerAcrossLeaderboards(from, to)
-  renamePlayerAcrossTournaments(from, to)
-  renamePlayerAcrossRecords(from, to)
-  renamePlayerAcrossTrophies(from, to)
-  renamePlayerAcrossGroups(from, to)
+  const boards = await renamePlayerAcrossLeaderboards(from, to)
+  await renamePlayerAcrossTournaments(from, to)
+  await renamePlayerAcrossRecords(from, to)
+  await renamePlayerAcrossTrophies(from, to)
+  await renamePlayerAcrossGroups(from, to)
   return boards
 }
 
-function releaseOtherAccountNames(
-  store: ClaimsStore,
+async function releaseOtherAccountNames(
   accountId: string,
   keepName: string,
-): string[] {
+): Promise<string[]> {
+  const owned = await db()
+    .select()
+    .from(nameClaims)
+    .where(eq(nameClaims.accountId, accountId))
   const released: string[] = []
-  for (const [otherName, claim] of Object.entries(store.claims)) {
-    if (otherName === keepName) continue
-    if (claim.accountId === accountId) {
-      released.push(otherName)
-      // Fully free the tag so it can be reclaimed (by this account or anyone).
-      delete store.claims[otherName]
-    }
+  for (const row of owned) {
+    if (row.name === keepName) continue
+    released.push(row.name)
+    await db().delete(nameClaims).where(eq(nameClaims.name, row.name))
   }
   return released
 }
 
-function releaseAndMigrateAccountNames(
-  store: ClaimsStore,
+async function releaseAndMigrateAccountNames(
   accountId: string,
   keepName: string,
-): string[] {
-  const released = releaseOtherAccountNames(store, accountId, keepName)
+): Promise<string[]> {
+  const released = await releaseOtherAccountNames(accountId, keepName)
   for (const previous of released) {
-    migratePlayerScores(previous, keepName)
+    await migratePlayerScores(previous, keepName)
   }
   return released
 }
@@ -168,11 +148,11 @@ function releaseAndMigrateAccountNames(
  * Claim a player name (or verify an existing claim).
  * Accepts guest claim token and/or owning account id.
  */
-export function claimName(
+export async function claimName(
   name: string,
   token?: string | null,
   accountId?: string | null,
-): { name: string; token: string; created: boolean } {
+): Promise<{ name: string; token: string; created: boolean }> {
   return assertCanUseName(name, { claimToken: token, accountId })
 }
 
@@ -180,27 +160,31 @@ export function claimName(
  * Authorize use of a name via guest token or owning session account.
  * Creates the claim if the name is free.
  */
-export function assertCanUseName(
+export async function assertCanUseName(
   name: string,
   auth: UseNameAuth = {},
-): { name: string; token: string; created: boolean } {
+): Promise<{ name: string; token: string; created: boolean }> {
   const cleaned = cleanPlayerName(name)
   if (!cleaned) {
     throw Object.assign(new Error('Name required'), { status: 400, code: 'NAME_REQUIRED' })
   }
 
-  const store = ensureStore()
-  const existing = store.claims[cleaned]
+  const existing = await getClaim(cleaned)
   const { claimToken, accountId } = auth
 
   if (!existing) {
     const next: NameClaim = { token: mintToken(), claimedAt: Date.now() }
     if (accountId) {
       next.accountId = accountId
-      releaseAndMigrateAccountNames(store, accountId, cleaned)
+      await releaseAndMigrateAccountNames(accountId, cleaned)
     }
-    store.claims[cleaned] = next
-    writeStore(store)
+    await db().insert(nameClaims).values({
+      name: cleaned,
+      token: next.token,
+      claimedAt: next.claimedAt,
+      accountId: next.accountId ?? null,
+      avatarId: null,
+    })
     return { name: cleaned, token: next.token, created: true }
   }
 
@@ -208,13 +192,13 @@ export function assertCanUseName(
   const accountOk = Boolean(accountId && existing.accountId === accountId)
 
   if (tokenOk || accountOk) {
-    let dirty = false
     if (accountId && tokenOk && !existing.accountId) {
-      existing.accountId = accountId
-      releaseAndMigrateAccountNames(store, accountId, cleaned)
-      dirty = true
+      await releaseAndMigrateAccountNames(accountId, cleaned)
+      await db()
+        .update(nameClaims)
+        .set({ accountId })
+        .where(eq(nameClaims.name, cleaned))
     }
-    if (dirty) writeStore(store)
     return { name: cleaned, token: existing.token, created: false }
   }
 
@@ -225,16 +209,16 @@ export function assertCanUseName(
 }
 
 /** Verify ownership without creating a new claim. */
-export function assertOwnsName(
+export async function assertOwnsName(
   name: string,
   token?: string | null,
   accountId?: string | null,
-): string {
+): Promise<string> {
   const cleaned = cleanPlayerName(name)
   if (!cleaned) {
     throw Object.assign(new Error('Name required'), { status: 400, code: 'NAME_REQUIRED' })
   }
-  const existing = getClaim(cleaned)
+  const existing = await getClaim(cleaned)
   if (!existing) {
     throw Object.assign(new Error('Name is not claimed'), {
       status: 409,
@@ -256,17 +240,17 @@ export function assertOwnsName(
  * Rename a gamer tag: prove ownership of `from`, claim `to`, move scores,
  * and free the old claim.
  */
-export function renameGamerTag(
+export async function renameGamerTag(
   fromRaw: string,
   toRaw: string,
   auth: UseNameAuth & { fromToken?: string | null } = {},
-): {
+): Promise<{
   name: string
   token: string
   created: boolean
   from: string
   migratedFrom: string[]
-} {
+}> {
   const from = cleanPlayerName(fromRaw)
   const to = cleanPlayerName(toRaw)
   if (!from || !to) {
@@ -274,38 +258,39 @@ export function renameGamerTag(
   }
 
   if (from === to) {
-    const same = assertCanUseName(to, {
+    const same = await assertCanUseName(to, {
       claimToken: auth.claimToken,
       accountId: auth.accountId,
     })
     return { ...same, from, migratedFrom: [] }
   }
 
-  assertOwnsName(from, auth.fromToken, auth.accountId)
+  await assertOwnsName(from, auth.fromToken, auth.accountId)
 
-  const fromClaim = getClaim(from)
+  const fromClaim = await getClaim(from)
   const fromAvatar = fromClaim?.avatarId
 
-  const toClaim = assertCanUseName(to, {
+  const toClaim = await assertCanUseName(to, {
     claimToken: auth.claimToken,
     accountId: auth.accountId,
   })
 
-  migratePlayerScores(from, to)
+  await migratePlayerScores(from, to)
 
-  const store = ensureStore()
-  if (fromAvatar && store.claims[to] && !store.claims[to].avatarId) {
-    store.claims[to].avatarId = fromAvatar
+  if (fromAvatar) {
+    const toRow = await getClaim(to)
+    if (toRow && !toRow.avatarId) {
+      await db()
+        .update(nameClaims)
+        .set({ avatarId: fromAvatar })
+        .where(eq(nameClaims.name, to))
+    }
   }
-  if (store.claims[from]) {
-    delete store.claims[from]
-  }
-  writeStore(store)
+  await db().delete(nameClaims).where(eq(nameClaims.name, from))
 
   const migratedFrom = [from]
   if (auth.accountId) {
-    const extras = releaseAndMigrateAccountNames(store, auth.accountId, to)
-    if (extras.length) writeStore(store)
+    const extras = await releaseAndMigrateAccountNames(auth.accountId, to)
     migratedFrom.push(...extras)
   }
 
@@ -323,13 +308,13 @@ export function renameGamerTag(
  * Previously linked tags are deleted (freed) and returned so callers can
  * rename historical scores.
  */
-export function linkNameToAccount(
+export async function linkNameToAccount(
   name: string,
   claimToken: string | null | undefined,
   accountId: string,
   previousName?: string | null,
   previousToken?: string | null,
-): { name: string; token: string; created: boolean; previousNames: string[] } {
+): Promise<{ name: string; token: string; created: boolean; previousNames: string[] }> {
   const cleaned = cleanPlayerName(name)
   if (!cleaned) {
     throw Object.assign(new Error('Name required'), { status: 400, code: 'NAME_REQUIRED' })
@@ -341,19 +326,20 @@ export function linkNameToAccount(
   const prev = previousName ? cleanPlayerName(previousName) : ''
   // Guest tag → account rename: move scores before claims are shuffled.
   if (prev && prev !== cleaned) {
-    const prevClaim = getClaim(prev)
+    const prevClaim = await getClaim(prev)
     const canMigrate =
       (prevClaim && prevClaim.accountId === accountId) ||
       (prevClaim && previousToken && previousToken === prevClaim.token) ||
       (prevClaim && claimToken && claimToken === prevClaim.token)
     if (canMigrate) {
       try {
+        const renamed = await renameGamerTag(prev, cleaned, {
+          fromToken: previousToken ?? claimToken,
+          claimToken,
+          accountId,
+        })
         return {
-          ...renameGamerTag(prev, cleaned, {
-            fromToken: previousToken ?? claimToken,
-            claimToken,
-            accountId,
-          }),
+          ...renamed,
           previousNames: [prev],
         }
       } catch {
@@ -362,18 +348,19 @@ export function linkNameToAccount(
     }
   }
 
-  const store = ensureStore()
-  const existing = store.claims[cleaned]
+  const existing = await getClaim(cleaned)
   let created = false
   let token: string
 
   if (!existing) {
     token = mintToken()
-    store.claims[cleaned] = {
+    await db().insert(nameClaims).values({
+      name: cleaned,
       token,
       claimedAt: Date.now(),
       accountId,
-    }
+      avatarId: null,
+    })
     created = true
   } else if (existing.accountId && existing.accountId !== accountId) {
     throw Object.assign(new Error('That name is linked to another account'), {
@@ -383,14 +370,22 @@ export function linkNameToAccount(
   } else if (existing.accountId === accountId) {
     token = existing.token
   } else if (claimToken && claimToken === existing.token) {
-    existing.accountId = accountId
+    await db()
+      .update(nameClaims)
+      .set({ accountId })
+      .where(eq(nameClaims.name, cleaned))
     token = existing.token
   } else if (!existing.accountId) {
     // Orphan / previously released claim with no owner — adopt it.
-    existing.accountId = accountId
-    existing.token = mintToken()
-    existing.claimedAt = Date.now()
-    token = existing.token
+    token = mintToken()
+    await db()
+      .update(nameClaims)
+      .set({
+        accountId,
+        token,
+        claimedAt: Date.now(),
+      })
+      .where(eq(nameClaims.name, cleaned))
   } else {
     throw Object.assign(
       new Error('Sign in from the device that claimed this name, then link it'),
@@ -398,83 +393,103 @@ export function linkNameToAccount(
     )
   }
 
-  const previousNames = releaseAndMigrateAccountNames(store, accountId, cleaned)
+  const previousNames = await releaseAndMigrateAccountNames(accountId, cleaned)
 
-  writeStore(store)
   return { name: cleaned, token, created, previousNames }
 }
 
 /** Heal accounts that somehow own multiple tags; keep the newest. */
-export function reconcileAccountNames(accountId: string): { name: string; token: string }[] {
+export async function reconcileAccountNames(
+  accountId: string,
+): Promise<{ name: string; token: string }[]> {
   if (!accountId) return []
-  const store = ensureStore()
-  const owned: { name: string; token: string; claimedAt: number }[] = []
-  for (const [name, claim] of Object.entries(store.claims)) {
-    if (claim.accountId === accountId) {
-      owned.push({ name, token: claim.token, claimedAt: claim.claimedAt })
-    }
-  }
+  const owned = await db()
+    .select()
+    .from(nameClaims)
+    .where(eq(nameClaims.accountId, accountId))
   if (owned.length <= 1) {
-    return owned.map(({ name, token }) => ({ name, token }))
+    return owned.map((row) => ({ name: row.name, token: row.token }))
   }
 
   owned.sort((a, b) => b.claimedAt - a.claimedAt)
-  const keep = owned[0]
-  releaseAndMigrateAccountNames(store, accountId, keep.name)
-  writeStore(store)
-  const kept = store.claims[keep.name]
+  const keep = owned[0]!
+  await releaseAndMigrateAccountNames(accountId, keep.name)
+  const kept = await getClaim(keep.name)
   return kept ? [{ name: keep.name, token: kept.token }] : []
 }
 
-export function namesOwnedByAccount(
+export async function namesOwnedByAccount(
   accountId: string,
-): { name: string; token: string; avatarId: AvatarId }[] {
-  return reconcileAccountNames(accountId).map(({ name, token }) => ({
-    name,
-    token,
-    avatarId: resolveAvatarId(name),
-  }))
+): Promise<{ name: string; token: string; avatarId: AvatarId }[]> {
+  const rows = await reconcileAccountNames(accountId)
+  const result: { name: string; token: string; avatarId: AvatarId }[] = []
+  for (const row of rows) {
+    result.push({
+      name: row.name,
+      token: row.token,
+      avatarId: await resolveAvatarId(row.name),
+    })
+  }
+  return result
 }
 
 /** Resolved avatar for a tag (saved or hash default). */
-export function resolveAvatarId(name: string): AvatarId {
+export async function resolveAvatarId(name: string): Promise<AvatarId> {
   const cleaned = cleanPlayerName(name)
   if (!cleaned) return defaultAvatarId('')
-  const claim = getClaim(cleaned)
+  const claim = await getClaim(cleaned)
   if (claim?.avatarId && isAvatarId(claim.avatarId)) return claim.avatarId
   return defaultAvatarId(cleaned)
 }
 
-export function withAvatarId<T extends { name: string }>(
+export async function withAvatarId<T extends { name: string }>(
   row: T,
-): T & { avatarId: AvatarId } {
-  return { ...row, avatarId: resolveAvatarId(row.name) }
+): Promise<T & { avatarId: AvatarId }> {
+  return { ...row, avatarId: await resolveAvatarId(row.name) }
 }
 
-export function withAvatarIds<T extends { name: string }>(
+export async function withAvatarIds<T extends { name: string }>(
   rows: T[],
-): Array<T & { avatarId: AvatarId }> {
-  return rows.map(withAvatarId)
+): Promise<Array<T & { avatarId: AvatarId }>> {
+  if (!rows.length) return []
+  const cleanedNames = [
+    ...new Set(rows.map((r) => cleanPlayerName(r.name)).filter(Boolean)),
+  ]
+  const claimRows =
+    cleanedNames.length > 0
+      ? await db().select().from(nameClaims).where(inArray(nameClaims.name, cleanedNames))
+      : []
+  const byName = new Map(claimRows.map((r) => [r.name, r] as const))
+  return rows.map((row) => {
+    const cleaned = cleanPlayerName(row.name)
+    const claim = byName.get(cleaned)
+    const avatarId =
+      claim?.avatarId && isAvatarId(claim.avatarId)
+        ? claim.avatarId
+        : defaultAvatarId(cleaned)
+    return { ...row, avatarId }
+  })
 }
 
-export function setNameAvatar(
+export async function setNameAvatar(
   name: string,
   avatarId: string,
   auth: UseNameAuth = {},
-): { name: string; avatarId: AvatarId; token: string } {
+): Promise<{ name: string; avatarId: AvatarId; token: string }> {
   if (!isAvatarId(avatarId)) {
     throw Object.assign(new Error('Unknown avatar'), { status: 400, code: 'BAD_AVATAR' })
   }
-  const cleaned = assertOwnsName(name, auth.claimToken, auth.accountId)
-  const store = ensureStore()
-  const claim = store.claims[cleaned]
+  const cleaned = await assertOwnsName(name, auth.claimToken, auth.accountId)
+  const claim = await getClaim(cleaned)
   if (!claim) {
     throw Object.assign(new Error('Name is not claimed'), {
       status: 409,
       code: 'NAME_UNCLAIMED',
     })
   }
-  claim.avatarId = avatarId
-  writeStore(store)
+  await db()
+    .update(nameClaims)
+    .set({ avatarId })
+    .where(eq(nameClaims.name, cleaned))
   return { name: cleaned, avatarId, token: claim.token }
 }

@@ -35,9 +35,9 @@ function claimError(err: unknown, res: import('express').Response) {
   })
 }
 
-invitesRouter.get('/', (req, res) => {
+invitesRouter.get('/', async (req, res) => {
   try {
-    const account = accountFromRequest(req)
+    const account = await accountFromRequest(req)
     const playerName =
       typeof req.query.playerName === 'string' ? req.query.playerName : undefined
     const status = typeof req.query.status === 'string' ? req.query.status : 'pending'
@@ -45,7 +45,7 @@ invitesRouter.get('/', (req, res) => {
       res.status(400).json({ error: 'Only status=pending is supported' })
       return
     }
-    const invites = listPendingInvites({
+    const invites = await listPendingInvites({
       playerName,
       accountId: account?.id,
     })
@@ -55,19 +55,19 @@ invitesRouter.get('/', (req, res) => {
   }
 })
 
-invitesRouter.post('/', (req, res) => {
+invitesRouter.post('/', async (req, res) => {
   const parsed = createSchema.safeParse(req.body)
   if (!parsed.success) {
     res.status(400).json({ error: 'Invalid body', details: parsed.error.flatten() })
     return
   }
-  const account = accountFromRequest(req)
+  const account = await accountFromRequest(req)
   if (!account) {
     res.status(401).json({ error: 'Sign in to send invites' })
     return
   }
   try {
-    const invite = createDirectedInvite({
+    const invite = await createDirectedInvite({
       kind: parsed.data.kind,
       targetId: parsed.data.targetId,
       toName: parsed.data.toName,
@@ -80,19 +80,19 @@ invitesRouter.post('/', (req, res) => {
   }
 })
 
-invitesRouter.post('/:id/accept', (req, res) => {
+invitesRouter.post('/:id/accept', async (req, res) => {
   const parsed = respondSchema.safeParse(req.body)
   if (!parsed.success) {
     res.status(400).json({ error: 'Invalid body', details: parsed.error.flatten() })
     return
   }
-  const account = accountFromRequest(req)
+  const account = await accountFromRequest(req)
   try {
-    const claimed = assertCanUseName(parsed.data.name, {
+    const claimed = await assertCanUseName(parsed.data.name, {
       claimToken: parsed.data.token,
       accountId: account?.id,
     })
-    const result = acceptInvite(req.params.id, claimed.name, {
+    const result = await acceptInvite(req.params.id, claimed.name, {
       accountId: account?.id,
       claimToken: claimed.token,
     })
@@ -102,19 +102,19 @@ invitesRouter.post('/:id/accept', (req, res) => {
   }
 })
 
-invitesRouter.post('/:id/decline', (req, res) => {
+invitesRouter.post('/:id/decline', async (req, res) => {
   const parsed = respondSchema.safeParse(req.body)
   if (!parsed.success) {
     res.status(400).json({ error: 'Invalid body', details: parsed.error.flatten() })
     return
   }
-  const account = accountFromRequest(req)
+  const account = await accountFromRequest(req)
   try {
-    const claimed = assertCanUseName(parsed.data.name, {
+    const claimed = await assertCanUseName(parsed.data.name, {
       claimToken: parsed.data.token,
       accountId: account?.id,
     })
-    const result = declineInvite(req.params.id, claimed.name, {
+    const result = await declineInvite(req.params.id, claimed.name, {
       accountId: account?.id,
     })
     res.json(result)

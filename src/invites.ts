@@ -1,6 +1,6 @@
-import fs from 'node:fs'
-import path from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { and, eq, lt } from 'drizzle-orm'
+import { db } from './db/client.js'
+import { directedInvites } from './db/schema.js'
 import { cleanPlayerName, namesOwnedByAccount } from './names.js'
 import {
   getGroup,
@@ -12,10 +12,6 @@ import {
   getTournament,
   joinTournament,
 } from './tournaments.js'
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url))
-const DATA_DIR = path.resolve(__dirname, '../data')
-const STORE_PATH = path.join(DATA_DIR, 'invites.json')
 
 const INVITE_TTL_MS = 14 * 24 * 60 * 60 * 1000
 
@@ -48,41 +44,12 @@ export type PublicInvite = {
   expiresAt: number
 }
 
-type Store = { invites: DirectedInvite[] }
-
 function uid() {
   return `inv-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
 }
 
 function fail(message: string, status: number, code?: string): never {
   throw Object.assign(new Error(message), { status, code })
-}
-
-function ensureDataDir() {
-  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true })
-}
-
-function writeStore(store: Store) {
-  ensureDataDir()
-  const tmp = `${STORE_PATH}.tmp`
-  fs.writeFileSync(tmp, JSON.stringify(store, null, 2))
-  fs.renameSync(tmp, STORE_PATH)
-}
-
-function readStore(): Store {
-  ensureDataDir()
-  if (!fs.existsSync(STORE_PATH)) {
-    const empty = { invites: [] }
-    writeStore(empty)
-    return empty
-  }
-  try {
-    const parsed = JSON.parse(fs.readFileSync(STORE_PATH, 'utf8')) as Store
-    if (!Array.isArray(parsed.invites)) return { invites: [] }
-    return { invites: parsed.invites.map(normalizeInvite) }
-  } catch {
-    return { invites: [] }
-  }
 }
 
 function normalizeInvite(raw: DirectedInvite): DirectedInvite {
@@ -105,25 +72,64 @@ function normalizeInvite(raw: DirectedInvite): DirectedInvite {
   }
 }
 
-function putInvite(store: Store, invite: DirectedInvite) {
-  const idx = store.invites.findIndex((i) => i.id === invite.id)
-  if (idx >= 0) store.invites[idx] = invite
-  else store.invites.push(invite)
+function rowToInvite(row: typeof directedInvites.$inferSelect): DirectedInvite {
+  return normalizeInvite({
+    id: row.id,
+    kind: row.kind as InviteKind,
+    targetId: row.targetId,
+    targetName: row.targetName,
+    fromAccountId: row.fromAccountId,
+    fromName: row.fromName,
+    toName: row.toName,
+    inviteCode: row.inviteCode,
+    status: row.status as InviteStatus,
+    createdAt: row.createdAt,
+    expiresAt: row.expiresAt,
+  })
+}
+
+async function upsertInvite(invite: DirectedInvite) {
+  await db()
+    .insert(directedInvites)
+    .values({
+      id: invite.id,
+      kind: invite.kind,
+      targetId: invite.targetId,
+      targetName: invite.targetName,
+      fromAccountId: invite.fromAccountId,
+      fromName: invite.fromName,
+      toName: invite.toName,
+      inviteCode: invite.inviteCode,
+      status: invite.status,
+      createdAt: invite.createdAt,
+      expiresAt: invite.expiresAt,
+    })
+    .onConflictDoUpdate({
+      target: directedInvites.id,
+      set: {
+        kind: invite.kind,
+        targetId: invite.targetId,
+        targetName: invite.targetName,
+        fromAccountId: invite.fromAccountId,
+        fromName: invite.fromName,
+        toName: invite.toName,
+        inviteCode: invite.inviteCode,
+        status: invite.status,
+        createdAt: invite.createdAt,
+        expiresAt: invite.expiresAt,
+      },
+    })
 }
 
 function isExpired(invite: DirectedInvite, now = Date.now()) {
   return invite.expiresAt > 0 && invite.expiresAt <= now
 }
 
-function expirePending(store: Store, now = Date.now()) {
-  let dirty = false
-  for (const invite of store.invites) {
-    if (invite.status === 'pending' && isExpired(invite, now)) {
-      invite.status = 'revoked'
-      dirty = true
-    }
-  }
-  return dirty
+async function expirePending(now = Date.now()) {
+  await db()
+    .update(directedInvites)
+    .set({ status: 'revoked' })
+    .where(and(eq(directedInvites.status, 'pending'), lt(directedInvites.expiresAt, now)))
 }
 
 export function publicInvite(invite: DirectedInvite): PublicInvite {
@@ -140,36 +146,43 @@ export function publicInvite(invite: DirectedInvite): PublicInvite {
   }
 }
 
-function recipientNames(opts: { playerName?: string; accountId?: string }): Set<string> {
+async function recipientNames(opts: {
+  playerName?: string
+  accountId?: string
+}): Promise<Set<string>> {
   const names = new Set<string>()
   const player = cleanPlayerName(opts.playerName ?? '')
   if (player) names.add(player)
   if (opts.accountId) {
-    for (const owned of namesOwnedByAccount(opts.accountId)) names.add(owned.name)
+    for (const owned of await namesOwnedByAccount(opts.accountId)) names.add(owned.name)
   }
   return names
 }
 
-function alreadyOnTarget(kind: InviteKind, targetId: string, toName: string): boolean {
+async function alreadyOnTarget(
+  kind: InviteKind,
+  targetId: string,
+  toName: string,
+): Promise<boolean> {
   if (kind === 'group') {
-    const group = getGroup(targetId)
+    const group = await getGroup(targetId)
     if (!group) return false
-    return isGroupMember(group, { playerName: toName })
+    return await isGroupMember(group, { playerName: toName })
   }
-  const t = getTournament(targetId)
+  const t = await getTournament(targetId)
   if (!t) return false
   const cleaned = cleanPlayerName(toName)
   return t.players.some((p) => p.name === cleaned)
 }
 
-export function createDirectedInvite(input: {
+export async function createDirectedInvite(input: {
   kind: InviteKind
   targetId: string
   toName: string
   fromAccountId: string
   fromName?: string
   now?: number
-}): PublicInvite {
+}): Promise<PublicInvite> {
   const now = input.now ?? Date.now()
   const toName = cleanPlayerName(input.toName)
   if (!toName) fail('Gamer tag required', 400, 'NAME_REQUIRED')
@@ -183,18 +196,18 @@ export function createDirectedInvite(input: {
   let inviteCode = ''
 
   if (input.kind === 'group') {
-    const group = getGroup(input.targetId)
+    const group = await getGroup(input.targetId)
     if (!group) fail('Group not found', 404, 'GROUP_NOT_FOUND')
     if (!isGroupOwner(group, input.fromAccountId)) {
       fail('Only the group owner can invite', 403, 'GROUP_FORBIDDEN')
     }
-    if (isGroupMember(group, { playerName: toName })) {
+    if (await isGroupMember(group, { playerName: toName })) {
       fail(`${toName} is already in this group`, 409, 'ALREADY_MEMBER')
     }
     targetName = group.name
     inviteCode = group.inviteCode
   } else {
-    const t = getTournament(input.targetId)
+    const t = await getTournament(input.targetId)
     if (!t) fail('Event not found', 404, 'TOURNAMENT_NOT_FOUND')
     if (!t.createdBy || t.createdBy.accountId !== input.fromAccountId) {
       fail('Only the host can invite', 403, 'EVENT_FORBIDDEN')
@@ -210,19 +223,19 @@ export function createDirectedInvite(input: {
     inviteCode = t.inviteCode
   }
 
-  const store = readStore()
-  expirePending(store, now)
+  await expirePending(now)
 
-  for (const existing of store.invites) {
-    if (
-      existing.status === 'pending' &&
-      existing.kind === input.kind &&
-      existing.targetId === input.targetId &&
-      existing.toName === toName
-    ) {
-      existing.status = 'revoked'
-    }
-  }
+  await db()
+    .update(directedInvites)
+    .set({ status: 'revoked' })
+    .where(
+      and(
+        eq(directedInvites.status, 'pending'),
+        eq(directedInvites.kind, input.kind),
+        eq(directedInvites.targetId, input.targetId),
+        eq(directedInvites.toName, toName),
+      ),
+    )
 
   const invite: DirectedInvite = {
     id: uid(),
@@ -237,37 +250,32 @@ export function createDirectedInvite(input: {
     createdAt: now,
     expiresAt: now + INVITE_TTL_MS,
   }
-  putInvite(store, invite)
-  writeStore(store)
+  await upsertInvite(invite)
   return publicInvite(invite)
 }
 
-export function listPendingInvites(opts: {
+export async function listPendingInvites(opts: {
   playerName?: string
   accountId?: string
   now?: number
-}): PublicInvite[] {
-  const names = recipientNames(opts)
+}): Promise<PublicInvite[]> {
+  const names = await recipientNames(opts)
   if (names.size === 0) return []
 
   const now = opts.now ?? Date.now()
-  const store = readStore()
-  const dirty = expirePending(store, now)
-  if (dirty) writeStore(store)
+  await expirePending(now)
 
-  return store.invites
-    .filter(
-      (i) =>
-        i.status === 'pending' &&
-        !isExpired(i, now) &&
-        names.has(i.toName) &&
-        !alreadyOnTarget(i.kind, i.targetId, i.toName),
-    )
-    .sort((a, b) => b.createdAt - a.createdAt)
-    .map(publicInvite)
+  const rows = await db().select().from(directedInvites)
+  const out: PublicInvite[] = []
+  for (const row of rows.map(rowToInvite).sort((a, b) => b.createdAt - a.createdAt)) {
+    if (row.status !== 'pending' || isExpired(row, now) || !names.has(row.toName)) continue
+    if (await alreadyOnTarget(row.kind, row.targetId, row.toName)) continue
+    out.push(publicInvite(row))
+  }
+  return out
 }
 
-function assertRecipient(
+async function assertRecipient(
   invite: DirectedInvite,
   rawName: string,
   opts: { accountId?: string },
@@ -277,32 +285,31 @@ function assertRecipient(
   if (name !== invite.toName) {
     fail('This invite is for a different gamer tag', 403, 'INVITE_WRONG_TAG')
   }
-  const allowed = recipientNames({ playerName: name, accountId: opts.accountId })
+  const allowed = await recipientNames({ playerName: name, accountId: opts.accountId })
   if (!allowed.has(name)) fail('Not allowed', 403, 'FORBIDDEN')
   return name
 }
 
-export function acceptInvite(
+export async function acceptInvite(
   id: string,
   rawName: string,
   opts: { accountId?: string; claimToken?: string; now?: number } = {},
 ) {
   const now = opts.now ?? Date.now()
-  const store = readStore()
-  expirePending(store, now)
-  const invite = store.invites.find((i) => i.id === id)
+  await expirePending(now)
+  const rows = await db().select().from(directedInvites).where(eq(directedInvites.id, id)).limit(1)
+  const invite = rows[0] ? rowToInvite(rows[0]) : null
   if (!invite) fail('Invite not found', 404, 'INVITE_NOT_FOUND')
   if (invite.status !== 'pending' || isExpired(invite, now)) {
     fail('This invite is no longer available', 409, 'INVITE_INACTIVE')
   }
 
-  const name = assertRecipient(invite, rawName, opts)
+  const name = await assertRecipient(invite, rawName, opts)
 
   if (invite.kind === 'group') {
-    const group = joinGroup(invite.targetId, name, invite.inviteCode, now)
+    const group = await joinGroup(invite.targetId, name, invite.inviteCode, now)
     invite.status = 'accepted'
-    putInvite(store, invite)
-    writeStore(store)
+    await upsertInvite(invite)
     return {
       invite: publicInvite(invite),
       kind: 'group' as const,
@@ -310,14 +317,13 @@ export function acceptInvite(
     }
   }
 
-  const joined = joinTournament(invite.targetId, name, now, null, {
+  const joined = await joinTournament(invite.targetId, name, now, null, {
     inviteCode: invite.inviteCode,
     accountId: opts.accountId,
     playerName: name,
   })
   invite.status = 'accepted'
-  putInvite(store, invite)
-  writeStore(store)
+  await upsertInvite(invite)
   return {
     invite: publicInvite(invite),
     kind: 'tournament' as const,
@@ -326,22 +332,21 @@ export function acceptInvite(
   }
 }
 
-export function declineInvite(
+export async function declineInvite(
   id: string,
   rawName: string,
   opts: { accountId?: string; now?: number } = {},
 ) {
   const now = opts.now ?? Date.now()
-  const store = readStore()
-  expirePending(store, now)
-  const invite = store.invites.find((i) => i.id === id)
+  await expirePending(now)
+  const rows = await db().select().from(directedInvites).where(eq(directedInvites.id, id)).limit(1)
+  const invite = rows[0] ? rowToInvite(rows[0]) : null
   if (!invite) fail('Invite not found', 404, 'INVITE_NOT_FOUND')
   if (invite.status !== 'pending' || isExpired(invite, now)) {
     fail('This invite is no longer available', 409, 'INVITE_INACTIVE')
   }
-  assertRecipient(invite, rawName, opts)
+  await assertRecipient(invite, rawName, opts)
   invite.status = 'declined'
-  putInvite(store, invite)
-  writeStore(store)
+  await upsertInvite(invite)
   return { invite: publicInvite(invite) }
 }

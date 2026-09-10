@@ -1,6 +1,6 @@
-import fs from 'node:fs'
-import path from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { and, asc, desc, eq, sql } from 'drizzle-orm'
+import { db } from './db/client.js'
+import { recordScores } from './db/schema.js'
 import {
   filterByPeriod,
   isAllowedGame,
@@ -11,10 +11,6 @@ import {
   type NameScope,
   type Period,
 } from './store.js'
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url))
-const DATA_DIR = path.resolve(__dirname, '../data')
-const STORE_PATH = path.join(DATA_DIR, 'records.json')
 
 const MAX_BOARD = 100
 const MAX_HISTORY = 500
@@ -199,10 +195,6 @@ export function isStrideFastestRowRecord(recordId: string): number | null {
   return rows
 }
 
-function emptyStore(): RecordsStore {
-  return {}
-}
-
 function normalizeEntry(raw: unknown): RecordEntry | null {
   if (!raw || typeof raw !== 'object') return null
   const row = raw as Partial<RecordEntry>
@@ -219,49 +211,58 @@ function normalizeEntry(raw: unknown): RecordEntry | null {
   }
 }
 
-function ensureStore(): RecordsStore {
-  if (!fs.existsSync(DATA_DIR)) {
-    fs.mkdirSync(DATA_DIR, { recursive: true })
-  }
-  if (!fs.existsSync(STORE_PATH)) {
-    const empty = emptyStore()
-    fs.writeFileSync(STORE_PATH, JSON.stringify(empty, null, 2))
-    return empty
-  }
-  try {
-    const raw = JSON.parse(fs.readFileSync(STORE_PATH, 'utf8')) as RecordsStore
-    const store: RecordsStore = {}
-    if (!raw || typeof raw !== 'object') return emptyStore()
-    for (const [key, rows] of Object.entries(raw)) {
-      if (!Array.isArray(rows)) continue
-      store[key] = rows.map(normalizeEntry).filter((e): e is RecordEntry => e != null)
-    }
-    return store
-  } catch {
-    return emptyStore()
+function rowToEntry(row: {
+  id: string
+  name: string
+  score: number
+  at: number
+  device: string
+}): RecordEntry {
+  return {
+    id: row.id,
+    name: row.name,
+    score: row.score,
+    at: row.at,
+    device: isDeviceType(row.device) ? row.device : 'desktop',
   }
 }
 
-function writeStore(store: RecordsStore) {
-  const tmp = `${STORE_PATH}.tmp`
-  fs.writeFileSync(tmp, JSON.stringify(store, null, 2))
-  fs.renameSync(tmp, STORE_PATH)
-}
-
-export function replaceAllRecords(next: RecordsStore) {
-  const cleaned: RecordsStore = {}
+export async function replaceAllRecords(next: RecordsStore) {
+  const cleaned: { game: string; recordId: string; entry: RecordEntry }[] = []
   for (const [key, rows] of Object.entries(next ?? {})) {
     if (!Array.isArray(rows)) continue
-    cleaned[key] = rows
-      .map(normalizeEntry)
-      .filter((e): e is RecordEntry => e != null)
+    const sep = key.indexOf('::')
+    if (sep < 0) continue
+    const game = key.slice(0, sep)
+    const recordId = key.slice(sep + 2)
+    for (const raw of rows) {
+      const entry = normalizeEntry(raw)
+      if (entry) cleaned.push({ game, recordId, entry })
+    }
   }
-  writeStore(cleaned)
+  await db().transaction(async (tx) => {
+    await tx.delete(recordScores)
+    const chunk = 200
+    for (let i = 0; i < cleaned.length; i += chunk) {
+      const slice = cleaned.slice(i, i + chunk)
+      await tx.insert(recordScores).values(
+        slice.map(({ game, recordId, entry }) => ({
+          id: entry.id,
+          game,
+          recordId,
+          name: entry.name,
+          score: entry.score,
+          at: entry.at,
+          device: entry.device,
+        })),
+      )
+    }
+  })
 }
 
-export function isRecordsStoreEmpty() {
-  const store = ensureStore()
-  return Object.values(store).every((rows) => !rows?.length)
+export async function isRecordsStoreEmpty() {
+  const rows = await db().select({ id: recordScores.id }).from(recordScores).limit(1)
+  return rows.length === 0
 }
 
 function sortEntries(entries: RecordEntry[], direction: RecordDirection) {
@@ -283,13 +284,12 @@ function isBetter(
   return direction === 'lower' ? next < previous : next > previous
 }
 
-function historyFor(game: GameSlug, recordId: string): RecordEntry[] {
-  return ensureStore()[boardKey(game, recordId)] ?? []
-}
-
-function pruneHistory(entries: RecordEntry[]): RecordEntry[] {
-  if (entries.length <= MAX_HISTORY) return entries
-  return entries.slice(entries.length - MAX_HISTORY)
+async function historyFor(game: GameSlug, recordId: string): Promise<RecordEntry[]> {
+  const rows = await db()
+    .select()
+    .from(recordScores)
+    .where(and(eq(recordScores.game, game), eq(recordScores.recordId, recordId)))
+  return rows.map(rowToEntry)
 }
 
 function filterByNames<T extends { name: string }>(entries: T[], scope?: NameScope): T[] {
@@ -297,33 +297,33 @@ function filterByNames<T extends { name: string }>(entries: T[], scope?: NameSco
   return entries.filter((e) => scope.has(e.name))
 }
 
-export function getRecordBoard(
+export async function getRecordBoard(
   game: GameSlug,
   recordId: string,
   period: Period = 'all',
   now = Date.now(),
   scope?: NameScope,
-): RecordEntry[] {
+): Promise<RecordEntry[]> {
   const def = getRecordDef(game, recordId)
   if (!def) return []
-  const pool = filterByNames(filterByPeriod(historyFor(game, recordId), period, now), scope)
+  const pool = filterByNames(filterByPeriod(await historyFor(game, recordId), period, now), scope)
   return sortEntries(pool, def.direction).slice(0, MAX_BOARD)
 }
 
-export function bestRecordForName(
+export async function bestRecordForName(
   game: GameSlug,
   recordId: string,
   name: string,
   period: Period = 'all',
   now = Date.now(),
   scope?: NameScope,
-): YouRecordEntry | null {
+): Promise<YouRecordEntry | null> {
   const def = getRecordDef(game, recordId)
   if (!def) return null
   const cleaned = name.trim().slice(0, 12).toUpperCase()
   if (!cleaned) return null
   const pool = sortEntries(
-    filterByNames(filterByPeriod(historyFor(game, recordId), period, now), scope),
+    filterByNames(filterByPeriod(await historyFor(game, recordId), period, now), scope),
     def.direction,
   )
   const mine = pool.filter((e) => e.name === cleaned)
@@ -332,18 +332,19 @@ export function bestRecordForName(
   return { ...best, rank: pool.findIndex((e) => e.id === best.id) + 1 }
 }
 
-export function listGameRecords(
+export async function listGameRecords(
   game: GameSlug,
   period: Period = 'all',
   now = Date.now(),
   scope?: NameScope,
-): {
+): Promise<{
   records: Array<RecordDef & { top: RecordEntry | null }>
-} {
-  const records = listRecordDefs(game).map((def) => {
-    const board = getRecordBoard(game, def.id, period, now, scope)
-    return { ...def, top: board[0] ?? null }
-  })
+}> {
+  const records = []
+  for (const def of listRecordDefs(game)) {
+    const board = await getRecordBoard(game, def.id, period, now, scope)
+    records.push({ ...def, top: board[0] ?? null })
+  }
   return { records }
 }
 
@@ -357,20 +358,20 @@ function wouldQualifyForBoard(
   return isBetter(value, sorted[MAX_BOARD - 1].score, direction)
 }
 
-export function addRecord(
+export async function addRecord(
   game: GameSlug,
   recordId: string,
   name: string,
   score: number,
   device: DeviceType = 'desktop',
-): {
+): Promise<{
   improved: boolean
   entry: RecordEntry | null
   rank: number | null
   ranks: Partial<Record<Period, number>>
   board: RecordEntry[]
   totalEntries: number
-} {
+}> {
   const def = getRecordDef(game, recordId)
   if (!def) {
     throw Object.assign(new Error('Unknown record'), { status: 404 })
@@ -380,13 +381,9 @@ export function addRecord(
   }
   const value = Math.floor(score)
   const cleaned = name.trim().slice(0, 12).toUpperCase() || 'PLAYER'
-  const key = boardKey(game, recordId)
-  const store = ensureStore()
-  const history = [...(store[key] ?? [])]
+  const history = await historyFor(game, recordId)
   const mine = history.filter((e) => e.name === cleaned)
   const now = Date.now()
-  // Accept when this improves your period best OR the score would land on a
-  // period board (top MAX_BOARD) — even if it is not your personal best.
   const improvesPeriod = (period: Period) => {
     const best = sortEntries(filterByPeriod(mine, period, now), def.direction)[0]
     return !best || isBetter(value, best.score, def.direction)
@@ -407,8 +404,8 @@ export function addRecord(
     qualifiesOnBoard('weekly') ||
     qualifiesOnBoard('monthly')
   if (!accept) {
-    const board = getRecordBoard(game, recordId, 'all')
-    const you = bestRecordForName(game, recordId, cleaned, 'all')
+    const board = await getRecordBoard(game, recordId, 'all')
+    const you = await bestRecordForName(game, recordId, cleaned, 'all')
     const previousBest = sortEntries(mine, def.direction)[0] ?? null
     return {
       improved: false,
@@ -427,15 +424,38 @@ export function addRecord(
     at: Date.now(),
     device: isDeviceType(device) ? device : 'desktop',
   }
-  store[key] = pruneHistory([...history, entry])
-  writeStore(store)
 
+  await db().transaction(async (tx) => {
+    await tx.insert(recordScores).values({
+      id: entry.id,
+      game,
+      recordId,
+      name: entry.name,
+      score: entry.score,
+      at: entry.at,
+      device: entry.device,
+    })
+    // Keep newest MAX_HISTORY rows for this board
+    await tx.execute(sql`
+      DELETE FROM record_scores AS rs
+      WHERE rs.game = ${game}
+        AND rs.record_id = ${recordId}
+        AND rs.id NOT IN (
+          SELECT keep.id FROM (
+            SELECT id
+            FROM record_scores
+            WHERE game = ${game} AND record_id = ${recordId}
+            ORDER BY at DESC
+            LIMIT ${MAX_HISTORY}
+          ) AS keep
+        )
+    `)
+  })
+
+  const next = await historyFor(game, recordId)
   const ranks: Partial<Record<Period, number>> = {}
   for (const period of ['daily', 'weekly', 'monthly', 'all'] as const) {
-    const pool = sortEntries(
-      filterByPeriod(store[key], period),
-      def.direction,
-    )
+    const pool = sortEntries(filterByPeriod(next, period), def.direction)
     const index = pool.findIndex((e) => e.id === entry.id)
     if (index !== -1) ranks[period] = index + 1
   }
@@ -445,31 +465,25 @@ export function addRecord(
     entry,
     rank: ranks.all ?? ranks.daily ?? null,
     ranks,
-    board: getRecordBoard(game, recordId, 'all'),
-    totalEntries: store[key]?.length ?? 0,
+    board: await getRecordBoard(game, recordId, 'all'),
+    totalEntries: next.length,
   }
 }
 
-export function renamePlayerAcrossRecords(
+export async function renamePlayerAcrossRecords(
   fromRaw: string,
   toRaw: string,
-): { from: string; to: string; updated: number } {
+): Promise<{ from: string; to: string; updated: number }> {
   const from = fromRaw.trim().slice(0, 12).toUpperCase()
   const to = toRaw.trim().slice(0, 12).toUpperCase()
   if (!from || !to || from === to) return { from, to, updated: 0 }
 
-  const store = ensureStore()
-  let updated = 0
-  for (const entries of Object.values(store)) {
-    for (const entry of entries) {
-      if (entry.name === from) {
-        entry.name = to
-        updated += 1
-      }
-    }
-  }
-  if (updated) writeStore(store)
-  return { from, to, updated }
+  const updated = await db()
+    .update(recordScores)
+    .set({ name: to })
+    .where(eq(recordScores.name, from))
+    .returning({ id: recordScores.id })
+  return { from, to, updated: updated.length }
 }
 
 export {

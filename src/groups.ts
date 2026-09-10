@@ -1,11 +1,7 @@
-import fs from 'node:fs'
-import path from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { and, eq } from 'drizzle-orm'
+import { db } from './db/client.js'
+import { groupMembers, groups } from './db/schema.js'
 import { cleanPlayerName, namesOwnedByAccount, withAvatarIds } from './names.js'
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url))
-const DATA_DIR = path.resolve(__dirname, '../data')
-const STORE_PATH = path.join(DATA_DIR, 'groups.json')
 
 const MAX_GROUPS_PER_ACCOUNT = 5
 const MAX_MEMBERS = 20
@@ -23,8 +19,6 @@ export type Group = {
   createdBy: { accountId: string }
   members: GroupMember[]
 }
-
-type Store = { groups: Group[] }
 
 export type GroupAccessOpts = {
   accountId?: string
@@ -48,64 +42,60 @@ function fail(message: string, status: number, code?: string): never {
   throw Object.assign(new Error(message), { status, code })
 }
 
-function ensureDataDir() {
-  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true })
-}
-
-function writeStore(store: Store) {
-  ensureDataDir()
-  const tmp = `${STORE_PATH}.tmp`
-  fs.writeFileSync(tmp, JSON.stringify(store, null, 2))
-  fs.renameSync(tmp, STORE_PATH)
-}
-
-function readStore(): Store {
-  ensureDataDir()
-  if (!fs.existsSync(STORE_PATH)) {
-    const empty = { groups: [] }
-    writeStore(empty)
-    return empty
-  }
-  try {
-    const parsed = JSON.parse(fs.readFileSync(STORE_PATH, 'utf8')) as Store
-    if (!Array.isArray(parsed.groups)) return { groups: [] }
-    return { groups: parsed.groups.map(normalizeGroup) }
-  } catch {
-    return { groups: [] }
-  }
-}
-
-function normalizeGroup(g: Group): Group {
+async function loadGroup(id: string): Promise<Group | null> {
+  const cleaned = id.trim()
+  if (!cleaned) return null
+  const rows = await db().select().from(groups).where(eq(groups.id, cleaned)).limit(1)
+  const g = rows[0]
+  if (!g) return null
+  const members = await db()
+    .select()
+    .from(groupMembers)
+    .where(eq(groupMembers.groupId, g.id))
   return {
-    id: String(g.id ?? ''),
-    name: String(g.name ?? '').trim().slice(0, 32),
-    inviteCode: String(g.inviteCode ?? '').toUpperCase(),
-    createdBy: { accountId: String(g.createdBy?.accountId ?? '') },
-    members: Array.isArray(g.members)
-      ? g.members.map((m) => ({
-          name: cleanPlayerName(m.name),
-          joinedAt: Number(m.joinedAt) || 0,
-        }))
-      : [],
+    id: g.id,
+    name: g.name,
+    inviteCode: g.inviteCode,
+    createdBy: { accountId: g.createdByAccountId },
+    members: members.map((m) => ({
+      name: cleanPlayerName(m.name),
+      joinedAt: m.joinedAt,
+    })),
   }
 }
 
-function putGroup(store: Store, group: Group) {
-  const idx = store.groups.findIndex((g) => g.id === group.id)
-  if (idx >= 0) store.groups[idx] = group
-  else store.groups.push(group)
+async function loadAllGroups(): Promise<Group[]> {
+  const groupRows = await db().select().from(groups)
+  if (!groupRows.length) return []
+  const memberRows = await db().select().from(groupMembers)
+  const byGroup = new Map<string, GroupMember[]>()
+  for (const m of memberRows) {
+    const list = byGroup.get(m.groupId) ?? []
+    list.push({ name: cleanPlayerName(m.name), joinedAt: m.joinedAt })
+    byGroup.set(m.groupId, list)
+  }
+  return groupRows.map((g) => ({
+    id: g.id,
+    name: g.name,
+    inviteCode: g.inviteCode,
+    createdBy: { accountId: g.createdByAccountId },
+    members: byGroup.get(g.id) ?? [],
+  }))
 }
 
-function accountNames(accountId?: string): string[] {
+async function accountNames(accountId?: string): Promise<string[]> {
   if (!accountId) return []
-  return namesOwnedByAccount(accountId).map((n) => n.name)
+  return (await namesOwnedByAccount(accountId)).map((n) => n.name)
 }
 
-export function isGroupMember(group: Group, opts: GroupAccessOpts = {}): boolean {
+export async function isGroupMember(
+  group: Group,
+  opts: GroupAccessOpts = {},
+): Promise<boolean> {
   const names = new Set<string>()
   const player = cleanPlayerName(opts.playerName ?? '')
   if (player) names.add(player)
-  for (const owned of accountNames(opts.accountId)) names.add(owned)
+  for (const owned of await accountNames(opts.accountId)) names.add(owned)
   return group.members.some((m) => names.has(m.name))
 }
 
@@ -113,16 +103,14 @@ export function isGroupOwner(group: Group, accountId?: string): boolean {
   return Boolean(accountId && group.createdBy.accountId === accountId)
 }
 
-function canViewGroup(group: Group, opts: GroupAccessOpts = {}): boolean {
-  if (isGroupMember(group, opts) || isGroupOwner(group, opts.accountId)) return true
+async function canViewGroup(group: Group, opts: GroupAccessOpts = {}): Promise<boolean> {
+  if ((await isGroupMember(group, opts)) || isGroupOwner(group, opts.accountId)) return true
   const invite = opts.inviteCode?.trim().toUpperCase()
   return Boolean(invite && invite === group.inviteCode)
 }
 
-export function getGroup(id: string): Group | null {
-  const cleaned = id.trim()
-  if (!cleaned) return null
-  return readStore().groups.find((g) => g.id === cleaned) ?? null
+export async function getGroup(id: string): Promise<Group | null> {
+  return loadGroup(id)
 }
 
 export function rosterNameSet(group: Group): Set<string> {
@@ -130,30 +118,33 @@ export function rosterNameSet(group: Group): Set<string> {
 }
 
 /** `group=everyone` or omitted → null. Unknown/non-member → throw. */
-export function resolveBoardScope(
+export async function resolveBoardScope(
   groupId: string | undefined,
   opts: GroupAccessOpts = {},
-): { groupId: string; names: Set<string> } | null {
+): Promise<{ groupId: string; names: Set<string> } | null> {
   const id = groupId?.trim()
   if (!id || id === 'everyone') return null
-  const group = assertGroupBoardAccess(id, opts)
+  const group = await assertGroupBoardAccess(id, opts)
   return { groupId: group.id, names: rosterNameSet(group) }
 }
 
 /** Member-only. Throws 403/404. */
-export function assertGroupBoardAccess(id: string, opts: GroupAccessOpts = {}): Group {
-  const group = getGroup(id)
+export async function assertGroupBoardAccess(
+  id: string,
+  opts: GroupAccessOpts = {},
+): Promise<Group> {
+  const group = await getGroup(id)
   if (!group) fail('Group not found', 404, 'GROUP_NOT_FOUND')
-  if (!isGroupMember(group, opts) && !isGroupOwner(group, opts.accountId)) {
+  if (!(await isGroupMember(group, opts)) && !isGroupOwner(group, opts.accountId)) {
     fail('Members only', 403, 'GROUP_FORBIDDEN')
   }
   return group
 }
 
-export function publicGroup(
+export async function publicGroup(
   group: Group,
   opts: GroupAccessOpts = {},
-): {
+): Promise<{
   id: string
   name: string
   memberCount: number
@@ -161,35 +152,39 @@ export function publicGroup(
   isOwner: boolean
   isMember: boolean
   inviteCode: string | null
-} {
+}> {
   const owner = isGroupOwner(group, opts.accountId)
-  const member = isGroupMember(group, opts)
+  const member = await isGroupMember(group, opts)
   return {
     id: group.id,
     name: group.name,
     memberCount: group.members.length,
-    members: withAvatarIds(group.members),
+    members: await withAvatarIds(group.members),
     isOwner: owner,
     isMember: member,
     inviteCode: owner ? group.inviteCode : null,
   }
 }
 
-export function listGroupsFor(opts: GroupAccessOpts = {}) {
-  const store = readStore()
-  return store.groups
-    .filter((g) => isGroupMember(g, opts) || isGroupOwner(g, opts.accountId))
-    .map((g) => publicGroup(g, opts))
+export async function listGroupsFor(opts: GroupAccessOpts = {}) {
+  const all = await loadAllGroups()
+  const out = []
+  for (const g of all) {
+    if ((await isGroupMember(g, opts)) || isGroupOwner(g, opts.accountId)) {
+      out.push(await publicGroup(g, opts))
+    }
+  }
+  return out
 }
 
-export function getGroupDetail(id: string, opts: GroupAccessOpts = {}) {
-  const group = getGroup(id)
+export async function getGroupDetail(id: string, opts: GroupAccessOpts = {}) {
+  const group = await getGroup(id)
   if (!group) fail('Group not found', 404, 'GROUP_NOT_FOUND')
-  if (!canViewGroup(group, opts)) fail('Valid invite required', 403, 'INVITE_REQUIRED')
+  if (!(await canViewGroup(group, opts))) fail('Valid invite required', 403, 'INVITE_REQUIRED')
   return publicGroup(group, opts)
 }
 
-export function createGroup(
+export async function createGroup(
   rawName: string,
   creator: { accountId: string },
   ownerName?: string,
@@ -197,8 +192,10 @@ export function createGroup(
 ) {
   const name = rawName.trim().slice(0, 32)
   if (name.length < 2) fail('Name must be at least 2 characters', 400)
-  const store = readStore()
-  const hosted = store.groups.filter((g) => g.createdBy.accountId === creator.accountId)
+  const hosted = await db()
+    .select()
+    .from(groups)
+    .where(eq(groups.createdByAccountId, creator.accountId))
   if (hosted.length >= MAX_GROUPS_PER_ACCOUNT) {
     fail(`You already have ${MAX_GROUPS_PER_ACCOUNT} groups`, 409, 'GROUP_LIMIT')
   }
@@ -214,19 +211,35 @@ export function createGroup(
     createdBy: { accountId: creator.accountId },
     members,
   }
-  putGroup(store, group)
-  writeStore(store)
+
+  await db().transaction(async (tx) => {
+    await tx.insert(groups).values({
+      id: group.id,
+      name: group.name,
+      inviteCode: group.inviteCode,
+      createdByAccountId: creator.accountId,
+    })
+    if (members.length) {
+      await tx.insert(groupMembers).values(
+        members.map((m) => ({
+          groupId: group.id,
+          name: m.name,
+          joinedAt: m.joinedAt,
+        })),
+      )
+    }
+  })
+
   return publicGroup(group, { accountId: creator.accountId, playerName: tag })
 }
 
-export function joinGroup(
+export async function joinGroup(
   id: string,
   rawName: string,
   invite: string,
   now = Date.now(),
 ) {
-  const store = readStore()
-  const group = store.groups.find((g) => g.id === id)
+  const group = await getGroup(id)
   if (!group) fail('Group not found', 404, 'GROUP_NOT_FOUND')
   const code = invite.trim().toUpperCase()
   if (!code || code !== group.inviteCode) fail('Valid invite required', 403, 'INVITE_REQUIRED')
@@ -238,95 +251,86 @@ export function joinGroup(
   }
   if (group.members.length >= MAX_MEMBERS) fail('This group is full', 409, 'GROUP_FULL')
 
+  await db().insert(groupMembers).values({
+    groupId: group.id,
+    name,
+    joinedAt: now,
+  })
   group.members.push({ name, joinedAt: now })
-  putGroup(store, group)
-  writeStore(store)
   return publicGroup(group, { playerName: name })
 }
 
-export function leaveGroup(id: string, rawName: string, accountId?: string) {
-  const store = readStore()
-  const group = store.groups.find((g) => g.id === id)
+export async function leaveGroup(id: string, rawName: string, accountId?: string) {
+  const group = await getGroup(id)
   if (!group) fail('Group not found', 404, 'GROUP_NOT_FOUND')
   const name = cleanPlayerName(rawName)
   if (!name) fail('Name required', 400, 'NAME_REQUIRED')
-  if (!isGroupMember(group, { playerName: name, accountId })) {
+  if (!(await isGroupMember(group, { playerName: name, accountId }))) {
     fail('Not a member', 403, 'GROUP_FORBIDDEN')
   }
   if (isGroupOwner(group, accountId) && group.members.length > 1) {
     fail('Transfer or remove others before leaving as owner, or delete the group', 409, 'OWNER_LEAVE')
   }
+  await db()
+    .delete(groupMembers)
+    .where(and(eq(groupMembers.groupId, id), eq(groupMembers.name, name)))
   group.members = group.members.filter((m) => m.name !== name)
   if (group.members.length === 0 && isGroupOwner(group, accountId)) {
-    store.groups = store.groups.filter((g) => g.id !== id)
-  } else {
-    putGroup(store, group)
+    await db().delete(groups).where(eq(groups.id, id))
   }
-  writeStore(store)
   return { ok: true }
 }
 
-export function kickMember(id: string, accountId: string, rawName: string) {
-  const store = readStore()
-  const group = store.groups.find((g) => g.id === id)
+export async function kickMember(id: string, accountId: string, rawName: string) {
+  const group = await getGroup(id)
   if (!group) fail('Group not found', 404, 'GROUP_NOT_FOUND')
   if (!isGroupOwner(group, accountId)) fail('Only the owner can remove members', 403)
   const name = cleanPlayerName(rawName)
   if (!name) fail('Name required', 400)
+  await db()
+    .delete(groupMembers)
+    .where(and(eq(groupMembers.groupId, id), eq(groupMembers.name, name)))
   group.members = group.members.filter((m) => m.name !== name)
-  putGroup(store, group)
-  writeStore(store)
   return publicGroup(group, { accountId })
 }
 
-export function renameGroup(id: string, accountId: string, rawName: string) {
-  const store = readStore()
-  const group = store.groups.find((g) => g.id === id)
+export async function renameGroup(id: string, accountId: string, rawName: string) {
+  const group = await getGroup(id)
   if (!group) fail('Group not found', 404, 'GROUP_NOT_FOUND')
   if (!isGroupOwner(group, accountId)) fail('Only the owner can rename', 403)
   const name = rawName.trim().slice(0, 32)
   if (name.length < 2) fail('Name must be at least 2 characters', 400)
+  await db().update(groups).set({ name }).where(eq(groups.id, id))
   group.name = name
-  putGroup(store, group)
-  writeStore(store)
   return publicGroup(group, { accountId })
 }
 
-export function rotateInvite(id: string, accountId: string) {
-  const store = readStore()
-  const group = store.groups.find((g) => g.id === id)
+export async function rotateInvite(id: string, accountId: string) {
+  const group = await getGroup(id)
   if (!group) fail('Group not found', 404, 'GROUP_NOT_FOUND')
   if (!isGroupOwner(group, accountId)) fail('Only the owner can rotate the invite', 403)
-  group.inviteCode = generateInviteCode()
-  putGroup(store, group)
-  writeStore(store)
+  const inviteCode = generateInviteCode()
+  await db().update(groups).set({ inviteCode }).where(eq(groups.id, id))
+  group.inviteCode = inviteCode
   return publicGroup(group, { accountId })
 }
 
-export function deleteGroup(id: string, accountId: string) {
-  const store = readStore()
-  const group = store.groups.find((g) => g.id === id)
+export async function deleteGroup(id: string, accountId: string) {
+  const group = await getGroup(id)
   if (!group) fail('Group not found', 404, 'GROUP_NOT_FOUND')
   if (!isGroupOwner(group, accountId)) fail('Only the owner can delete', 403)
-  store.groups = store.groups.filter((g) => g.id !== id)
-  writeStore(store)
+  await db().delete(groups).where(eq(groups.id, id))
   return { ok: true }
 }
 
-export function renamePlayerAcrossGroups(fromRaw: string, toRaw: string) {
+export async function renamePlayerAcrossGroups(fromRaw: string, toRaw: string) {
   const from = cleanPlayerName(fromRaw)
   const to = cleanPlayerName(toRaw)
   if (!from || !to || from === to) return { updated: 0 }
-  const store = readStore()
-  let updated = 0
-  for (const group of store.groups) {
-    for (const member of group.members) {
-      if (member.name === from) {
-        member.name = to
-        updated += 1
-      }
-    }
-  }
-  if (updated) writeStore(store)
-  return { updated }
+  const updated = await db()
+    .update(groupMembers)
+    .set({ name: to })
+    .where(eq(groupMembers.name, from))
+    .returning({ groupId: groupMembers.groupId })
+  return { updated: updated.length }
 }

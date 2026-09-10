@@ -52,14 +52,14 @@ authRouter.get('/config', (_req, res) => {
   })
 })
 
-authRouter.post('/magic-link', (req, res) => {
+authRouter.post('/magic-link', async (req, res) => {
   const parsed = emailSchema.safeParse(req.body)
   if (!parsed.success) {
     res.status(400).json({ error: 'Valid email required', code: 'EMAIL_INVALID' })
     return
   }
   try {
-    const link = createMagicLink(parsed.data.email)
+    const link = await createMagicLink(parsed.data.email)
     const frontend =
       process.env.FRONTEND_ORIGIN?.replace(/\/$/, '') || 'http://localhost:5173'
     const verifyUrl = `${frontend}${link.verifyPath}`
@@ -77,15 +77,15 @@ authRouter.post('/magic-link', (req, res) => {
   }
 })
 
-authRouter.post('/verify', (req, res) => {
+authRouter.post('/verify', async (req, res) => {
   const parsed = verifySchema.safeParse(req.body)
   if (!parsed.success) {
     res.status(400).json({ error: 'Token required', code: 'TOKEN_REQUIRED' })
     return
   }
   try {
-    const result = verifyMagicLink(parsed.data.token)
-    const names = namesOwnedByAccount(result.account.id)
+    const result = await verifyMagicLink(parsed.data.token)
+    const names = await namesOwnedByAccount(result.account.id)
     res.json({
       sessionToken: result.sessionToken,
       expiresAt: result.expiresAt,
@@ -105,7 +105,7 @@ authRouter.post('/google', async (req, res) => {
   }
   try {
     const result = await signInWithGoogleIdToken(parsed.data.idToken)
-    const names = namesOwnedByAccount(result.account.id)
+    const names = await namesOwnedByAccount(result.account.id)
     res.json({
       sessionToken: result.sessionToken,
       expiresAt: result.expiresAt,
@@ -117,25 +117,25 @@ authRouter.post('/google', async (req, res) => {
   }
 })
 
-authRouter.get('/me', (req, res) => {
-  const account = accountFromRequest(req)
+authRouter.get('/me', async (req, res) => {
+  const account = await accountFromRequest(req)
   if (!account) {
     res.status(401).json({ error: 'Not signed in', code: 'AUTH_REQUIRED' })
     return
   }
   res.json({
     account,
-    names: namesOwnedByAccount(account.id),
+    names: await namesOwnedByAccount(account.id),
   })
 })
 
-authRouter.post('/logout', (req, res) => {
-  logoutSession(bearerFromRequest(req))
+authRouter.post('/logout', async (req, res) => {
+  await logoutSession(bearerFromRequest(req))
   res.json({ ok: true })
 })
 
-authRouter.post('/link-name', (req, res) => {
-  const account = accountFromRequest(req)
+authRouter.post('/link-name', async (req, res) => {
+  const account = await accountFromRequest(req)
   if (!account) {
     res.status(401).json({ error: 'Not signed in', code: 'AUTH_REQUIRED' })
     return
@@ -146,7 +146,7 @@ authRouter.post('/link-name', (req, res) => {
     return
   }
   try {
-    const linked = linkNameToAccount(
+    const linked = await linkNameToAccount(
       parsed.data.name,
       parsed.data.claimToken,
       account.id,
@@ -155,16 +155,16 @@ authRouter.post('/link-name', (req, res) => {
     )
     // Extra safety if link didn't migrate (idempotent if it did).
     for (const previous of linked.previousNames) {
-      renamePlayerAcrossLeaderboards(previous, linked.name)
-      renamePlayerAcrossTournaments(previous, linked.name)
-      renamePlayerAcrossRecords(previous, linked.name)
+      await renamePlayerAcrossLeaderboards(previous, linked.name)
+      await renamePlayerAcrossTournaments(previous, linked.name)
+      await renamePlayerAcrossRecords(previous, linked.name)
     }
     res.json({
       name: linked.name,
       token: linked.token,
       created: linked.created,
       previousNames: linked.previousNames,
-      names: namesOwnedByAccount(account.id),
+      names: await namesOwnedByAccount(account.id),
     })
   } catch (err) {
     authError(err, res)

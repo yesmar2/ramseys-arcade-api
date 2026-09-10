@@ -174,8 +174,8 @@ export function buildSeed(seed = 20260904) {
 
 const PLACEHOLDER_NAME = /^(ME2?|TEST|YOU|RAMSEY-TEST\d*)$/
 
-export function isPlaceholderStore() {
-  const store = loadStore()
+export async function isPlaceholderStore() {
+  const store = await loadStore()
   const entries = [
     ...store.stacker,
     ...store.patriot,
@@ -189,16 +189,16 @@ export function isPlaceholderStore() {
   return entries.every((e) => PLACEHOLDER_NAME.test(e.name))
 }
 
-export function seedLeaderboards(force = false) {
-  if (!force && !isPlaceholderStore()) return false
-  replaceAllBoards(buildSeed())
+export async function seedLeaderboards(force = false) {
+  if (!force && !(await isPlaceholderStore())) return false
+  await replaceAllBoards(buildSeed())
   return true
 }
 
-export function seedGame(game: GameSlug) {
+export async function seedGame(game: GameSlug) {
   const entries = buildSeed()[game]
   if (!entries) return false
-  replaceGameBoard(game, entries)
+  await replaceGameBoard(game, entries)
   return true
 }
 

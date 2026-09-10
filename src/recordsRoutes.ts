@@ -26,8 +26,8 @@ function parsePeriod(raw: unknown): Period {
   return 'all'
 }
 
-function boardAccess(req: import('express').Request) {
-  const account = accountFromRequest(req)
+async function boardAccess(req: import('express').Request) {
+  const account = await accountFromRequest(req)
   const playerName =
     typeof req.query.playerName === 'string' ? req.query.playerName : undefined
   const groupId = typeof req.query.group === 'string' ? req.query.group : undefined
@@ -43,7 +43,7 @@ function scopeError(err: unknown, res: import('express').Response) {
   })
 }
 
-recordsRouter.get('/:game', (req, res) => {
+recordsRouter.get('/:game', async (req, res) => {
   const game = resolveGameSlug(req.params.game)
   if (!game) {
     res.status(404).json({ error: 'Unknown game' })
@@ -52,12 +52,12 @@ recordsRouter.get('/:game', (req, res) => {
   const period = parsePeriod(req.query.period)
   let scope
   try {
-    scope = boardAccess(req)?.names
+    scope = (await boardAccess(req))?.names
   } catch (err) {
     scopeError(err, res)
     return
   }
-  const { records } = listGameRecords(game, period, Date.now(), scope)
+  const { records } = await listGameRecords(game, period, Date.now(), scope)
   res.json({
     game,
     period,
@@ -65,7 +65,7 @@ recordsRouter.get('/:game', (req, res) => {
   })
 })
 
-recordsRouter.get('/:game/:recordId', (req, res) => {
+recordsRouter.get('/:game/:recordId', async (req, res) => {
   const game = resolveGameSlug(req.params.game)
   const recordId = req.params.recordId
   if (!game) {
@@ -81,26 +81,26 @@ recordsRouter.get('/:game/:recordId', (req, res) => {
   const name = typeof req.query.name === 'string' ? req.query.name : ''
   let scope
   try {
-    scope = boardAccess(req)?.names
+    scope = (await boardAccess(req))?.names
   } catch (err) {
     scopeError(err, res)
     return
   }
+  const you = name
+    ? await bestRecordForName(game, recordId, name, period, Date.now(), scope)
+    : null
   res.json({
     game,
     record: def,
     period,
-    entries: withAvatarIds(getRecordBoard(game, recordId, period, Date.now(), scope)),
-    you: name
-      ? (() => {
-          const you = bestRecordForName(game, recordId, name, period, Date.now(), scope)
-          return you ? withAvatarId(you) : null
-        })()
-      : null,
+    entries: await withAvatarIds(
+      await getRecordBoard(game, recordId, period, Date.now(), scope),
+    ),
+    you: you ? await withAvatarId(you) : null,
   })
 })
 
-recordsRouter.post('/:game/:recordId', (req, res) => {
+recordsRouter.post('/:game/:recordId', async (req, res) => {
   const game = resolveGameSlug(req.params.game)
   const recordId = req.params.recordId
   if (!game) {
@@ -120,11 +120,11 @@ recordsRouter.post('/:game/:recordId', (req, res) => {
   }
 
   const { name, score, token, device } = parsed.data
-  const account = accountFromRequest(req)
+  const account = await accountFromRequest(req)
 
   let claim: { name: string; token: string }
   try {
-    claim = assertCanUseName(name, {
+    claim = await assertCanUseName(name, {
       claimToken: token,
       accountId: account?.id,
     })
@@ -139,16 +139,16 @@ recordsRouter.post('/:game/:recordId', (req, res) => {
   }
 
   try {
-    const result = addRecord(game, recordId, claim.name, score, device ?? 'desktop')
+    const result = await addRecord(game, recordId, claim.name, score, device ?? 'desktop')
     res.status(result.improved ? 201 : 200).json({
       game,
       record: def,
       improved: result.improved,
-      entry: result.entry ? withAvatarId(result.entry) : null,
+      entry: result.entry ? await withAvatarId(result.entry) : null,
       rank: result.rank,
       ranks: result.ranks,
       totalEntries: result.totalEntries,
-      entries: withAvatarIds(result.board),
+      entries: await withAvatarIds(result.board),
       name: claim.name,
       token: claim.token,
     })

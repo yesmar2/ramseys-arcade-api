@@ -1,17 +1,13 @@
-import { seedGame, seedLeaderboards } from './seedBoards.js'
-import { seedRecords } from './seedRecords.js'
-import { ensureShowcaseTrophies } from './trophies.js'
-import { isAllowedGame } from './store.js'
-import { closeDb } from './db/client.js'
-import { runMigrations } from './db/migrate.js'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { closeDb } from './client.js'
+import { runMigrations } from './migrate.js'
 
 function loadDotEnv() {
   const candidates = [
     path.resolve(process.cwd(), '.env'),
-    path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../.env'),
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../.env'),
   ]
   for (const envPath of candidates) {
     try {
@@ -41,24 +37,13 @@ function loadDotEnv() {
 }
 
 loadDotEnv()
-await runMigrations()
 
-const game = process.argv[2]
 try {
-  if (game) {
-    if (!isAllowedGame(game)) {
-      console.error(`Unknown game: ${game}`)
-      process.exitCode = 1
-    } else {
-      await seedGame(game)
-      console.log(`Seeded ${game} leaderboard`)
-    }
-  } else {
-    await seedLeaderboards(true)
-    await seedRecords(true)
-    await ensureShowcaseTrophies()
-    console.log('Seeded sample boards + records + showcase trophies')
-  }
+  await runMigrations()
+  console.log('Migrations applied')
+} catch (err) {
+  console.error(err)
+  process.exitCode = 1
 } finally {
   await closeDb()
 }

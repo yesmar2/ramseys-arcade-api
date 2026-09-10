@@ -58,25 +58,25 @@ function claimError(err: unknown, res: import('express').Response) {
   })
 }
 
-tournamentsRouter.get('/', (req, res) => {
-  const account = accountFromRequest(req)
+tournamentsRouter.get('/', async (req, res) => {
+  const account = await accountFromRequest(req)
   const raw = typeof req.query.source === 'string' ? req.query.source : 'all'
   const filter: TournamentListFilter =
     raw === 'official' || raw === 'mine' || raw === 'joined' ? raw : 'all'
   const playerName =
     typeof req.query.playerName === 'string' ? req.query.playerName : undefined
   res.json({
-    tournaments: listTournaments(Date.now(), filter, account?.id, playerName),
+    tournaments: await listTournaments(Date.now(), filter, account?.id, playerName),
   })
 })
 
-tournamentsRouter.post('/', (req, res) => {
+tournamentsRouter.post('/', async (req, res) => {
   const parsed = createSchema.safeParse(req.body)
   if (!parsed.success) {
     res.status(400).json({ error: 'Invalid body', details: parsed.error.flatten() })
     return
   }
-  const account = accountFromRequest(req)
+  const account = await accountFromRequest(req)
   if (!account) {
     res.status(401).json({ error: 'Sign in to create events' })
     return
@@ -100,7 +100,7 @@ tournamentsRouter.post('/', (req, res) => {
       durationHours: parsed.data.durationHours,
       kind: parsed.data.kind,
     }
-    const tournament = createTournament(input, {
+    const tournament = await createTournament(input, {
       accountId: account.id,
       email: account.email,
     })
@@ -110,47 +110,47 @@ tournamentsRouter.post('/', (req, res) => {
   }
 })
 
-tournamentsRouter.post('/rename-player', (req, res) => {
+tournamentsRouter.post('/rename-player', async (req, res) => {
   const parsed = renameSchema.safeParse(req.body)
   if (!parsed.success) {
     res.status(400).json({ error: 'Invalid body', details: parsed.error.flatten() })
     return
   }
   try {
-    const account = accountFromRequest(req)
+    const account = await accountFromRequest(req)
     // Must own the old name; new name must be free or already owned
-    assertCanUseName(parsed.data.from, {
+    await assertCanUseName(parsed.data.from, {
       claimToken: parsed.data.fromToken,
       accountId: account?.id,
     })
-    const toClaim = assertCanUseName(parsed.data.to, {
+    const toClaim = await assertCanUseName(parsed.data.to, {
       claimToken: parsed.data.toToken,
       accountId: account?.id,
     })
-    const result = renamePlayerAcrossTournaments(parsed.data.from, toClaim.name)
+    const result = await renamePlayerAcrossTournaments(parsed.data.from, toClaim.name)
     res.json({ ...result, token: toClaim.token, name: toClaim.name })
   } catch (err) {
     claimError(err, res)
   }
 })
 
-tournamentsRouter.get('/active-for/:game', (req, res) => {
+tournamentsRouter.get('/active-for/:game', async (req, res) => {
   const game = resolveGameSlug(req.params.game)
   if (!game) {
     res.status(404).json({ error: 'Unknown game' })
     return
   }
-  res.json({ game, tournaments: activeTournamentsForGame(game) })
+  res.json({ game, tournaments: await activeTournamentsForGame(game) })
 })
 
-tournamentsRouter.get('/:id', (req, res) => {
+tournamentsRouter.get('/:id', async (req, res) => {
   const playerName =
     typeof req.query.playerName === 'string' ? req.query.playerName : undefined
   const game = typeof req.query.game === 'string' ? req.query.game : undefined
   const inviteCode = typeof req.query.invite === 'string' ? req.query.invite : undefined
-  const account = accountFromRequest(req)
+  const account = await accountFromRequest(req)
   try {
-    const detail = getTournamentDetail(req.params.id, Date.now(), {
+    const detail = await getTournamentDetail(req.params.id, Date.now(), {
       playerName,
       game,
       inviteCode,
@@ -166,19 +166,19 @@ tournamentsRouter.get('/:id', (req, res) => {
   }
 })
 
-tournamentsRouter.post('/:id/join', (req, res) => {
+tournamentsRouter.post('/:id/join', async (req, res) => {
   const parsed = joinSchema.safeParse(req.body)
   if (!parsed.success) {
     res.status(400).json({ error: 'Invalid body', details: parsed.error.flatten() })
     return
   }
   try {
-    const account = accountFromRequest(req)
-    const claim = assertCanUseName(parsed.data.name, {
+    const account = await accountFromRequest(req)
+    const claim = await assertCanUseName(parsed.data.name, {
       claimToken: parsed.data.token,
       accountId: account?.id,
     })
-    const result = joinTournament(
+    const result = await joinTournament(
       req.params.id,
       claim.name,
       Date.now(),
@@ -191,19 +191,19 @@ tournamentsRouter.post('/:id/join', (req, res) => {
   }
 })
 
-tournamentsRouter.post('/:id/scores', (req, res) => {
+tournamentsRouter.post('/:id/scores', async (req, res) => {
   const parsed = scoreSchema.safeParse(req.body)
   if (!parsed.success) {
     res.status(400).json({ error: 'Invalid body', details: parsed.error.flatten() })
     return
   }
   try {
-    const account = accountFromRequest(req)
-    const claim = assertCanUseName(parsed.data.name, {
+    const account = await accountFromRequest(req)
+    const claim = await assertCanUseName(parsed.data.name, {
       claimToken: parsed.data.token,
       accountId: account?.id,
     })
-    const result = submitTournamentScore(
+    const result = await submitTournamentScore(
       req.params.id,
       claim.name,
       parsed.data.game,

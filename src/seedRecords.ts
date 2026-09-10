@@ -233,8 +233,8 @@ export function buildRecordsSeed(seed = 20260904) {
   return store
 }
 
-export function seedRecords(force = false) {
-  if (!force && !isRecordsStoreEmpty()) return false
-  replaceAllRecords(buildRecordsSeed())
+export async function seedRecords(force = false) {
+  if (!force && !(await isRecordsStoreEmpty())) return false
+  await replaceAllRecords(buildRecordsSeed())
   return true
 }

@@ -1,17 +1,11 @@
-import fs from 'node:fs'
-import path from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { desc, eq, inArray } from 'drizzle-orm'
+import { db } from './db/client.js'
+import { nameClaims, trophyAwards, trophyCursor } from './db/schema.js'
 import {
   globalRanksForClosedPeriod,
-  loadStore,
   monthKey,
   weekStartKey,
 } from './store.js'
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url))
-const DATA_DIR = path.resolve(__dirname, '../data')
-const TROPHIES_PATH = path.join(DATA_DIR, 'trophies.json')
-const CLAIMS_PATH = path.join(DATA_DIR, 'name-claims.json')
 
 export type TrophyPeriod = 'weekly' | 'monthly'
 export const MAX_TROPHY_RANK = 10
@@ -28,93 +22,80 @@ export type TrophyAward = {
   awardedAt: number
 }
 
-type TrophiesStore = {
-  awards: TrophyAward[]
-  cursor: {
-    weeklyInitialized?: boolean
-    monthlyInitialized?: boolean
-  }
-}
-
 function awardId(period: TrophyPeriod, periodKey: number, name: string) {
   return `${period}-${periodKey}-${name}`
 }
 
-function emptyStore(): TrophiesStore {
-  return { awards: [], cursor: {} }
+function rowToAward(row: typeof trophyAwards.$inferSelect): TrophyAward {
+  return {
+    id: row.id,
+    period: row.period as TrophyPeriod,
+    periodKey: row.periodKey,
+    name: row.name,
+    rank: row.rank,
+    score: row.score,
+    games: row.games,
+    ...(row.accountId ? { accountId: row.accountId } : {}),
+    awardedAt: row.awardedAt,
+  }
 }
 
-function isTrophyAward(raw: unknown): raw is TrophyAward {
-  if (!raw || typeof raw !== 'object') return false
-  const row = raw as Partial<TrophyAward>
-  return (
-    typeof row.id === 'string' &&
-    (row.period === 'weekly' || row.period === 'monthly') &&
-    typeof row.periodKey === 'number' &&
-    typeof row.name === 'string' &&
-    typeof row.rank === 'number' &&
-    typeof row.score === 'number' &&
-    typeof row.games === 'number' &&
-    typeof row.awardedAt === 'number'
-  )
+async function lookupAccountId(name: string): Promise<string | undefined> {
+  const rows = await db()
+    .select({ accountId: nameClaims.accountId })
+    .from(nameClaims)
+    .where(eq(nameClaims.name, name))
+    .limit(1)
+  return rows[0]?.accountId ?? undefined
 }
 
-function ensureTrophiesStore(): TrophiesStore {
-  if (!fs.existsSync(DATA_DIR)) {
-    fs.mkdirSync(DATA_DIR, { recursive: true })
-  }
-  if (!fs.existsSync(TROPHIES_PATH)) {
-    const empty = emptyStore()
-    fs.writeFileSync(TROPHIES_PATH, JSON.stringify(empty, null, 2))
-    return empty
-  }
-  try {
-    const parsed = JSON.parse(fs.readFileSync(TROPHIES_PATH, 'utf8')) as TrophiesStore
-    if (!parsed || !Array.isArray(parsed.awards)) return emptyStore()
-    const awards = parsed.awards.filter(isTrophyAward)
-    const migrated = awards.length !== parsed.awards.length
+async function getCursor() {
+  const rows = await db().select().from(trophyCursor).where(eq(trophyCursor.id, 'default')).limit(1)
+  if (rows[0]) {
     return {
-      awards,
-      cursor: migrated
-        ? {}
-        : (parsed.cursor ?? {}),
+      weeklyInitialized: rows[0].weeklyInitialized,
+      monthlyInitialized: rows[0].monthlyInitialized,
     }
-  } catch {
-    return emptyStore()
   }
+  await db().insert(trophyCursor).values({ id: 'default' }).onConflictDoNothing()
+  return { weeklyInitialized: false, monthlyInitialized: false }
 }
 
-function writeTrophiesStore(store: TrophiesStore) {
-  const tmp = `${TROPHIES_PATH}.tmp`
-  fs.writeFileSync(tmp, JSON.stringify(store, null, 2))
-  fs.renameSync(tmp, TROPHIES_PATH)
+async function setCursor(next: { weeklyInitialized: boolean; monthlyInitialized: boolean }) {
+  await db()
+    .insert(trophyCursor)
+    .values({
+      id: 'default',
+      weeklyInitialized: next.weeklyInitialized,
+      monthlyInitialized: next.monthlyInitialized,
+    })
+    .onConflictDoUpdate({
+      target: trophyCursor.id,
+      set: {
+        weeklyInitialized: next.weeklyInitialized,
+        monthlyInitialized: next.monthlyInitialized,
+      },
+    })
 }
 
-function lookupAccountId(name: string): string | undefined {
-  try {
-    if (!fs.existsSync(CLAIMS_PATH)) return undefined
-    const parsed = JSON.parse(fs.readFileSync(CLAIMS_PATH, 'utf8')) as {
-      claims?: Record<string, { accountId?: string }>
-    }
-    return parsed.claims?.[name]?.accountId
-  } catch {
-    return undefined
-  }
-}
-
-function awardClosedPeriod(
-  store: TrophiesStore,
+async function awardClosedPeriod(
   period: TrophyPeriod,
   periodKey: number,
   now: number,
-): boolean {
-  const ranked = globalRanksForClosedPeriod(period, periodKey).slice(0, MAX_TROPHY_RANK)
+): Promise<boolean> {
+  const ranked = (await globalRanksForClosedPeriod(period, periodKey)).slice(0, MAX_TROPHY_RANK)
   if (ranked.length === 0) return false
   let changed = false
   for (const row of ranked) {
     const id = awardId(period, periodKey, row.name)
-    if (store.awards.some((a) => a.id === id)) continue
-    store.awards.push({
+    const existing = await db()
+      .select({ id: trophyAwards.id })
+      .from(trophyAwards)
+      .where(eq(trophyAwards.id, id))
+      .limit(1)
+    if (existing.length) continue
+    const accountId = await lookupAccountId(row.name)
+    await db().insert(trophyAwards).values({
       id,
       period,
       periodKey,
@@ -122,7 +103,7 @@ function awardClosedPeriod(
       rank: row.rank,
       score: row.score,
       games: row.games,
-      accountId: lookupAccountId(row.name),
+      accountId: accountId ?? null,
       awardedAt: now,
     })
     changed = true
@@ -175,61 +156,60 @@ function listMonthKeysBefore(now: number, count: number) {
 }
 
 /** Award global-rank trophies for completed weekly/monthly periods (lazy rollover). */
-export function ensurePeriodTrophies(now = Date.now()) {
-  loadStore()
-  const store = ensureTrophiesStore()
-  let changed = false
-
-  const weekCount = store.cursor.weeklyInitialized ? 1 : 8
-  const monthCount = store.cursor.monthlyInitialized ? 1 : 6
+export async function ensurePeriodTrophies(now = Date.now()) {
+  const cursor = await getCursor()
+  const weekCount = cursor.weeklyInitialized ? 1 : 8
+  const monthCount = cursor.monthlyInitialized ? 1 : 6
 
   for (const weekKey of listWeekKeysBefore(now, weekCount)) {
-    if (awardClosedPeriod(store, 'weekly', weekKey, now)) changed = true
+    await awardClosedPeriod('weekly', weekKey, now)
   }
 
   for (const monthKeyVal of listMonthKeysBefore(now, monthCount)) {
-    if (awardClosedPeriod(store, 'monthly', monthKeyVal, now)) changed = true
+    await awardClosedPeriod('monthly', monthKeyVal, now)
   }
 
-  if (!store.cursor.weeklyInitialized) {
-    store.cursor.weeklyInitialized = true
-    changed = true
-  }
-  if (!store.cursor.monthlyInitialized) {
-    store.cursor.monthlyInitialized = true
-    changed = true
-  }
-
-  if (changed) writeTrophiesStore(store)
-  ensureShowcaseTrophies()
+  await setCursor({ weeklyInitialized: true, monthlyInitialized: true })
+  await ensureShowcaseTrophies()
 }
 
-export function trophiesForName(name: string): TrophyAward[] {
+export async function trophiesForName(name: string): Promise<TrophyAward[]> {
   const cleaned = name.trim().slice(0, 12).toUpperCase()
   if (!cleaned) return []
-  return ensureTrophiesStore()
-    .awards.filter((a) => a.name === cleaned)
-    .sort((a, b) => b.awardedAt - a.awardedAt || a.rank - b.rank)
+  const rows = await db()
+    .select()
+    .from(trophyAwards)
+    .where(eq(trophyAwards.name, cleaned))
+    .orderBy(desc(trophyAwards.awardedAt), trophyAwards.rank)
+  return rows.map(rowToAward)
 }
 
-export function recentTrophies(limit = 20): TrophyAward[] {
+export async function recentTrophies(limit = 20): Promise<TrophyAward[]> {
   const capped = Math.min(50, Math.max(1, Math.floor(limit)) || 20)
-  return [...ensureTrophiesStore().awards]
-    .sort((a, b) => b.awardedAt - a.awardedAt || a.rank - b.rank)
-    .slice(0, capped)
+  const rows = await db()
+    .select()
+    .from(trophyAwards)
+    .orderBy(desc(trophyAwards.awardedAt), trophyAwards.rank)
+    .limit(capped)
+  return rows.map(rowToAward)
 }
 
-export function renamePlayerAcrossTrophies(from: string, to: string) {
-  const store = ensureTrophiesStore()
+export async function renamePlayerAcrossTrophies(from: string, to: string) {
+  const rows = await db().select().from(trophyAwards).where(eq(trophyAwards.name, from))
   let updated = 0
-  for (const award of store.awards) {
-    if (award.name === from) {
-      award.name = to
-      award.id = awardId(award.period, award.periodKey, to)
-      updated++
-    }
+  for (const award of rows) {
+    const newId = awardId(award.period as TrophyPeriod, award.periodKey, to)
+    await db().delete(trophyAwards).where(eq(trophyAwards.id, award.id))
+    await db()
+      .insert(trophyAwards)
+      .values({
+        ...award,
+        id: newId,
+        name: to,
+      })
+      .onConflictDoNothing()
+    updated++
   }
-  if (updated) writeTrophiesStore(store)
   return updated
 }
 
@@ -251,17 +231,21 @@ function summarizeAwards(awards: TrophyAward[]): TrophySummary {
   return { total: awards.length, podium, topTen }
 }
 
-export function trophySummaryForName(name: string): TrophySummary {
-  return summarizeAwards(trophiesForName(name))
+export async function trophySummaryForName(name: string): Promise<TrophySummary> {
+  return summarizeAwards(await trophiesForName(name))
 }
 
-export function trophySummariesForNames(names: string[]): Record<string, TrophyCount> {
-  const wanted = new Set(
-    names.map((n) => n.trim().slice(0, 12).toUpperCase()).filter(Boolean),
-  )
+export async function trophySummariesForNames(
+  names: string[],
+): Promise<Record<string, TrophyCount>> {
+  const wanted = names.map((n) => n.trim().slice(0, 12).toUpperCase()).filter(Boolean)
   const out: Record<string, TrophyCount> = {}
-  for (const award of ensureTrophiesStore().awards) {
-    if (!wanted.has(award.name)) continue
+  if (!wanted.length) return out
+  const rows = await db()
+    .select()
+    .from(trophyAwards)
+    .where(inArray(trophyAwards.name, wanted))
+  for (const award of rows) {
     const row = out[award.name] ?? { total: 0, podium: 0 }
     row.total++
     if (award.rank <= 3) row.podium++
@@ -270,11 +254,9 @@ export function trophySummariesForNames(names: string[]): Record<string, TrophyC
   return out
 }
 
-/** Curated showcase awards so demo profiles show every trophy art variant. */
 type ShowcaseAward = Omit<TrophyAward, 'id' | 'accountId' | 'name'> & { name: string }
 
 const SHOWCASE_AWARDS: ShowcaseAward[] = [
-  // JEFF — full mix of weekly/monthly podium + honor ribbons
   {
     period: 'weekly',
     periodKey: 20260825,
@@ -329,7 +311,6 @@ const SHOWCASE_AWARDS: ShowcaseAward[] = [
     games: 6,
     awardedAt: Date.UTC(2026, 6, 1, 12, 0, 0),
   },
-  // MOBILE — weekly medal set + a monthly cup
   {
     period: 'weekly',
     periodKey: 20260825,
@@ -378,20 +359,28 @@ const SHOWCASE_AWARDS: ShowcaseAward[] = [
 ]
 
 /** Idempotent: fills showcase profiles with weekly/monthly podium + honor ribbons. */
-export function ensureShowcaseTrophies() {
-  const store = ensureTrophiesStore()
+export async function ensureShowcaseTrophies() {
   let changed = false
   for (const row of SHOWCASE_AWARDS) {
     const id = awardId(row.period, row.periodKey, row.name)
-    if (store.awards.some((a) => a.id === id)) continue
-    const accountId = lookupAccountId(row.name)
-    store.awards.push({
+    const existing = await db()
+      .select({ id: trophyAwards.id })
+      .from(trophyAwards)
+      .where(eq(trophyAwards.id, id))
+      .limit(1)
+    if (existing.length) continue
+    const accountId = await lookupAccountId(row.name)
+    await db().insert(trophyAwards).values({
       ...row,
       id,
-      ...(accountId ? { accountId } : {}),
+      accountId: accountId ?? null,
     })
     changed = true
   }
-  if (changed) writeTrophiesStore(store)
   return changed
+}
+
+export async function clearAllTrophies() {
+  await db().delete(trophyAwards)
+  await setCursor({ weeklyInitialized: false, monthlyInitialized: false })
 }

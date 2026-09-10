@@ -1,10 +1,6 @@
-import fs from 'node:fs'
-import path from 'node:path'
-import { fileURLToPath } from 'node:url'
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url))
-const DATA_DIR = path.resolve(__dirname, '../data')
-const STORE_PATH = path.join(DATA_DIR, 'leaderboards.json')
+import { asc, desc, eq, sql } from 'drizzle-orm'
+import { db } from './db/client.js'
+import { leaderboardScores } from './db/schema.js'
 
 export const ALLOWED_GAMES = [
   'asteroids',
@@ -52,41 +48,6 @@ export function isDeviceType(value: unknown): value is DeviceType {
   return value === 'phone' || value === 'tablet' || value === 'desktop'
 }
 
-function normalizeEntry(raw: unknown): { entry: LeaderboardEntry | null; changed: boolean } {
-  if (!raw || typeof raw !== 'object') return { entry: null, changed: false }
-  const row = raw as Partial<LeaderboardEntry>
-  if (typeof row.id !== 'string' || typeof row.name !== 'string' || typeof row.score !== 'number') {
-    return { entry: null, changed: false }
-  }
-  const device = isDeviceType(row.device) ? row.device : 'desktop'
-  return {
-    entry: {
-      id: row.id,
-      name: row.name,
-      score: row.score,
-      at: typeof row.at === 'number' ? row.at : 0,
-      device,
-    },
-    changed: row.device !== device,
-  }
-}
-
-function normalizeBoard(raw: unknown): { entries: LeaderboardEntry[]; changed: boolean } {
-  if (!Array.isArray(raw)) return { entries: [], changed: false }
-  let changed = false
-  const entries: LeaderboardEntry[] = []
-  for (const row of raw) {
-    const next = normalizeEntry(row)
-    if (!next.entry) {
-      changed = true
-      continue
-    }
-    if (next.changed) changed = true
-    entries.push(next.entry)
-  }
-  return { entries, changed }
-}
-
 type Store = Record<GameSlug, LeaderboardEntry[]>
 
 const MAX_BOARD = 100
@@ -109,78 +70,35 @@ function emptyStore(): Store {
   }
 }
 
-function ensureStore(): Store {
-  if (!fs.existsSync(DATA_DIR)) {
-    fs.mkdirSync(DATA_DIR, { recursive: true })
-  }
-  if (!fs.existsSync(STORE_PATH)) {
-    const empty = emptyStore()
-    fs.writeFileSync(STORE_PATH, JSON.stringify(empty, null, 2))
-    return empty
-  }
-  try {
-    const raw = fs.readFileSync(STORE_PATH, 'utf8')
-    const parsed = JSON.parse(raw) as Record<string, unknown>
-    const stacker = normalizeBoard(parsed.stacker)
-    const patriot = normalizeBoard(parsed.patriot)
-    const snake = normalizeBoard(parsed.snake)
-    const pop = normalizeBoard(parsed.pop)
-    const centroidRaw = parsed.centroid ?? parsed['dead-center']
-    const centroid = normalizeBoard(centroidRaw)
-    const asteroids = normalizeBoard(parsed.asteroids)
-    const simon = normalizeBoard(parsed.simon)
-    const crosswalk = normalizeBoard(parsed.crosswalk)
-    const stride = normalizeBoard(parsed.stride)
-    const spotter = normalizeBoard(parsed.spotter)
-    const pellets = normalizeBoard(parsed.pellets)
-    const store: Store = {
-      stacker: stacker.entries,
-      patriot: patriot.entries,
-      snake: snake.entries,
-      pop: pop.entries,
-      centroid: centroid.entries,
-      asteroids: asteroids.entries,
-      simon: simon.entries,
-      crosswalk: crosswalk.entries,
-      spotter: spotter.entries,
-      stride: stride.entries,
-      pellets: pellets.entries,
-    }
-    const renamedCentroid = parsed.centroid == null && Array.isArray(parsed['dead-center'])
-    const changed =
-      stacker.changed ||
-      patriot.changed ||
-      snake.changed ||
-      pop.changed ||
-      centroid.changed ||
-      asteroids.changed ||
-      simon.changed ||
-      crosswalk.changed ||
-      stride.changed ||
-      spotter.changed ||
-      pellets.changed ||
-      renamedCentroid ||
-      !Array.isArray(parsed.crosswalk) ||
-      !Array.isArray(parsed.stride)
-    if (changed) writeStore(store)
-    return store
-  } catch {
-    return emptyStore()
+function rowToEntry(row: {
+  id: string
+  name: string
+  score: number
+  at: number
+  device: string
+}): LeaderboardEntry {
+  return {
+    id: row.id,
+    name: row.name,
+    score: row.score,
+    at: row.at,
+    device: isDeviceType(row.device) ? row.device : 'desktop',
   }
 }
 
-function writeStore(store: Store) {
-  const tmp = `${STORE_PATH}.tmp`
-  fs.writeFileSync(tmp, JSON.stringify(store, null, 2))
-  fs.renameSync(tmp, STORE_PATH)
+export async function loadStore(): Promise<Store> {
+  const rows = await db().select().from(leaderboardScores)
+  const store = emptyStore()
+  for (const row of rows) {
+    const game = resolveGameSlug(row.game)
+    if (!game) continue
+    store[game].push(rowToEntry(row))
+  }
+  return store
 }
 
-export function loadStore(): Store {
-  return ensureStore()
-}
-
-export function replaceAllBoards(next: Store) {
-  writeStore({
+export async function replaceAllBoards(next: Store) {
+  const store = {
     stacker: Array.isArray(next.stacker) ? next.stacker : [],
     patriot: Array.isArray(next.patriot) ? next.patriot : [],
     snake: Array.isArray(next.snake) ? next.snake : [],
@@ -192,13 +110,46 @@ export function replaceAllBoards(next: Store) {
     stride: Array.isArray(next.stride) ? next.stride : [],
     spotter: Array.isArray(next.spotter) ? next.spotter : [],
     pellets: Array.isArray(next.pellets) ? next.pellets : [],
+  }
+  await db().transaction(async (tx) => {
+    await tx.delete(leaderboardScores)
+    const values = ALLOWED_GAMES.flatMap((game) =>
+      store[game].map((e) => ({
+        id: e.id,
+        game,
+        name: e.name,
+        score: e.score,
+        at: e.at,
+        device: e.device,
+      })),
+    )
+    if (values.length) {
+      // Insert in chunks to stay under parameter limits
+      const chunk = 200
+      for (let i = 0; i < values.length; i += chunk) {
+        await tx.insert(leaderboardScores).values(values.slice(i, i + chunk))
+      }
+    }
   })
 }
 
-export function replaceGameBoard(game: GameSlug, entries: LeaderboardEntry[]) {
-  const store = loadStore()
-  store[game] = Array.isArray(entries) ? entries : []
-  writeStore(store)
+export async function replaceGameBoard(game: GameSlug, entries: LeaderboardEntry[]) {
+  const list = Array.isArray(entries) ? entries : []
+  await db().transaction(async (tx) => {
+    await tx.delete(leaderboardScores).where(eq(leaderboardScores.game, game))
+    if (list.length) {
+      await tx.insert(leaderboardScores).values(
+        list.map((e) => ({
+          id: e.id,
+          game,
+          name: e.name,
+          score: e.score,
+          at: e.at,
+          device: e.device,
+        })),
+      )
+    }
+  })
 }
 
 function sortByScore(entries: LeaderboardEntry[]) {
@@ -343,52 +294,60 @@ export function filterByClosedPeriod(
   })
 }
 
-export function getClosedBoard(
+async function historyFor(game: GameSlug): Promise<LeaderboardEntry[]> {
+  const rows = await db()
+    .select()
+    .from(leaderboardScores)
+    .where(eq(leaderboardScores.game, game))
+    .orderBy(desc(leaderboardScores.score), asc(leaderboardScores.at))
+  return rows.map(rowToEntry)
+}
+
+export async function getClosedBoard(
   game: GameSlug,
   period: ClosedPeriod,
   periodKey: number,
-): LeaderboardEntry[] {
-  return topBoard(filterByClosedPeriod(historyFor(game), period, periodKey))
+): Promise<LeaderboardEntry[]> {
+  return topBoard(filterByClosedPeriod(await historyFor(game), period, periodKey))
 }
 
-function historyFor(game: GameSlug): LeaderboardEntry[] {
-  return ensureStore()[game] ?? []
-}
-
-export function getBoard(
+export async function getBoard(
   game: GameSlug,
   period: Period = 'all',
   now = Date.now(),
   scope?: NameScope,
-): LeaderboardEntry[] {
-  return topBoard(filterByNames(filterByPeriod(historyFor(game), period, now), scope))
+): Promise<LeaderboardEntry[]> {
+  return topBoard(filterByNames(filterByPeriod(await historyFor(game), period, now), scope))
 }
 
 export type PeriodBoardSummary = Record<Period, LeaderboardEntry[]>
 
 /** Top N entries per game for one period — one pass over local store. */
-export function boardsSummaryForPeriod(
+export async function boardsSummaryForPeriod(
   period: Period,
   limit = 3,
   now = Date.now(),
   scope?: NameScope,
-): Record<GameSlug, LeaderboardEntry[]> {
+): Promise<Record<GameSlug, LeaderboardEntry[]>> {
   const capped = Math.min(10, Math.max(1, Math.floor(limit)) || 3)
   const out = {} as Record<GameSlug, LeaderboardEntry[]>
   for (const game of ALLOWED_GAMES) {
-    out[game] = getBoard(game, period, now, scope).slice(0, capped)
+    out[game] = (await getBoard(game, period, now, scope)).slice(0, capped)
   }
   return out
 }
 
 /** Top N entries per game and period — one pass over local store. */
-export function boardsSummary(limit = 3, now = Date.now()): Record<GameSlug, PeriodBoardSummary> {
+export async function boardsSummary(
+  limit = 3,
+  now = Date.now(),
+): Promise<Record<GameSlug, PeriodBoardSummary>> {
   const capped = Math.min(10, Math.max(1, Math.floor(limit)) || 3)
   const out = {} as Record<GameSlug, PeriodBoardSummary>
   for (const game of ALLOWED_GAMES) {
     const byPeriod = {} as PeriodBoardSummary
     for (const period of PERIODS) {
-      byPeriod[period] = getBoard(game, period, now).slice(0, capped)
+      byPeriod[period] = (await getBoard(game, period, now)).slice(0, capped)
     }
     out[game] = byPeriod
   }
@@ -397,26 +356,28 @@ export function boardsSummary(limit = 3, now = Date.now()): Record<GameSlug, Per
 
 export type YouEntry = LeaderboardEntry & { rank: number }
 
-export function bestForName(
+export async function bestForName(
   game: GameSlug,
   name: string,
   period: Period = 'all',
   now = Date.now(),
   scope?: NameScope,
-): YouEntry | null {
+): Promise<YouEntry | null> {
   const cleaned = name.trim().slice(0, 12).toUpperCase()
   if (!cleaned) return null
-  const pool = sortByScore(filterByNames(filterByPeriod(historyFor(game), period, now), scope))
+  const pool = sortByScore(
+    filterByNames(filterByPeriod(await historyFor(game), period, now), scope),
+  )
   const mine = pool.filter((e) => e.name === cleaned)
   if (!mine.length) return null
   const best = mine[0]
   return { ...best, rank: pool.findIndex((e) => e.id === best.id) + 1 }
 }
 
-export function bestsForName(name: string): Partial<Record<GameSlug, number>> {
+export async function bestsForName(name: string): Promise<Partial<Record<GameSlug, number>>> {
   const out: Partial<Record<GameSlug, number>> = {}
   for (const game of ALLOWED_GAMES) {
-    const row = bestForName(game, name, 'all')
+    const row = await bestForName(game, name, 'all')
     if (row) out[game] = row.score
   }
   return out
@@ -453,38 +414,37 @@ function placementsFromPool(pool: LeaderboardEntry[]): { name: string; place: nu
   return bests.map((name, i) => ({ name, place: i + 1 }))
 }
 
-/** Unique best-per-name on a period board, ordered for placement. */
-function periodPlacements(
+async function periodPlacements(
   game: GameSlug,
   period: Period,
   now = Date.now(),
   scope?: NameScope,
-): { name: string; place: number }[] {
+): Promise<{ name: string; place: number }[]> {
   return placementsFromPool(
-    sortByScore(filterByNames(filterByPeriod(historyFor(game), period, now), scope)),
+    sortByScore(filterByNames(filterByPeriod(await historyFor(game), period, now), scope)),
   )
 }
 
-function closedPeriodPlacements(
+async function closedPeriodPlacements(
   game: GameSlug,
   period: ClosedPeriod,
   periodKey: number,
-): { name: string; place: number }[] {
+): Promise<{ name: string; place: number }[]> {
   return placementsFromPool(
-    sortByScore(filterByClosedPeriod(historyFor(game), period, periodKey)),
+    sortByScore(filterByClosedPeriod(await historyFor(game), period, periodKey)),
   )
 }
 
-function aggregateGlobalRanks(
-  placementsForGame: (game: GameSlug) => { name: string; place: number }[],
-): GlobalRankEntry[] {
+async function aggregateGlobalRanks(
+  placementsForGame: (game: GameSlug) => Promise<{ name: string; place: number }[]>,
+): Promise<GlobalRankEntry[]> {
   const byName = new Map<
     string,
     { score: number; games: number; byGame: Partial<Record<GameSlug, GlobalGamePlace>> }
   >()
 
   for (const game of ALLOWED_GAMES) {
-    for (const { name, place } of placementsForGame(game)) {
+    for (const { name, place } of await placementsForGame(game)) {
       const points = placePoints(place)
       if (points <= 0) continue
       const row = byName.get(name) ?? { score: 0, games: 0, byGame: {} }
@@ -512,37 +472,37 @@ function aggregateGlobalRanks(
   }))
 }
 
-export function globalRanks(
+export async function globalRanks(
   period: Period = 'all',
   now = Date.now(),
   scope?: NameScope,
-): GlobalRankEntry[] {
+): Promise<GlobalRankEntry[]> {
   return aggregateGlobalRanks((game) => periodPlacements(game, period, now, scope))
 }
 
 /** Global ranks for a completed weekly or monthly period. */
-export function globalRanksForClosedPeriod(
+export async function globalRanksForClosedPeriod(
   period: ClosedPeriod,
   periodKey: number,
-): GlobalRankEntry[] {
+): Promise<GlobalRankEntry[]> {
   return aggregateGlobalRanks((game) => closedPeriodPlacements(game, period, periodKey))
 }
 
-export function rankForName(
+export async function rankForName(
   name: string,
   neighborRadius = 2,
   period: Period = 'all',
   now = Date.now(),
   scope?: NameScope,
-): {
+): Promise<{
   rank: number | null
   score: number
   totalPlayers: number
   byGame: Partial<Record<GameSlug, GlobalGamePlace>>
   nearby: GlobalRankEntry[]
-} {
+}> {
   const cleaned = name.trim().slice(0, 12).toUpperCase()
-  const all = globalRanks(period, now, scope)
+  const all = await globalRanks(period, now, scope)
   if (!cleaned) {
     return {
       rank: null,
@@ -574,72 +534,73 @@ export function rankForName(
   }
 }
 
-export function qualifies(
+export async function qualifies(
   game: GameSlug,
   score: number,
   period: Period = 'daily',
   now = Date.now(),
-): boolean {
+): Promise<boolean> {
   if (score <= 0) return false
-  const board = getBoard(game, period, now)
+  const board = await getBoard(game, period, now)
   if (board.length < MAX_BOARD) return true
   return score > board[board.length - 1].score
 }
 
 /** True if the score makes any period board. */
-export function qualifiesAny(game: GameSlug, score: number, now = Date.now()): boolean {
-  return PERIODS.some((period) => qualifies(game, score, period, now))
+export async function qualifiesAny(
+  game: GameSlug,
+  score: number,
+  now = Date.now(),
+): Promise<boolean> {
+  for (const period of PERIODS) {
+    if (await qualifies(game, score, period, now)) return true
+  }
+  return false
 }
 
-export function rankForScore(
+export async function rankForScore(
   game: GameSlug,
   score: number,
   period: Period = 'daily',
   now = Date.now(),
-): number | null {
+): Promise<number | null> {
   if (score <= 0) return null
-  // Place among every score in the period — not just the displayed top 10
-  const pool = sortByScore(filterByPeriod(historyFor(game), period, now))
+  const pool = sortByScore(filterByPeriod(await historyFor(game), period, now))
   const better = pool.filter((e) => e.score > score).length
   return better + 1
 }
 
-export function ranksForScore(
+export async function ranksForScore(
   game: GameSlug,
   score: number,
   now = Date.now(),
-): Partial<Record<Period, number>> {
+): Promise<Partial<Record<Period, number>>> {
   const ranks: Partial<Record<Period, number>> = {}
   for (const period of PERIODS) {
-    const rank = rankForScore(game, score, period, now)
+    const rank = await rankForScore(game, score, period, now)
     if (rank != null) ranks[period] = rank
   }
   return ranks
 }
 
-function pruneHistory(entries: LeaderboardEntry[], now = Date.now()): LeaderboardEntry[] {
-  const cutoff = now - RETAIN_DAYS * 24 * 60 * 60 * 1000
-  return sortByScore(entries.filter((e) => e.at >= cutoff)).slice(0, MAX_HISTORY)
-}
-
-export function addScore(
+export async function addScore(
   game: GameSlug,
   name: string,
   score: number,
   device: DeviceType = 'desktop',
-): {
+): Promise<{
   board: LeaderboardEntry[]
   entry: LeaderboardEntry
   rank: number | null
   ranks: Partial<Record<Period, number>>
   previousBestRanks: Partial<Record<Period, number>>
   bestRanks: Partial<Record<Period, number>>
-} {
+}> {
   const cleaned = name.trim().slice(0, 12).toUpperCase() || 'PLAYER'
   const now = Date.now()
   const previousBestRanks: Partial<Record<Period, number>> = {}
   for (const period of PERIODS) {
-    const prior = bestForName(game, cleaned, period, now)
+    const prior = await bestForName(game, cleaned, period, now)
     if (prior) previousBestRanks[period] = prior.rank
   }
 
@@ -651,11 +612,36 @@ export function addScore(
     device: isDeviceType(device) ? device : 'desktop',
   }
 
-  const store = ensureStore()
-  const next = pruneHistory([...(store[game] ?? []), entry], now)
-  store[game] = next
-  writeStore(store)
+  const cutoff = now - RETAIN_DAYS * 24 * 60 * 60 * 1000
 
+  await db().transaction(async (tx) => {
+    await tx.insert(leaderboardScores).values({
+      id: entry.id,
+      game,
+      name: entry.name,
+      score: entry.score,
+      at: entry.at,
+      device: entry.device,
+    })
+    await tx.execute(sql`
+      DELETE FROM leaderboard_scores AS ls
+      WHERE ls.game = ${game}
+        AND (
+          ls.at < ${cutoff}
+          OR ls.id NOT IN (
+            SELECT keep.id FROM (
+              SELECT id
+              FROM leaderboard_scores
+              WHERE game = ${game}
+              ORDER BY score DESC, at ASC
+              LIMIT ${MAX_HISTORY}
+            ) AS keep
+          )
+        )
+    `)
+  })
+
+  const next = await historyFor(game)
   const ranks: Partial<Record<Period, number>> = {}
   for (const period of PERIODS) {
     const pool = sortByScore(filterByPeriod(next, period, now))
@@ -665,13 +651,13 @@ export function addScore(
 
   const bestRanks: Partial<Record<Period, number>> = {}
   for (const period of PERIODS) {
-    const best = bestForName(game, cleaned, period, now)
+    const best = await bestForName(game, cleaned, period, now)
     if (best) bestRanks[period] = best.rank
   }
 
   const rank = ranks.daily ?? ranks.weekly ?? ranks.monthly ?? ranks.all ?? null
   return {
-    board: getBoard(game, 'daily'),
+    board: await getBoard(game, 'daily'),
     entry,
     rank,
     ranks,
@@ -681,24 +667,18 @@ export function addScore(
 }
 
 /** Rename a player across all game boards (history rows keep the new tag). */
-export function renamePlayerAcrossLeaderboards(
+export async function renamePlayerAcrossLeaderboards(
   fromRaw: string,
   toRaw: string,
-): { from: string; to: string; updated: number } {
+): Promise<{ from: string; to: string; updated: number }> {
   const from = fromRaw.trim().slice(0, 12).toUpperCase()
   const to = toRaw.trim().slice(0, 12).toUpperCase()
   if (!from || !to || from === to) return { from, to, updated: 0 }
 
-  const store = ensureStore()
-  let updated = 0
-  for (const game of ALLOWED_GAMES) {
-    for (const entry of store[game] ?? []) {
-      if (entry.name === from) {
-        entry.name = to
-        updated += 1
-      }
-    }
-  }
-  if (updated) writeStore(store)
-  return { from, to, updated }
+  const updated = await db()
+    .update(leaderboardScores)
+    .set({ name: to })
+    .where(eq(leaderboardScores.name, from))
+    .returning({ id: leaderboardScores.id })
+  return { from, to, updated: updated.length }
 }

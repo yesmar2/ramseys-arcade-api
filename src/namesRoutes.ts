@@ -31,15 +31,15 @@ const avatarSchema = z.object({
   token: z.string().min(1).max(128).optional(),
 })
 
-namesRouter.post('/rename', (req, res) => {
+namesRouter.post('/rename', async (req, res) => {
   const parsed = renameSchema.safeParse(req.body)
   if (!parsed.success) {
     res.status(400).json({ error: 'Invalid body', details: parsed.error.flatten() })
     return
   }
   try {
-    const account = accountFromRequest(req)
-    const result = renameGamerTag(parsed.data.from, parsed.data.to, {
+    const account = await accountFromRequest(req)
+    const result = await renameGamerTag(parsed.data.from, parsed.data.to, {
       fromToken: parsed.data.fromToken,
       claimToken: parsed.data.toToken,
       accountId: account?.id,
@@ -55,14 +55,14 @@ namesRouter.post('/rename', (req, res) => {
   }
 })
 
-namesRouter.post('/assume', (req, res) => {
+namesRouter.post('/assume', async (req, res) => {
   const parsed = claimSchema.safeParse(req.body)
   if (!parsed.success) {
     res.status(400).json({ error: 'Invalid body', details: parsed.error.flatten() })
     return
   }
   try {
-    const result = assumeNameForDev(parsed.data.name)
+    const result = await assumeNameForDev(parsed.data.name)
     res.json(result)
   } catch (err) {
     const status = (err as { status?: number }).status ?? 500
@@ -74,23 +74,23 @@ namesRouter.post('/assume', (req, res) => {
   }
 })
 
-namesRouter.get('/:name', (req, res) => {
+namesRouter.get('/:name', async (req, res) => {
   const name = cleanPlayerName(req.params.name ?? '')
   if (!name) {
     res.status(400).json({ error: 'Name required' })
     return
   }
   const token = typeof req.query.token === 'string' ? req.query.token : null
-  const account = accountFromRequest(req)
+  const account = await accountFromRequest(req)
   res.json({
     name,
-    available: isNameAvailable(name, token, account?.id),
-    avatarId: resolveAvatarId(name),
+    available: await isNameAvailable(name, token, account?.id),
+    avatarId: await resolveAvatarId(name),
     avatars: AVATAR_IDS,
   })
 })
 
-namesRouter.put('/:name/avatar', (req, res) => {
+namesRouter.put('/:name/avatar', async (req, res) => {
   const name = cleanPlayerName(req.params.name ?? '')
   if (!name) {
     res.status(400).json({ error: 'Name required' })
@@ -102,8 +102,8 @@ namesRouter.put('/:name/avatar', (req, res) => {
     return
   }
   try {
-    const account = accountFromRequest(req)
-    const result = setNameAvatar(name, parsed.data.avatarId, {
+    const account = await accountFromRequest(req)
+    const result = await setNameAvatar(name, parsed.data.avatarId, {
       claimToken: parsed.data.token,
       accountId: account?.id,
     })
@@ -118,15 +118,15 @@ namesRouter.put('/:name/avatar', (req, res) => {
   }
 })
 
-namesRouter.post('/claim', (req, res) => {
+namesRouter.post('/claim', async (req, res) => {
   const parsed = claimSchema.safeParse(req.body)
   if (!parsed.success) {
     res.status(400).json({ error: 'Invalid body', details: parsed.error.flatten() })
     return
   }
   try {
-    const account = accountFromRequest(req)
-    const result = assertCanUseName(parsed.data.name, {
+    const account = await accountFromRequest(req)
+    const result = await assertCanUseName(parsed.data.name, {
       claimToken: parsed.data.token,
       accountId: account?.id,
     })

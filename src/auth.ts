@@ -1,15 +1,8 @@
 import crypto from 'node:crypto'
-import fs from 'node:fs'
-import path from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { eq, lt } from 'drizzle-orm'
 import type { Request } from 'express'
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url))
-const DATA_DIR = path.resolve(__dirname, '../data')
-
-const ACCOUNTS_PATH = path.join(DATA_DIR, 'accounts.json')
-const SESSIONS_PATH = path.join(DATA_DIR, 'sessions.json')
-const MAGIC_PATH = path.join(DATA_DIR, 'magic-links.json')
+import { db } from './db/client.js'
+import { accounts, magicLinks, sessions } from './db/schema.js'
 
 export type AccountPlan = 'free' | 'plus'
 
@@ -19,14 +12,6 @@ export type Account = {
   createdAt: number
   plan: AccountPlan
   googleSub?: string
-}
-
-type AccountsStore = { accounts: Record<string, Account> }
-type SessionsStore = {
-  sessions: Record<string, { accountId: string; expiresAt: number }>
-}
-type MagicStore = {
-  links: Record<string, { email: string; expiresAt: number }>
 }
 
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 30 // 30 days
@@ -40,57 +25,12 @@ function mintId() {
   return crypto.randomBytes(12).toString('base64url')
 }
 
-function ensureDataDir() {
-  if (!fs.existsSync(DATA_DIR)) {
-    fs.mkdirSync(DATA_DIR, { recursive: true })
-  }
-}
-
-function readJson<T>(filePath: string, fallback: T): T {
-  ensureDataDir()
-  if (!fs.existsSync(filePath)) {
-    writeJson(filePath, fallback)
-    return fallback
-  }
-  try {
-    const raw = fs.readFileSync(filePath, 'utf8')
-    return JSON.parse(raw) as T
-  } catch {
-    return fallback
-  }
-}
-
-function writeJson(filePath: string, data: unknown) {
-  ensureDataDir()
-  const tmp = `${filePath}.tmp`
-  fs.writeFileSync(tmp, JSON.stringify(data, null, 2))
-  fs.renameSync(tmp, filePath)
-}
-
 function normalizeEmail(email: string) {
   return email.trim().toLowerCase()
 }
 
 function isValidEmail(email: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
-}
-
-function accountsStore(): AccountsStore {
-  const store = readJson<AccountsStore>(ACCOUNTS_PATH, { accounts: {} })
-  if (!store.accounts || typeof store.accounts !== 'object') return { accounts: {} }
-  return store
-}
-
-function sessionsStore(): SessionsStore {
-  const store = readJson<SessionsStore>(SESSIONS_PATH, { sessions: {} })
-  if (!store.sessions || typeof store.sessions !== 'object') return { sessions: {} }
-  return store
-}
-
-function magicStore(): MagicStore {
-  const store = readJson<MagicStore>(MAGIC_PATH, { links: {} })
-  if (!store.links || typeof store.links !== 'object') return { links: {} }
-  return store
 }
 
 function publicAccount(account: Account): Account {
@@ -103,10 +43,26 @@ function publicAccount(account: Account): Account {
   }
 }
 
-function getOrCreateAccount(
+function rowToAccount(row: {
+  id: string
+  email: string
+  createdAt: number
+  plan: string
+  googleSub: string | null
+}): Account {
+  return {
+    id: row.id,
+    email: row.email,
+    createdAt: row.createdAt,
+    plan: row.plan === 'plus' ? 'plus' : 'free',
+    ...(row.googleSub ? { googleSub: row.googleSub } : {}),
+  }
+}
+
+async function getOrCreateAccount(
   emailRaw: string,
   opts: { googleSub?: string } = {},
-): Account {
+): Promise<Account> {
   const email = normalizeEmail(emailRaw)
   if (!email || !isValidEmail(email)) {
     throw Object.assign(new Error('Valid email required'), {
@@ -115,27 +71,34 @@ function getOrCreateAccount(
     })
   }
 
-  const store = accountsStore()
   if (opts.googleSub) {
-    const byGoogle = Object.values(store.accounts).find(
-      (a) => a.googleSub === opts.googleSub,
-    )
-    if (byGoogle) {
-      if (byGoogle.email !== email) {
-        byGoogle.email = email
-        writeJson(ACCOUNTS_PATH, store)
+    const byGoogle = await db()
+      .select()
+      .from(accounts)
+      .where(eq(accounts.googleSub, opts.googleSub))
+      .limit(1)
+    if (byGoogle[0]) {
+      if (byGoogle[0].email !== email) {
+        await db()
+          .update(accounts)
+          .set({ email })
+          .where(eq(accounts.id, byGoogle[0].id))
+        return rowToAccount({ ...byGoogle[0], email })
       }
-      return byGoogle
+      return rowToAccount(byGoogle[0])
     }
   }
 
-  const existing = Object.values(store.accounts).find((a) => a.email === email)
-  if (existing) {
-    if (opts.googleSub && !existing.googleSub) {
-      existing.googleSub = opts.googleSub
-      writeJson(ACCOUNTS_PATH, store)
+  const existing = await db().select().from(accounts).where(eq(accounts.email, email)).limit(1)
+  if (existing[0]) {
+    if (opts.googleSub && !existing[0].googleSub) {
+      await db()
+        .update(accounts)
+        .set({ googleSub: opts.googleSub })
+        .where(eq(accounts.id, existing[0].id))
+      return rowToAccount({ ...existing[0], googleSub: opts.googleSub })
     }
-    return existing
+    return rowToAccount(existing[0])
   }
 
   const account: Account = {
@@ -145,33 +108,37 @@ function getOrCreateAccount(
     plan: 'free',
     ...(opts.googleSub ? { googleSub: opts.googleSub } : {}),
   }
-  store.accounts[account.id] = account
-  writeJson(ACCOUNTS_PATH, store)
+  await db().insert(accounts).values({
+    id: account.id,
+    email: account.email,
+    createdAt: account.createdAt,
+    plan: account.plan,
+    googleSub: account.googleSub ?? null,
+  })
   return account
 }
 
-export function getAccount(accountId: string): Account | null {
-  return accountsStore().accounts[accountId] ?? null
+export async function getAccount(accountId: string): Promise<Account | null> {
+  const rows = await db().select().from(accounts).where(eq(accounts.id, accountId)).limit(1)
+  return rows[0] ? rowToAccount(rows[0]) : null
 }
 
-export function createMagicLink(emailRaw: string): {
+export async function createMagicLink(emailRaw: string): Promise<{
   email: string
   token: string
   expiresAt: number
   verifyPath: string
-} {
-  const account = getOrCreateAccount(emailRaw)
+}> {
+  const account = await getOrCreateAccount(emailRaw)
   const token = mintToken()
   const expiresAt = Date.now() + MAGIC_TTL_MS
-  const store = magicStore()
 
-  // Drop expired links
-  for (const [k, v] of Object.entries(store.links)) {
-    if (v.expiresAt < Date.now()) delete store.links[k]
-  }
-
-  store.links[token] = { email: account.email, expiresAt }
-  writeJson(MAGIC_PATH, store)
+  await db().delete(magicLinks).where(lt(magicLinks.expiresAt, Date.now()))
+  await db().insert(magicLinks).values({
+    token,
+    email: account.email,
+    expiresAt,
+  })
 
   return {
     email: account.email,
@@ -181,25 +148,19 @@ export function createMagicLink(emailRaw: string): {
   }
 }
 
-function createSession(accountId: string): { token: string; expiresAt: number } {
+async function createSession(accountId: string): Promise<{ token: string; expiresAt: number }> {
   const token = mintToken()
   const expiresAt = Date.now() + SESSION_TTL_MS
-  const store = sessionsStore()
-
-  for (const [k, v] of Object.entries(store.sessions)) {
-    if (v.expiresAt < Date.now()) delete store.sessions[k]
-  }
-
-  store.sessions[token] = { accountId, expiresAt }
-  writeJson(SESSIONS_PATH, store)
+  await db().delete(sessions).where(lt(sessions.expiresAt, Date.now()))
+  await db().insert(sessions).values({ token, accountId, expiresAt })
   return { token, expiresAt }
 }
 
-export function verifyMagicLink(token: string): {
+export async function verifyMagicLink(token: string): Promise<{
   sessionToken: string
   expiresAt: number
   account: Account
-} {
+}> {
   if (!token) {
     throw Object.assign(new Error('Token required'), {
       status: 400,
@@ -207,16 +168,15 @@ export function verifyMagicLink(token: string): {
     })
   }
 
-  const store = magicStore()
-  const link = store.links[token]
+  const rows = await db().select().from(magicLinks).where(eq(magicLinks.token, token)).limit(1)
+  const link = rows[0]
   if (!link) {
     throw Object.assign(new Error('Invalid or expired link'), {
       status: 400,
       code: 'MAGIC_INVALID',
     })
   }
-  delete store.links[token]
-  writeJson(MAGIC_PATH, store)
+  await db().delete(magicLinks).where(eq(magicLinks.token, token))
 
   if (link.expiresAt < Date.now()) {
     throw Object.assign(new Error('Invalid or expired link'), {
@@ -225,8 +185,8 @@ export function verifyMagicLink(token: string): {
     })
   }
 
-  const account = getOrCreateAccount(link.email)
-  const session = createSession(account.id)
+  const account = await getOrCreateAccount(link.email)
+  const session = await createSession(account.id)
   return {
     sessionToken: session.token,
     expiresAt: session.expiresAt,
@@ -234,27 +194,28 @@ export function verifyMagicLink(token: string): {
   }
 }
 
-export function resolveSession(sessionToken: string | null | undefined): Account | null {
+export async function resolveSession(
+  sessionToken: string | null | undefined,
+): Promise<Account | null> {
   if (!sessionToken) return null
-  const store = sessionsStore()
-  const session = store.sessions[sessionToken]
+  const rows = await db()
+    .select()
+    .from(sessions)
+    .where(eq(sessions.token, sessionToken))
+    .limit(1)
+  const session = rows[0]
   if (!session) return null
   if (session.expiresAt < Date.now()) {
-    delete store.sessions[sessionToken]
-    writeJson(SESSIONS_PATH, store)
+    await db().delete(sessions).where(eq(sessions.token, sessionToken))
     return null
   }
-  const account = getAccount(session.accountId)
+  const account = await getAccount(session.accountId)
   return account ? publicAccount(account) : null
 }
 
-export function logoutSession(sessionToken: string | null | undefined) {
+export async function logoutSession(sessionToken: string | null | undefined) {
   if (!sessionToken) return
-  const store = sessionsStore()
-  if (store.sessions[sessionToken]) {
-    delete store.sessions[sessionToken]
-    writeJson(SESSIONS_PATH, store)
-  }
+  await db().delete(sessions).where(eq(sessions.token, sessionToken))
 }
 
 export function bearerFromRequest(req: Request): string | null {
@@ -264,7 +225,7 @@ export function bearerFromRequest(req: Request): string | null {
   return match?.[1]?.trim() || null
 }
 
-export function accountFromRequest(req: Request): Account | null {
+export async function accountFromRequest(req: Request): Promise<Account | null> {
   return resolveSession(bearerFromRequest(req))
 }
 
@@ -326,8 +287,8 @@ export async function signInWithGoogleIdToken(idToken: string): Promise<{
     })
   }
 
-  const account = getOrCreateAccount(email, { googleSub: sub })
-  const session = createSession(account.id)
+  const account = await getOrCreateAccount(email, { googleSub: sub })
+  const session = await createSession(account.id)
   return {
     sessionToken: session.token,
     expiresAt: session.expiresAt,

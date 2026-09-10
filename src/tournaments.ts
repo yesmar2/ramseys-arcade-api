@@ -1,6 +1,6 @@
-import fs from 'node:fs'
-import path from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { eq, inArray } from 'drizzle-orm'
+import { db } from './db/client.js'
+import { tournaments as tournamentsTable } from './db/schema.js'
 import {
   bracketHasChampion,
   findOpenMatch,
@@ -22,10 +22,6 @@ export type { PublicBracket, PublicBracketMatch, PublicBracketSide } from './bra
 
 /** Games eligible for rolling daily/weekly events (excludes unfinished / non-event titles). */
 const EVENT_GAMES = ALLOWED_GAMES.filter((g) => g !== 'crosswalk' && g !== 'spotter' && g !== 'stride')
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url))
-const DATA_DIR = path.resolve(__dirname, '../data')
-const STORE_PATH = path.join(DATA_DIR, 'tournaments.json')
 
 export type TournamentStatus = 'upcoming' | 'active' | 'ended'
 export type TournamentCadence = 'daily' | 'weekly'
@@ -504,60 +500,74 @@ function emptyStore(now = Date.now()): Store {
   return { tournaments: [buildDailyEvent(now), buildWeeklyEvent(now)] }
 }
 
-function ensureStore(now = Date.now()): Store {
-  if (!fs.existsSync(DATA_DIR)) {
-    fs.mkdirSync(DATA_DIR, { recursive: true })
+function tournamentToRow(t: Tournament) {
+  return {
+    id: t.id,
+    data: t as unknown as Record<string, unknown>,
+    official: Boolean(t.official),
+    cadence: t.cadence ?? null,
+    startsAt: t.startsAt,
+    endsAt: t.endsAt,
+    visibility: t.visibility ?? (t.official ? 'public' : 'private'),
+    inviteCode: t.inviteCode ?? null,
   }
-  let store: Store
-  if (!fs.existsSync(STORE_PATH)) {
-    store = emptyStore(now)
-    writeStore(store)
-    return store
-  }
-  try {
-    const raw = fs.readFileSync(STORE_PATH, 'utf8')
-    const parsed = JSON.parse(raw) as Store
-    if (!Array.isArray(parsed.tournaments) || parsed.tournaments.length === 0) {
-      store = emptyStore(now)
-      writeStore(store)
-      return store
-    }
-    store = { tournaments: parsed.tournaments.map(normalizeTournament) }
-    let migrated = false
-    for (let i = 0; i < store.tournaments.length; i++) {
-      const t = store.tournaments[i]!
-      const raw = parsed.tournaments[i]
-      if (t.createdBy && !t.official && t.visibility !== 'private') {
-        t.visibility = 'private'
-        migrated = true
-      }
-      if (t.visibility === 'private' && t.createdBy && !t.inviteCode) {
-        t.inviteCode = generateInviteCode()
-        migrated = true
-      }
-      if (
-        raw &&
-        (JSON.stringify(raw.games) !== JSON.stringify(t.games) ||
-          JSON.stringify(raw.scores.map((s) => s.game)) !==
-            JSON.stringify(t.scores.map((s) => s.game)))
-      ) {
-        migrated = true
-      }
-    }
-    if (migrated) writeStore(store)
-  } catch {
-    store = emptyStore(now)
-    writeStore(store)
-    return store
-  }
-  if (ensureRollingEvents(store, now)) writeStore(store)
-  return store
 }
 
-function writeStore(store: Store) {
-  const tmp = `${STORE_PATH}.tmp`
-  fs.writeFileSync(tmp, JSON.stringify(store, null, 2))
-  fs.renameSync(tmp, STORE_PATH)
+async function writeStore(store: Store) {
+  const list = store.tournaments.map(normalizeTournament)
+  await db().transaction(async (tx) => {
+    const existing = await tx.select({ id: tournamentsTable.id }).from(tournamentsTable)
+    const nextIds = new Set(list.map((t) => t.id))
+    const toDelete = existing.map((r) => r.id).filter((id) => !nextIds.has(id))
+    if (toDelete.length) {
+      await tx.delete(tournamentsTable).where(inArray(tournamentsTable.id, toDelete))
+    }
+    for (const t of list) {
+      const row = tournamentToRow(t)
+      await tx
+        .insert(tournamentsTable)
+        .values(row)
+        .onConflictDoUpdate({
+          target: tournamentsTable.id,
+          set: {
+            data: row.data,
+            official: row.official,
+            cadence: row.cadence,
+            startsAt: row.startsAt,
+            endsAt: row.endsAt,
+            visibility: row.visibility,
+            inviteCode: row.inviteCode,
+          },
+        })
+    }
+  })
+}
+
+async function ensureStore(now = Date.now()): Promise<Store> {
+  const rows = await db().select().from(tournamentsTable)
+  let store: Store
+  if (rows.length === 0) {
+    store = emptyStore(now)
+    await writeStore(store)
+    return store
+  }
+  store = {
+    tournaments: rows.map((r) => normalizeTournament(r.data as Tournament)),
+  }
+  let migrated = false
+  for (const t of store.tournaments) {
+    if (t.createdBy && !t.official && t.visibility !== 'private') {
+      t.visibility = 'private'
+      migrated = true
+    }
+    if (t.visibility === 'private' && t.createdBy && !t.inviteCode) {
+      t.inviteCode = generateInviteCode()
+      migrated = true
+    }
+  }
+  if (migrated) await writeStore(store)
+  if (ensureRollingEvents(store, now)) await writeStore(store)
+  return store
 }
 
 /** Put a normalized copy back so score-array replacements persist. */
@@ -680,13 +690,13 @@ function publicTournament(t: Tournament, now = Date.now()) {
 
 export type TournamentListFilter = 'all' | 'official' | 'mine' | 'joined'
 
-export function listTournaments(
+export async function listTournaments(
   now = Date.now(),
   filter: TournamentListFilter = 'all',
   accountId?: string,
   playerName?: string,
 ) {
-  const store = ensureStore(now)
+  const store = await ensureStore(now)
   const cleanedPlayer = playerName ? cleanName(playerName) : ''
   let list = store.tournaments.map((t) => publicTournament(t, now))
   if (filter === 'official') list = list.filter((t) => t.official)
@@ -713,8 +723,8 @@ export function listTournaments(
   })
 }
 
-export function getTournament(id: string): Tournament | null {
-  const t = ensureStore().tournaments.find((x) => x.id === id)
+export async function getTournament(id: string): Promise<Tournament | null> {
+  const t = (await ensureStore()).tournaments.find((x) => x.id === id)
   return t ? normalizeTournament(t) : null
 }
 
@@ -877,7 +887,7 @@ export function getTournamentPlayerStatus(
   }
 }
 
-export function getTournamentDetail(
+export async function getTournamentDetail(
   id: string,
   now = Date.now(),
   opts?: {
@@ -887,7 +897,7 @@ export function getTournamentDetail(
     accountId?: string
   },
 ) {
-  const raw = getTournament(id)
+  const raw = await getTournament(id)
   if (!raw) return null
   const t = normalizeTournament(raw)
   if (!canAccessTournament(t, detailAccessOpts(opts))) {
@@ -898,9 +908,9 @@ export function getTournamentDetail(
   }
 
   if (syncBracketClock(t, now)) {
-    const store = ensureStore(now)
+    const store = await ensureStore(now)
     putTournament(store, t)
-    writeStore(store)
+    await writeStore(store)
   }
 
   let playerStatus: TournamentPlayerStatus | null = null
@@ -912,7 +922,7 @@ export function getTournamentDetail(
   return {
     ...publicTournament(t, now),
     players: t.players.map((p) => ({ id: p.id, name: p.name, joinedAt: p.joinedAt })),
-    standings: withAvatarIds(computeStandings(t)),
+    standings: await withAvatarIds(computeStandings(t)),
     placePoints: PLACE_POINTS,
     bracket: publicBracket(t),
     playerStatus,
@@ -935,12 +945,12 @@ export type CreateTournamentInput = {
 
 const MAX_PRIVATE_GAMES = 5
 
-export function createTournament(
+export async function createTournament(
   input: CreateTournamentInput,
   creator: TournamentCreator,
   now = Date.now(),
 ) {
-  const store = ensureStore(now)
+  const store = await ensureStore(now)
   const title = input.title.trim().slice(0, 60)
   if (title.length < 3) {
     throw Object.assign(new Error('Title must be at least 3 characters'), { status: 400 })
@@ -1033,18 +1043,21 @@ export function createTournament(
   }
 
   store.tournaments.push(tournament)
-  writeStore(store)
-  return getTournamentDetail(tournament.id, now, { accountId: creator.accountId })!
+  await writeStore(store)
+  return (await getTournamentDetail(tournament.id, now, { accountId: creator.accountId }))!
 }
 
-export function joinTournament(
+export async function joinTournament(
   id: string,
   name: string,
   now = Date.now(),
   playerId?: string | null,
   access: TournamentAccessOpts = {},
-): { tournament: ReturnType<typeof getTournamentDetail>; player: TournamentPlayer } {
-  const store = ensureStore()
+): Promise<{
+  tournament: Awaited<ReturnType<typeof getTournamentDetail>>
+  player: TournamentPlayer
+}> {
+  const store = await ensureStore()
   const raw = store.tournaments.find((x) => x.id === id)
   if (!raw) throw Object.assign(new Error('Tournament not found'), { status: 404 })
   const t = normalizeTournament(raw)
@@ -1060,11 +1073,11 @@ export function joinTournament(
   const existingByName = t.players.find((p) => p.name === cleaned)
   if (existingByName) {
     return {
-      tournament: getTournamentDetail(id, now, {
+      tournament: (await getTournamentDetail(id, now, {
         ...detailAccessOpts(access),
         playerName: cleaned,
         accountId: access.accountId,
-      })!,
+      }))!,
       player: existingByName,
     }
   }
@@ -1076,36 +1089,36 @@ export function joinTournament(
       const conflict = t.players.find((p) => p.name === cleaned && p.id !== seat.id)
       if (t.bracket?.lockedAt && seat.name !== cleaned) {
         return {
-          tournament: getTournamentDetail(id, now, {
+          tournament: (await getTournamentDetail(id, now, {
             ...detailAccessOpts(access),
             playerName: seat.name,
             accountId: access.accountId,
-          })!,
+          }))!,
           player: seat,
         }
       }
       if (conflict) {
         mergeTournamentPlayers(t, seat, conflict)
         putTournament(store, t)
-        writeStore(store)
+        await writeStore(store)
         return {
-          tournament: getTournamentDetail(id, now, {
+          tournament: (await getTournamentDetail(id, now, {
             ...detailAccessOpts(access),
             playerName: cleaned,
             accountId: access.accountId,
-          })!,
+          }))!,
           player: conflict,
         }
       }
       seat.name = cleaned
       putTournament(store, t)
-      writeStore(store)
+      await writeStore(store)
       return {
-        tournament: getTournamentDetail(id, now, {
+        tournament: (await getTournamentDetail(id, now, {
           ...detailAccessOpts(access),
           playerName: cleaned,
           accountId: access.accountId,
-        })!,
+        }))!,
         player: seat,
       }
     }
@@ -1128,34 +1141,34 @@ export function joinTournament(
   t.players.push(player)
   maybeLockBracket(t, now)
   putTournament(store, t)
-  writeStore(store)
+  await writeStore(store)
   return {
-    tournament: getTournamentDetail(id, now, {
+    tournament: (await getTournamentDetail(id, now, {
       ...detailAccessOpts(access),
       playerName: cleaned,
       accountId: access.accountId,
-    })!,
+    }))!,
     player,
   }
 }
 
-export function submitTournamentScore(
+export async function submitTournamentScore(
   id: string,
   name: string,
   game: string,
   score: number,
   now = Date.now(),
   access: TournamentAccessOpts = {},
-): {
-  tournament: ReturnType<typeof getTournamentDetail>
+): Promise<{
+  tournament: Awaited<ReturnType<typeof getTournamentDetail>>
   accepted: boolean
   best: number
   improved: boolean
   attemptsUsed: number
   attemptsRemaining: number | null
   maxAttempts: number | null
-} {
-  const store = ensureStore()
+}> {
+  const store = await ensureStore()
   const raw = store.tournaments.find((x) => x.id === id)
   if (!raw) throw Object.assign(new Error('Tournament not found'), { status: 404 })
   const t = normalizeTournament(raw)
@@ -1264,7 +1277,7 @@ export function submitTournamentScore(
     maybeEndWhenAllFinished(t, now)
   }
   putTournament(store, t)
-  writeStore(store)
+  await writeStore(store)
 
   const attemptsUsed = format === 'open' && resolveKind(t) !== 'bracket' ? used : used + 1
   const finiteMax = Number.isFinite(maxAttempts) ? maxAttempts : null
@@ -1272,12 +1285,12 @@ export function submitTournamentScore(
     finiteMax == null ? null : Math.max(0, finiteMax - attemptsUsed)
 
   return {
-    tournament: getTournamentDetail(id, now, {
+    tournament: (await getTournamentDetail(id, now, {
       ...detailAccessOpts(access),
       playerName: cleaned,
       game,
       accountId: access.accountId,
-    })!,
+    }))!,
     accepted: true,
     best: Math.max(prevBest, score),
     improved,
@@ -1287,8 +1300,8 @@ export function submitTournamentScore(
   }
 }
 
-export function activeTournamentsForGame(game: GameSlug, now = Date.now()) {
-  return ensureStore()
+export async function activeTournamentsForGame(game: GameSlug, now = Date.now()) {
+  return (await ensureStore())
     .tournaments.filter(
       (t) =>
         tournamentStatus(t, now) === 'active' &&
@@ -1345,16 +1358,16 @@ function mergeTournamentPlayers(
  * Scores stay attached (same player id). If the new name already exists
  * in a tournament, merge best scores into that player and drop the old row.
  */
-export function renamePlayerAcrossTournaments(fromRaw: string, toRaw: string): {
+export async function renamePlayerAcrossTournaments(fromRaw: string, toRaw: string): Promise<{
   from: string
   to: string
   updatedTournaments: string[]
-} {
+}> {
   const from = cleanName(fromRaw)
   const to = cleanName(toRaw)
   if (from === to) return { from, to, updatedTournaments: [] }
 
-  const store = ensureStore()
+  const store = await ensureStore()
   const updatedTournaments: string[] = []
 
   for (const t of store.tournaments) {
@@ -1375,7 +1388,7 @@ export function renamePlayerAcrossTournaments(fromRaw: string, toRaw: string): {
     updatedTournaments.push(t.id)
   }
 
-  if (updatedTournaments.length) writeStore(store)
+  if (updatedTournaments.length) await writeStore(store)
   return { from, to, updatedTournaments }
 }
 

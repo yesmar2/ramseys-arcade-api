@@ -10,18 +10,18 @@ import {
 
 export const trophiesRouter = Router()
 
-trophiesRouter.get('/summary', (req, res) => {
-  ensurePeriodTrophies()
+trophiesRouter.get('/summary', async (req, res) => {
+  await ensurePeriodTrophies()
   const name = typeof req.query.name === 'string' ? cleanPlayerName(req.query.name) : ''
   if (!name) {
     res.status(400).json({ error: 'name required' })
     return
   }
-  res.json({ summary: trophySummaryForName(name) })
+  res.json({ summary: await trophySummaryForName(name) })
 })
 
-trophiesRouter.get('/counts', (req, res) => {
-  ensurePeriodTrophies()
+trophiesRouter.get('/counts', async (req, res) => {
+  await ensurePeriodTrophies()
   const raw = typeof req.query.names === 'string' ? req.query.names : ''
   const names = raw
     .split(',')
@@ -32,21 +32,21 @@ trophiesRouter.get('/counts', (req, res) => {
     res.status(400).json({ error: 'names required' })
     return
   }
-  res.json({ counts: trophySummariesForNames(names) })
+  res.json({ counts: await trophySummariesForNames(names) })
 })
 
-trophiesRouter.get('/', (req, res) => {
-  ensurePeriodTrophies()
+trophiesRouter.get('/', async (req, res) => {
+  await ensurePeriodTrophies()
   const name = typeof req.query.name === 'string' ? cleanPlayerName(req.query.name) : ''
   if (!name) {
     res.status(400).json({ error: 'name required' })
     return
   }
-  res.json({ trophies: trophiesForName(name) })
+  res.json({ trophies: await trophiesForName(name) })
 })
 
-trophiesRouter.get('/recent', (req, res) => {
-  ensurePeriodTrophies()
+trophiesRouter.get('/recent', async (req, res) => {
+  await ensurePeriodTrophies()
   const limit = Number(req.query.limit) || 20
-  res.json({ trophies: recentTrophies(limit) })
+  res.json({ trophies: await recentTrophies(limit) })
 })

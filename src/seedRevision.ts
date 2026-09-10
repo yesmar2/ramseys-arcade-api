@@ -1,70 +1,56 @@
-import fs from 'node:fs'
-import path from 'node:path'
-import { fileURLToPath } from 'node:url'
-import { replaceAllRecords } from './records.js'
-import { replaceAllBoards } from './store.js'
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url))
-const DATA_DIR = path.resolve(__dirname, '../data')
-const REV_PATH = path.join(DATA_DIR, '.seed-rev')
+import { eq } from 'drizzle-orm'
+import { db } from './db/client.js'
+import { appMeta, leaderboardScores, recordScores, trophyAwards, trophyCursor } from './db/schema.js'
 
 /**
  * Bump this to wipe leaderboards/records/trophies on the next API boot.
  * Keeps accounts, sessions, and name claims. Does not re-add sample scores.
  */
-export const SEED_REVISION = '2026-09-09-clear-for-testing'
+export const SEED_REVISION = '2026-09-10-postgres'
 
-function readRev(): string | null {
-  try {
-    if (!fs.existsSync(REV_PATH)) return null
-    return fs.readFileSync(REV_PATH, 'utf8').trim() || null
-  } catch {
-    return null
-  }
+async function readRev(): Promise<string | null> {
+  const rows = await db()
+    .select()
+    .from(appMeta)
+    .where(eq(appMeta.key, 'seed_revision'))
+    .limit(1)
+  return rows[0]?.value ?? null
 }
 
-function writeRev(rev: string) {
-  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true })
-  fs.writeFileSync(REV_PATH, `${rev}\n`)
+async function writeRev(rev: string) {
+  await db()
+    .insert(appMeta)
+    .values({ key: 'seed_revision', value: rev })
+    .onConflictDoUpdate({
+      target: appMeta.key,
+      set: { value: rev },
+    })
 }
 
-function clearTrophies() {
-  const trophiesPath = path.join(DATA_DIR, 'trophies.json')
-  try {
-    fs.writeFileSync(
-      trophiesPath,
-      JSON.stringify({ awards: [], cursor: {} }, null, 2),
-    )
-  } catch {
-    /* ignore */
-  }
-}
-
-function clearBoardsAndRecords() {
-  replaceAllBoards({
-    stacker: [],
-    patriot: [],
-    snake: [],
-    pop: [],
-    centroid: [],
-    asteroids: [],
-    simon: [],
-    crosswalk: [],
-    spotter: [],
-    stride: [],
-    pellets: [],
-  })
-  replaceAllRecords({})
-  clearTrophies()
+async function clearBoardsAndRecords() {
+  await db().delete(leaderboardScores)
+  await db().delete(recordScores)
+  await db().delete(trophyAwards)
+  await db()
+    .insert(trophyCursor)
+    .values({
+      id: 'default',
+      weeklyInitialized: false,
+      monthlyInitialized: false,
+    })
+    .onConflictDoUpdate({
+      target: trophyCursor.id,
+      set: { weeklyInitialized: false, monthlyInitialized: false },
+    })
 }
 
 /** Wipe sample boards when {@link SEED_REVISION} changes (or SEED_FORCE). */
-export function applySeedRevision(forceEnv = false): boolean {
+export async function applySeedRevision(forceEnv = false): Promise<boolean> {
   const force = forceEnv || process.env.SEED_FORCE === '1' || process.env.SEED_FORCE === 'true'
-  const current = readRev()
+  const current = await readRev()
   if (!force && current === SEED_REVISION) return false
 
-  clearBoardsAndRecords()
-  writeRev(SEED_REVISION)
+  await clearBoardsAndRecords()
+  await writeRev(SEED_REVISION)
   return true
 }

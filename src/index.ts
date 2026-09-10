@@ -15,6 +15,8 @@ import { groupsRouter } from './groupsRoutes.js'
 import { invitesRouter } from './invitesRoutes.js'
 import { tournamentsRouter } from './tournamentsRoutes.js'
 import { trophiesRouter } from './trophiesRoutes.js'
+import { checkDbHealth } from './db/client.js'
+import { runMigrations } from './db/migrate.js'
 
 /** Load .env into process.env when present (does not override existing vars). */
 function loadDotEnv() {
@@ -55,50 +57,63 @@ const PORT = Number(process.env.PORT) || 8787
 const HOST = process.env.HOST || '0.0.0.0'
 const CORS_ORIGIN = process.env.CORS_ORIGIN
 
-const app = express()
+async function main() {
+  await runMigrations()
 
-app.use(
-  cors({
-    // Reflect request origin in local/dev so phones on LAN work
-    origin: CORS_ORIGIN
-      ? CORS_ORIGIN.split(',').map((s) => s.trim())
-      : true,
-  }),
-)
-app.use(express.json({ limit: '32kb' }))
+  const app = express()
 
-app.get('/health', (_req, res) => {
-  res.json({ ok: true, games: ALLOWED_GAMES })
-})
+  app.use(
+    cors({
+      origin: CORS_ORIGIN
+        ? CORS_ORIGIN.split(',').map((s) => s.trim())
+        : true,
+    }),
+  )
+  app.use(express.json({ limit: '32kb' }))
 
-app.use('/auth', authRouter)
-app.use('/names', namesRouter)
-app.use('/leaderboards', leaderboardsRouter)
-app.use('/records', recordsRouter)
-app.use('/tournaments', tournamentsRouter)
-app.use('/groups', groupsRouter)
-app.use('/invites', invitesRouter)
-app.use('/trophies', trophiesRouter)
+  app.get('/health', async (_req, res) => {
+    const dbHealth = await checkDbHealth()
+    res.status(dbHealth.ok ? 200 : 503).json({
+      ok: dbHealth.ok,
+      games: ALLOWED_GAMES,
+      db: dbHealth.ok,
+      ...(dbHealth.error ? { error: dbHealth.error } : {}),
+    })
+  })
 
-const forceSeed = process.env.SEED_FORCE === '1' || process.env.SEED_FORCE === 'true'
-const sampleSeed =
-  process.env.SEED_SAMPLE === '1' || process.env.SEED_SAMPLE === 'true'
-if (applySeedRevision(forceSeed)) {
-  console.log('Cleared leaderboards + records (revision bump or SEED_FORCE)')
-} else if (sampleSeed) {
-  // Opt-in only — empty boards stay empty so prod can be tested without filler.
-  if (seedLeaderboards(false)) {
-    console.log('Seeded leaderboards with sample arcade scores')
+  app.use('/auth', authRouter)
+  app.use('/names', namesRouter)
+  app.use('/leaderboards', leaderboardsRouter)
+  app.use('/records', recordsRouter)
+  app.use('/tournaments', tournamentsRouter)
+  app.use('/groups', groupsRouter)
+  app.use('/invites', invitesRouter)
+  app.use('/trophies', trophiesRouter)
+
+  const forceSeed = process.env.SEED_FORCE === '1' || process.env.SEED_FORCE === 'true'
+  const sampleSeed =
+    process.env.SEED_SAMPLE === '1' || process.env.SEED_SAMPLE === 'true'
+  if (await applySeedRevision(forceSeed)) {
+    console.log('Cleared leaderboards + records (revision bump or SEED_FORCE)')
+  } else if (sampleSeed) {
+    if (await seedLeaderboards(false)) {
+      console.log('Seeded leaderboards with sample arcade scores')
+    }
+    if (await seedRecords(false)) {
+      console.log('Seeded record books with sample times')
+    }
   }
-  if (seedRecords(false)) {
-    console.log('Seeded record books with sample times')
-  }
+
+  app.use((_req, res) => {
+    res.status(404).json({ error: 'Not found' })
+  })
+
+  app.listen(PORT, HOST, () => {
+    console.log(`Skermix API listening on http://${HOST}:${PORT}`)
+  })
 }
 
-app.use((_req, res) => {
-  res.status(404).json({ error: 'Not found' })
-})
-
-app.listen(PORT, HOST, () => {
-  console.log(`Skermix API listening on http://${HOST}:${PORT}`)
+main().catch((err) => {
+  console.error(err)
+  process.exit(1)
 })

@@ -23,20 +23,21 @@ import {
 
 export const leaderboardsRouter = Router()
 
-leaderboardsRouter.get('/bests', (req, res) => {
+leaderboardsRouter.get('/bests', async (req, res) => {
   const name = String(req.query.name ?? '').trim()
   if (!name) {
     res.status(400).json({ error: 'name query param required' })
     return
   }
+  const cleaned = name.slice(0, 12).toUpperCase()
   res.json({
-    name: name.slice(0, 12).toUpperCase(),
-    bests: bestsForName(name),
-    avatarId: withAvatarId({ name: name.slice(0, 12).toUpperCase() }).avatarId,
+    name: cleaned,
+    bests: await bestsForName(name),
+    avatarId: (await withAvatarId({ name: cleaned })).avatarId,
   })
 })
 
-leaderboardsRouter.get('/rank', (req, res) => {
+leaderboardsRouter.get('/rank', async (req, res) => {
   const periodParam = req.query.period
   if (periodParam != null && periodParam !== '' && !isPeriod(periodParam)) {
     res.status(400).json({ error: 'Invalid period' })
@@ -46,7 +47,7 @@ leaderboardsRouter.get('/rank', (req, res) => {
 
   let scope
   try {
-    scope = boardAccess(req)?.names
+    scope = (await boardAccess(req))?.names
   } catch (err) {
     scopeError(err, res)
     return
@@ -54,12 +55,12 @@ leaderboardsRouter.get('/rank', (req, res) => {
 
   const name = typeof req.query.name === 'string' ? req.query.name.trim() : ''
   if (name) {
-    const data = rankForName(name, 2, period, Date.now(), scope)
+    const data = await rankForName(name, 2, period, Date.now(), scope)
     res.json({
       ...data,
       period,
-      avatarId: withAvatarId({ name: name.slice(0, 12).toUpperCase() }).avatarId,
-      nearby: withAvatarIds(data.nearby),
+      avatarId: (await withAvatarId({ name: name.slice(0, 12).toUpperCase() })).avatarId,
+      nearby: await withAvatarIds(data.nearby),
     })
     return
   }
@@ -67,15 +68,15 @@ leaderboardsRouter.get('/rank', (req, res) => {
   const limit = Number.isFinite(limitRaw)
     ? Math.min(100, Math.max(1, Math.floor(limitRaw)))
     : 50
-  const all = globalRanks(period, Date.now(), scope)
+  const all = await globalRanks(period, Date.now(), scope)
   res.json({
     period,
     totalPlayers: all.length,
-    entries: withAvatarIds(all.slice(0, limit)),
+    entries: await withAvatarIds(all.slice(0, limit)),
   })
 })
 
-leaderboardsRouter.get('/summary', (req, res) => {
+leaderboardsRouter.get('/summary', async (req, res) => {
   const limitRaw = Number(req.query.limit ?? 3)
   const limit = Number.isFinite(limitRaw)
     ? Math.min(10, Math.max(1, Math.floor(limitRaw)))
@@ -83,16 +84,18 @@ leaderboardsRouter.get('/summary', (req, res) => {
   const period = parsePeriod(req.query.period)
   let scope
   try {
-    scope = boardAccess(req)?.names
+    scope = (await boardAccess(req))?.names
   } catch (err) {
     scopeError(err, res)
     return
   }
-  const boards = boardsSummaryForPeriod(period, limit, Date.now(), scope)
-  const games = ALLOWED_GAMES.map((slug) => ({
-    slug,
-    entries: withAvatarIds(boards[slug]),
-  }))
+  const boards = await boardsSummaryForPeriod(period, limit, Date.now(), scope)
+  const games = await Promise.all(
+    ALLOWED_GAMES.map(async (slug) => ({
+      slug,
+      entries: await withAvatarIds(boards[slug]),
+    })),
+  )
   res.json({ limit, period, games })
 })
 
@@ -108,8 +111,8 @@ function parsePeriod(raw: unknown): Period {
   return 'all'
 }
 
-function boardAccess(req: import('express').Request) {
-  const account = accountFromRequest(req)
+async function boardAccess(req: import('express').Request) {
+  const account = await accountFromRequest(req)
   const playerName =
     typeof req.query.playerName === 'string' ? req.query.playerName : undefined
   const groupId = typeof req.query.group === 'string' ? req.query.group : undefined
@@ -125,7 +128,7 @@ function scopeError(err: unknown, res: import('express').Response) {
   })
 }
 
-leaderboardsRouter.get('/:game', (req, res) => {
+leaderboardsRouter.get('/:game', async (req, res) => {
   const game = resolveGameSlug(req.params.game)
   if (!game) {
     res.status(404).json({ error: 'Unknown game' })
@@ -135,25 +138,21 @@ leaderboardsRouter.get('/:game', (req, res) => {
   const name = typeof req.query.name === 'string' ? req.query.name : ''
   let scope
   try {
-    scope = boardAccess(req)?.names
+    scope = (await boardAccess(req))?.names
   } catch (err) {
     scopeError(err, res)
     return
   }
+  const you = name ? await bestForName(game, name, period, Date.now(), scope) : null
   res.json({
     game,
     period,
-    entries: withAvatarIds(getBoard(game, period, Date.now(), scope)),
-    you: name
-      ? (() => {
-          const you = bestForName(game, name, period, Date.now(), scope)
-          return you ? withAvatarId(you) : null
-        })()
-      : null,
+    entries: await withAvatarIds(await getBoard(game, period, Date.now(), scope)),
+    you: you ? await withAvatarId(you) : null,
   })
 })
 
-leaderboardsRouter.get('/:game/qualifies', (req, res) => {
+leaderboardsRouter.get('/:game/qualifies', async (req, res) => {
   const game = resolveGameSlug(req.params.game)
   if (!game) {
     res.status(404).json({ error: 'Unknown game' })
@@ -172,20 +171,20 @@ leaderboardsRouter.get('/:game/qualifies', (req, res) => {
   }
 
   if (isPeriod(periodParam)) {
-    const ok = qualifies(game, score, periodParam)
+    const ok = await qualifies(game, score, periodParam)
     res.json({
       game,
       score,
       period: periodParam,
       qualifies: ok,
-      rank: ok ? rankForScore(game, score, periodParam) : null,
-      ranks: ranksForScore(game, score),
+      rank: ok ? await rankForScore(game, score, periodParam) : null,
+      ranks: await ranksForScore(game, score),
     })
     return
   }
 
-  const ok = qualifiesAny(game, score)
-  const ranks = ranksForScore(game, score)
+  const ok = await qualifiesAny(game, score)
+  const ranks = await ranksForScore(game, score)
   res.json({
     game,
     score,
@@ -195,7 +194,7 @@ leaderboardsRouter.get('/:game/qualifies', (req, res) => {
   })
 })
 
-leaderboardsRouter.post('/:game', (req, res) => {
+leaderboardsRouter.post('/:game', async (req, res) => {
   const game = resolveGameSlug(req.params.game)
   if (!game) {
     res.status(404).json({ error: 'Unknown game' })
@@ -209,11 +208,11 @@ leaderboardsRouter.post('/:game', (req, res) => {
   }
 
   const { name, score, token, device } = parsed.data
-  const account = accountFromRequest(req)
+  const account = await accountFromRequest(req)
 
   let claim: { name: string; token: string }
   try {
-    claim = assertCanUseName(name, {
+    claim = await assertCanUseName(name, {
       claimToken: token,
       accountId: account?.id,
     })
@@ -227,16 +226,16 @@ leaderboardsRouter.post('/:game', (req, res) => {
     return
   }
 
-  const result = addScore(game, claim.name, score, device ?? 'desktop')
+  const result = await addScore(game, claim.name, score, device ?? 'desktop')
   res.status(201).json({
     game,
-    entry: withAvatarId(result.entry),
+    entry: await withAvatarId(result.entry),
     rank: result.rank,
     ranks: result.ranks,
     previousBestRanks: result.previousBestRanks,
     bestRanks: result.bestRanks,
     period: 'daily',
-    entries: withAvatarIds(result.board),
+    entries: await withAvatarIds(result.board),
     name: claim.name,
     token: claim.token,
   })

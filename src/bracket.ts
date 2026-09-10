@@ -149,6 +149,14 @@ export function lockBracket(t: Tournament, now: number): boolean {
     }
   }
   t.bracket = { lockedAt: now, matches }
+  // Event clock starts when the bracket is drawn, not when the lobby opened.
+  if (!t.rules?.unlimitedDuration) {
+    const windowMs = Math.max(0, t.endsAt - t.startsAt)
+    t.startsAt = now
+    if (windowMs > 0) t.endsAt = now + windowMs
+  } else {
+    t.startsAt = now
+  }
   applyByes(t)
   return true
 }

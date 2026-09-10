@@ -635,13 +635,19 @@ function syncBracketClock(t: Tournament, now: number): boolean {
 
 export function tournamentStatus(t: Tournament, now = Date.now()): TournamentStatus {
   const normalized = normalizeTournament(t)
-  if (now < normalized.startsAt) return 'upcoming'
   if (resolveKind(normalized) === 'bracket') {
+    // Lobby is open until the roster fills and the bracket is drawn.
+    if (!normalized.bracket?.lockedAt) {
+      return now > normalized.endsAt && !normalized.rules?.unlimitedDuration
+        ? 'ended'
+        : 'upcoming'
+    }
     if (bracketHasChampion(normalized)) return 'ended'
     if (normalized.rules?.unlimitedDuration) return 'active'
     if (now > normalized.endsAt) return 'ended'
     return 'active'
   }
+  if (now < normalized.startsAt) return 'upcoming'
   if (allPlayersFinishedAttempts(normalized)) return 'ended'
   if (normalized.rules?.unlimitedDuration) return 'active'
   if (now > normalized.endsAt) return 'ended'

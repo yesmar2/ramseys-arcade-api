@@ -1,10 +1,13 @@
-import { and, asc, desc, eq, sql } from 'drizzle-orm'
+import { and, desc, eq, sql } from 'drizzle-orm'
 import { db } from './db/client.js'
-import { recordScores } from './db/schema.js'
+import { leaderboardScores, recordScores } from './db/schema.js'
 import {
+  ALLOWED_GAMES,
+  boardDateKey,
   filterByPeriod,
   isAllowedGame,
   isDeviceType,
+  previousBoardDateKey,
   type DeviceType,
   type GameSlug,
   type LeaderboardEntry,
@@ -133,7 +136,59 @@ const STACKER_PERFECT_STREAK: RecordDef = {
   unit: 'count',
 }
 
+export const PLAY_DAYS_STREAK_ID = 'play-days-streak'
+export const THRESHOLD_STREAK_ID = 'threshold-streak'
+
+/** Minimum consecutive count before it lands on the record book. */
+const MIN_CROSS_RUN_STREAK = 2
+
+/**
+ * Score a run must meet (or beat) to keep a “strong scores in a row” streak.
+ * Spotter uses inverted time (higher board score = faster clear).
+ */
+export const SCORE_STREAK_THRESHOLDS: Record<GameSlug, number> = {
+  asteroids: 1000,
+  patriot: 1000,
+  snake: 50,
+  stride: 40,
+  stacker: 15,
+  centroid: 6000,
+  pop: 300,
+  simon: 10,
+  crosswalk: 800,
+  spotter: 955_000, // ≈ under 45s
+  pellets: 2000,
+}
+
+function thresholdStreakLabel(game: GameSlug, threshold: number): string {
+  if (game === 'spotter') return 'Sub-45s clears in a row'
+  return `Scores over ${threshold.toLocaleString()} in a row`
+}
+
+function buildCrossRunStreakRecords(): RecordDef[] {
+  const defs: RecordDef[] = []
+  for (const game of ALLOWED_GAMES) {
+    const threshold = SCORE_STREAK_THRESHOLDS[game]
+    defs.push({
+      id: PLAY_DAYS_STREAK_ID,
+      game,
+      label: 'Days played in a row',
+      direction: 'higher',
+      unit: 'count',
+    })
+    defs.push({
+      id: THRESHOLD_STREAK_ID,
+      game,
+      label: thresholdStreakLabel(game, threshold),
+      direction: 'higher',
+      unit: 'count',
+    })
+  }
+  return defs
+}
+
 const RECORD_DEFS: RecordDef[] = [
+  ...buildCrossRunStreakRecords(),
   ASTEROIDS_HIGHEST_COMBO,
   PATRIOT_DIRECT_STREAK,
   STRIDE_MOST_COINS,
@@ -468,6 +523,110 @@ export async function addRecord(
     board: await getRecordBoard(game, recordId, 'all'),
     totalEntries: next.length,
   }
+}
+
+export type CrossRunStreakHit = {
+  recordId: string
+  label: string
+  value: number
+  improved: boolean
+  rank: number | null
+  totalEntries: number
+}
+
+async function playerRunHistory(
+  game: GameSlug,
+  name: string,
+): Promise<{ score: number; at: number }[]> {
+  return db()
+    .select({
+      score: leaderboardScores.score,
+      at: leaderboardScores.at,
+    })
+    .from(leaderboardScores)
+    .where(and(eq(leaderboardScores.game, game), eq(leaderboardScores.name, name)))
+    .orderBy(desc(leaderboardScores.at))
+}
+
+/** Consecutive calendar days (BOARD_TZ) ending today that include at least one run. */
+export function computePlayDaysStreak(timestamps: number[], now = Date.now()): number {
+  if (!timestamps.length) return 0
+  const days = new Set(timestamps.map((at) => boardDateKey(at)))
+  let cursor = boardDateKey(now)
+  if (!days.has(cursor)) return 0
+  let streak = 0
+  while (days.has(cursor)) {
+    streak += 1
+    cursor = previousBoardDateKey(cursor)
+  }
+  return streak
+}
+
+/** Consecutive recent runs (newest first) at or above the game threshold. */
+export function computeThresholdStreak(
+  runs: { score: number; at: number }[],
+  threshold: number,
+): number {
+  let streak = 0
+  for (const run of runs) {
+    if (run.score >= threshold) streak += 1
+    else break
+  }
+  return streak
+}
+
+/**
+ * After a leaderboard score is saved, refresh cross-run streak record books.
+ * Only writes when the streak is at least {@link MIN_CROSS_RUN_STREAK}.
+ */
+export async function updateCrossRunStreakRecords(
+  game: GameSlug,
+  name: string,
+  _score: number,
+  device: DeviceType = 'desktop',
+  now = Date.now(),
+): Promise<CrossRunStreakHit[]> {
+  const cleaned = name.trim().slice(0, 12).toUpperCase() || 'PLAYER'
+  const history = await playerRunHistory(game, cleaned)
+  const hits: CrossRunStreakHit[] = []
+
+  const playDays = computePlayDaysStreak(
+    history.map((r) => r.at),
+    now,
+  )
+  if (playDays >= MIN_CROSS_RUN_STREAK) {
+    const def = getRecordDef(game, PLAY_DAYS_STREAK_ID)
+    if (def) {
+      const result = await addRecord(game, PLAY_DAYS_STREAK_ID, cleaned, playDays, device)
+      hits.push({
+        recordId: PLAY_DAYS_STREAK_ID,
+        label: def.label,
+        value: playDays,
+        improved: result.improved,
+        rank: result.rank,
+        totalEntries: result.totalEntries,
+      })
+    }
+  }
+
+  const threshold = SCORE_STREAK_THRESHOLDS[game]
+  const thresholdStreak = computeThresholdStreak(history, threshold)
+  if (thresholdStreak >= MIN_CROSS_RUN_STREAK) {
+    const def = getRecordDef(game, THRESHOLD_STREAK_ID)
+    if (def) {
+      const result = await addRecord(game, THRESHOLD_STREAK_ID, cleaned, thresholdStreak, device)
+      hits.push({
+        recordId: THRESHOLD_STREAK_ID,
+        label: def.label,
+        value: thresholdStreak,
+        improved: result.improved,
+        rank: result.rank,
+        totalEntries: result.totalEntries,
+      })
+    }
+  }
+
+  return hits
 }
 
 export async function renamePlayerAcrossRecords(

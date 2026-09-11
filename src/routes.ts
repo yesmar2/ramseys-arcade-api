@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { accountFromRequest } from './auth.js'
 import { resolveBoardScope } from './groups.js'
 import { assertCanUseName, withAvatarId, withAvatarIds } from './names.js'
+import { updateCrossRunStreakRecords } from './records.js'
 import {
   addScore,
   ALLOWED_GAMES,
@@ -231,6 +232,12 @@ leaderboardsRouter.post('/:game', async (req, res) => {
   }
 
   const result = await addScore(game, claim.name, score, device ?? 'desktop')
+  const streakRecords = await updateCrossRunStreakRecords(
+    game,
+    claim.name,
+    score,
+    device ?? 'desktop',
+  )
   res.status(201).json({
     game,
     entry: await withAvatarId(result.entry),
@@ -238,6 +245,7 @@ leaderboardsRouter.post('/:game', async (req, res) => {
     ranks: result.ranks,
     previousBestRanks: result.previousBestRanks,
     bestRanks: result.bestRanks,
+    streakRecords,
     period: 'daily',
     entries: await withAvatarIds(result.board),
     name: claim.name,

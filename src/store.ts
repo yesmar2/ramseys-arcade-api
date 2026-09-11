@@ -188,6 +188,21 @@ function keyOf(ms: number) {
   return dateKey(y, m, d)
 }
 
+/** Calendar day key (YYYYMMDD) in BOARD_TZ. */
+export function boardDateKey(ms: number) {
+  return keyOf(ms)
+}
+
+/** Previous calendar day key in BOARD_TZ (UTC date math on Y-M-D parts). */
+export function previousBoardDateKey(key: number) {
+  const y = Math.floor(key / 10_000)
+  const m = Math.floor((key % 10_000) / 100)
+  const d = key % 100
+  const dt = new Date(Date.UTC(y, m - 1, d))
+  dt.setUTCDate(dt.getUTCDate() - 1)
+  return dateKey(dt.getUTCFullYear(), dt.getUTCMonth() + 1, dt.getUTCDate())
+}
+
 /** Monday-start week key (YYYYMMDD of that Monday) in BOARD_TZ. */
 export function weekStartKey(ms: number) {
   const { y, m, d, weekday } = ymdInTz(ms)

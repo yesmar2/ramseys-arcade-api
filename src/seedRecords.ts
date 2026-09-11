@@ -2,6 +2,7 @@ import {
   ASTEROIDS_WAVE_MAX,
   isRecordsStoreEmpty,
   listRecordDefs,
+  PLAY_DAYS_STREAK_ID,
   replaceAllRecords,
   SNAKE_LENGTH_MILESTONE_MAX,
   SNAKE_LENGTH_MILESTONE_MIN,
@@ -9,10 +10,11 @@ import {
   STRIDE_ROW_MILESTONE_MAX,
   STRIDE_ROW_MILESTONE_MIN,
   STRIDE_ROW_MILESTONE_STEP,
+  THRESHOLD_STREAK_ID,
   type RecordEntry,
 } from './records.js'
 import { SEED_NAMES } from './seedBoards.js'
-import type { DeviceType, GameSlug } from './store.js'
+import { ALLOWED_GAMES, type DeviceType, type GameSlug } from './store.js'
 
 function mulberry32(seed: number) {
   let t = seed >>> 0
@@ -169,6 +171,31 @@ export function buildRecordsSeed(seed = 20260904) {
         p.device,
       ),
     )
+
+  for (const game of ALLOWED_GAMES) {
+    store[`${game}::${PLAY_DAYS_STREAK_ID}`] = players
+      .filter((p) => p.skill > 0.15 || rand() < 0.35)
+      .slice(0, 14)
+      .map((p) =>
+        entry(
+          p.name,
+          Math.max(2, Math.round(2 + p.skill * 12 + rand() * 4)),
+          stamp(Math.floor(rand() * 20), rand),
+          p.device!,
+        ),
+      )
+    store[`${game}::${THRESHOLD_STREAK_ID}`] = players
+      .filter((p) => p.skill > 0.18 || rand() < 0.3)
+      .slice(0, 12)
+      .map((p) =>
+        entry(
+          p.name,
+          Math.max(2, Math.round(2 + p.skill * 8 + rand() * 3)),
+          stamp(Math.floor(rand() * 25), rand),
+          p.device!,
+        ),
+      )
+  }
 
   for (let wave = 1; wave <= ASTEROIDS_WAVE_MAX; wave++) {
     const key = `asteroids::wave-time-${wave}`

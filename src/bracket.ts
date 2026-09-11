@@ -22,6 +22,8 @@ export type BracketMatch = {
   slot: number
   playerIds: [string | null, string | null]
   winnerId: string | null
+  /** When both sides are seated: deadline to finish attempts before auto-resolve. */
+  playEndsAt?: number | null
 }
 
 export type TournamentBracket = {
@@ -41,6 +43,7 @@ export type PublicBracketMatch = {
   round: number
   slot: number
   winnerId: string | null
+  playEndsAt: number | null
   players: [PublicBracketSide | null, PublicBracketSide | null]
 }
 
@@ -111,6 +114,28 @@ function applyByes(t: Tournament) {
   }
 }
 
+function roundPlayMs(t: Tournament): number {
+  const hours = t.rules?.roundPlayHours
+  if (hours == null || !(hours > 0)) return 0
+  return Math.floor(hours) * 3_600_000
+}
+
+/** Start the play clock on any fully seated open match that does not have one yet. */
+export function armMatchClocks(t: Tournament, now: number): boolean {
+  if (!t.bracket) return false
+  const windowMs = roundPlayMs(t)
+  if (windowMs <= 0) return false
+  let changed = false
+  for (const match of t.bracket.matches) {
+    if (match.winnerId) continue
+    if (!match.playerIds[0] || !match.playerIds[1]) continue
+    if (match.playEndsAt != null) continue
+    match.playEndsAt = now + windowMs
+    changed = true
+  }
+  return changed
+}
+
 export function lockBracket(t: Tournament, now: number): boolean {
   if (t.bracket?.lockedAt) return false
   const n = t.players.length
@@ -133,6 +158,7 @@ export function lockBracket(t: Tournament, now: number): boolean {
       slot,
       playerIds: [a, b],
       winnerId: null,
+      playEndsAt: null,
     })
   }
   const rounds = Math.log2(size)
@@ -145,19 +171,15 @@ export function lockBracket(t: Tournament, now: number): boolean {
         slot,
         playerIds: [null, null],
         winnerId: null,
+        playEndsAt: null,
       })
     }
   }
   t.bracket = { lockedAt: now, matches }
-  // Event clock starts when the bracket is drawn, not when the lobby opened.
-  if (!t.rules?.unlimitedDuration) {
-    const windowMs = Math.max(0, t.endsAt - t.startsAt)
-    t.startsAt = now
-    if (windowMs > 0) t.endsAt = now + windowMs
-  } else {
-    t.startsAt = now
-  }
+  // Bracket events have no overall clock — only per-match round timers.
+  t.startsAt = now
   applyByes(t)
+  armMatchClocks(t, now)
   return true
 }
 
@@ -231,6 +253,29 @@ function propagateWinner(t: Tournament, match: BracketMatch) {
   next.playerIds[side] = match.winnerId
 }
 
+export function resolveTimedOutMatches(t: Tournament, maxAttempts: number, now: number): boolean {
+  if (!t.bracket) return false
+  const ordered = [...t.bracket.matches].sort((a, b) => a.round - b.round || a.slot - b.slot)
+  let changed = false
+  for (const match of ordered) {
+    if (match.winnerId || !match.playEndsAt || now <= match.playEndsAt) continue
+    if (resolveMatchIfReady(t, match, maxAttempts, true)) changed = true
+  }
+  return changed
+}
+
+/** Soonest deadline among open, seated matches — for UI countdown. */
+export function earliestOpenMatchDeadline(t: Tournament): number | null {
+  if (!t.bracket) return null
+  let min: number | null = null
+  for (const match of t.bracket.matches) {
+    if (match.winnerId || !match.playerIds[0] || !match.playerIds[1]) continue
+    if (match.playEndsAt == null) continue
+    if (min == null || match.playEndsAt < min) min = match.playEndsAt
+  }
+  return min
+}
+
 export function resolveMatchIfReady(
   t: Tournament,
   match: BracketMatch,
@@ -298,6 +343,7 @@ export function publicBracket(t: Tournament): PublicBracket | null {
       round: m.round,
       slot: m.slot,
       winnerId: m.winnerId,
+      playEndsAt: m.playEndsAt ?? null,
       players: m.playerIds.map((id) => {
         if (!id) {
           const filled = m.playerIds.filter(Boolean).length

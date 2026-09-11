@@ -46,6 +46,7 @@ const createSchema = z.object({
   maxAttempts: z.number().int().min(0).max(99),
   maxPlayers: z.number().int().min(0).max(99),
   durationHours: z.number().int().min(0).max(168),
+  roundPlayHours: z.number().int().min(1).max(168).optional(),
   kind: z.enum(['scores', 'bracket']).optional(),
 })
 
@@ -98,6 +99,7 @@ tournamentsRouter.post('/', async (req, res) => {
       maxAttempts: parsed.data.maxAttempts,
       maxPlayers: parsed.data.maxPlayers,
       durationHours: parsed.data.durationHours,
+      roundPlayHours: parsed.data.roundPlayHours,
       kind: parsed.data.kind,
     }
     const tournament = await createTournament(input, {

@@ -2,7 +2,9 @@ import { eq, inArray } from 'drizzle-orm'
 import { db } from './db/client.js'
 import { tournaments as tournamentsTable } from './db/schema.js'
 import {
+  armMatchClocks,
   bracketHasChampion,
+  earliestOpenMatchDeadline,
   findOpenMatch,
   isBracketSize,
   matchAttempts,
@@ -11,6 +13,7 @@ import {
   publicBracket,
   resolveKind,
   resolveReadyMatches,
+  resolveTimedOutMatches,
   type TournamentBracket,
   type TournamentKind,
 } from './bracket.js'
@@ -40,6 +43,8 @@ export type TournamentRules = {
   maxPlayers?: number
   scoring?: TournamentScoring
   unlimitedDuration?: boolean
+  /** Bracket only: hours each open match may be played before it auto-resolves. */
+  roundPlayHours?: number
 }
 
 export type TournamentCreator = {
@@ -636,9 +641,15 @@ function detailAccessOpts(
 function syncBracketClock(t: Tournament, now: number): boolean {
   if (resolveKind(t) !== 'bracket' || !t.bracket) return false
   let changed = false
-  if (resolveReadyMatches(t, getMaxAttempts(t), false)) changed = true
-  const timedOut = !t.rules?.unlimitedDuration && now > t.endsAt
-  if (timedOut && resolveReadyMatches(t, getMaxAttempts(t), true)) changed = true
+  if (armMatchClocks(t, now)) changed = true
+  if (resolveReadyMatches(t, getMaxAttempts(t), false)) {
+    changed = true
+    if (armMatchClocks(t, now)) changed = true
+  }
+  if (resolveTimedOutMatches(t, getMaxAttempts(t), now)) {
+    changed = true
+    if (armMatchClocks(t, now)) changed = true
+  }
   if (maybeEndWhenBracketFinished(t, now)) changed = true
   return changed
 }
@@ -646,15 +657,9 @@ function syncBracketClock(t: Tournament, now: number): boolean {
 export function tournamentStatus(t: Tournament, now = Date.now()): TournamentStatus {
   const normalized = normalizeTournament(t)
   if (resolveKind(normalized) === 'bracket') {
-    // Lobby is open until the roster fills and the bracket is drawn.
-    if (!normalized.bracket?.lockedAt) {
-      return now > normalized.endsAt && !normalized.rules?.unlimitedDuration
-        ? 'ended'
-        : 'upcoming'
-    }
+    // Lobby stays open until the roster fills — no overall tournament timer.
+    if (!normalized.bracket?.lockedAt) return 'upcoming'
     if (bracketHasChampion(normalized)) return 'ended'
-    if (normalized.rules?.unlimitedDuration) return 'active'
-    if (now > normalized.endsAt) return 'ended'
     return 'active'
   }
   if (now < normalized.startsAt) return 'upcoming'
@@ -667,6 +672,8 @@ export function tournamentStatus(t: Tournament, now = Date.now()): TournamentSta
 function publicTournament(t: Tournament, now = Date.now()) {
   const normalized = normalizeTournament(t)
   const isPrivate = normalized.visibility === 'private'
+  const nextDeadlineAt =
+    resolveKind(normalized) === 'bracket' ? earliestOpenMatchDeadline(normalized) : null
   return {
     id: normalized.id,
     title: normalized.title,
@@ -685,6 +692,7 @@ function publicTournament(t: Tournament, now = Date.now()) {
     visibility: normalized.visibility ?? 'public',
     status: tournamentStatus(normalized, now),
     playerCount: normalized.players.length,
+    nextDeadlineAt,
   }
 }
 
@@ -858,11 +866,13 @@ export function getTournamentPlayerStatus(
     const bestRow = normalized.scores
       .filter((s) => s.playerId === player.id && s.matchId === open.id)
       .reduce((m, s) => Math.max(m, s.score), 0)
+    const withinRound =
+      open.playEndsAt == null || now <= open.playEndsAt
     return {
       attemptsUsed: used,
       maxAttempts: finiteMax,
       attemptsRemaining: remaining,
-      canPlay: active && remaining > 0,
+      canPlay: active && remaining > 0 && withinRound,
       best: bestRow > 0 ? bestRow : null,
     }
   }
@@ -939,7 +949,10 @@ export type CreateTournamentInput = {
   maxAttempts: number
   /** 0 = unlimited roster size */
   maxPlayers: number
+  /** Scores events: overall length. Bracket: ignored (use roundPlayHours). */
   durationHours: number
+  /** Bracket only: hours to play each open match. */
+  roundPlayHours?: number
   kind?: TournamentKind
 }
 
@@ -970,16 +983,30 @@ export async function createTournament(
   }
 
   const durationHours = Math.floor(input.durationHours)
-  const unlimitedDuration = durationHours <= 0
-  if (
-    !Number.isFinite(durationHours) ||
-    (!unlimitedDuration &&
-      (durationHours < MIN_COMMUNITY_DURATION_HOURS ||
-        durationHours > MAX_COMMUNITY_DURATION_HOURS))
-  ) {
-    throw Object.assign(new Error('Duration must be between 1 and 168 hours, or unlimited'), {
-      status: 400,
-    })
+  const roundPlayHours =
+    input.roundPlayHours != null ? Math.floor(input.roundPlayHours) : durationHours
+  if (kind === 'bracket') {
+    if (
+      !Number.isFinite(roundPlayHours) ||
+      roundPlayHours < MIN_COMMUNITY_DURATION_HOURS ||
+      roundPlayHours > MAX_COMMUNITY_DURATION_HOURS
+    ) {
+      throw Object.assign(new Error('Round time must be between 1 and 168 hours'), {
+        status: 400,
+      })
+    }
+  } else {
+    const unlimitedDuration = durationHours <= 0
+    if (
+      !Number.isFinite(durationHours) ||
+      (!unlimitedDuration &&
+        (durationHours < MIN_COMMUNITY_DURATION_HOURS ||
+          durationHours > MAX_COMMUNITY_DURATION_HOURS))
+    ) {
+      throw Object.assign(new Error('Duration must be between 1 and 168 hours, or unlimited'), {
+        status: 400,
+      })
+    }
   }
 
   const maxAttempts = Math.max(0, Math.min(99, Math.floor(input.maxAttempts)))
@@ -1008,6 +1035,7 @@ export async function createTournament(
   }
 
   const inviteCode = generateInviteCode()
+  const unlimitedDuration = kind === 'bracket' || durationHours <= 0
   const endsAt = unlimitedDuration ? now : now + durationHours * 3_600_000
   const blurb =
     input.blurb?.trim().slice(0, 280) ||
@@ -1021,6 +1049,7 @@ export async function createTournament(
     maxPlayers: maxPlayers > 0 ? maxPlayers : 0,
     scoring: 'best',
     ...(unlimitedDuration ? { unlimitedDuration: true } : {}),
+    ...(kind === 'bracket' ? { roundPlayHours } : {}),
   }
 
   const tournament: Tournament = {
@@ -1221,6 +1250,16 @@ export async function submitTournamentScore(
       throw Object.assign(new Error('It is not your match'), {
         status: 409,
         code: 'NOT_YOUR_MATCH',
+      })
+    }
+    if (openMatch.playEndsAt != null && now > openMatch.playEndsAt) {
+      resolveTimedOutMatches(t, maxAttempts, now)
+      armMatchClocks(t, now)
+      putTournament(store, t)
+      await writeStore(store)
+      throw Object.assign(new Error('Round time is up'), {
+        status: 409,
+        code: 'ROUND_EXPIRED',
       })
     }
   }

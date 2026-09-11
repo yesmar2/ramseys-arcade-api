@@ -27,14 +27,7 @@ function mulberry32(seed: number) {
 }
 
 const DEVICES: DeviceType[] = ['phone', 'tablet', 'desktop']
-const RECORD_GAMES: GameSlug[] = [
-  'asteroids',
-  'snake',
-  'patriot',
-  'stride',
-  'pop',
-  'stacker',
-]
+const RECORD_GAMES: GameSlug[] = [...ALLOWED_GAMES]
 
 function stamp(daysAgo: number, rand: () => number) {
   const hour = 9 + Math.floor(rand() * 12)

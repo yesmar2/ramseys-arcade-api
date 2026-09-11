@@ -174,16 +174,20 @@ tournamentsRouter.post('/:id/join', async (req, res) => {
   }
   try {
     const account = await accountFromRequest(req)
+    if (!account) {
+      res.status(401).json({ error: 'Sign in to join', code: 'AUTH_REQUIRED' })
+      return
+    }
     const claim = await assertCanUseName(parsed.data.name, {
       claimToken: parsed.data.token,
-      accountId: account?.id,
+      accountId: account.id,
     })
     const result = await joinTournament(
       req.params.id,
       claim.name,
       Date.now(),
       parsed.data.playerId,
-      { inviteCode: parsed.data.invite, accountId: account?.id },
+      { inviteCode: parsed.data.invite, accountId: account.id },
     )
     res.status(201).json({ ...result, name: claim.name, token: claim.token })
   } catch (err) {
@@ -199,9 +203,13 @@ tournamentsRouter.post('/:id/scores', async (req, res) => {
   }
   try {
     const account = await accountFromRequest(req)
+    if (!account) {
+      res.status(401).json({ error: 'Sign in to submit a score', code: 'AUTH_REQUIRED' })
+      return
+    }
     const claim = await assertCanUseName(parsed.data.name, {
       claimToken: parsed.data.token,
-      accountId: account?.id,
+      accountId: account.id,
     })
     const result = await submitTournamentScore(
       req.params.id,
@@ -209,7 +217,7 @@ tournamentsRouter.post('/:id/scores', async (req, res) => {
       parsed.data.game,
       parsed.data.score,
       Date.now(),
-      { inviteCode: parsed.data.invite, accountId: account?.id },
+      { inviteCode: parsed.data.invite, accountId: account.id },
     )
     res.status(201).json({ ...result, name: claim.name, token: claim.token })
   } catch (err) {

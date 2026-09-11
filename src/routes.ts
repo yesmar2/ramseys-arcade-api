@@ -209,12 +209,16 @@ leaderboardsRouter.post('/:game', async (req, res) => {
 
   const { name, score, token, device } = parsed.data
   const account = await accountFromRequest(req)
+  if (!account) {
+    res.status(401).json({ error: 'Sign in to save a score', code: 'AUTH_REQUIRED' })
+    return
+  }
 
   let claim: { name: string; token: string }
   try {
     claim = await assertCanUseName(name, {
       claimToken: token,
-      accountId: account?.id,
+      accountId: account.id,
     })
   } catch (err) {
     const status = (err as { status?: number }).status ?? 500

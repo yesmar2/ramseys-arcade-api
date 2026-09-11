@@ -173,11 +173,15 @@ export async function assertCanUseName(
   const { claimToken, accountId } = auth
 
   if (!existing) {
-    const next: NameClaim = { token: mintToken(), claimedAt: Date.now() }
-    if (accountId) {
-      next.accountId = accountId
-      await releaseAndMigrateAccountNames(accountId, cleaned)
+    if (!accountId) {
+      throw Object.assign(new Error('Sign in to claim a gamer tag'), {
+        status: 401,
+        code: 'AUTH_REQUIRED',
+      })
     }
+    const next: NameClaim = { token: mintToken(), claimedAt: Date.now() }
+    next.accountId = accountId
+    await releaseAndMigrateAccountNames(accountId, cleaned)
     await db().insert(nameClaims).values({
       name: cleaned,
       token: next.token,

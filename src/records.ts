@@ -1,13 +1,14 @@
-import { and, desc, eq, sql } from 'drizzle-orm'
+import { and, desc, eq, inArray, sql } from 'drizzle-orm'
 import { db } from './db/client.js'
 import { leaderboardScores, recordScores } from './db/schema.js'
 import {
   ALLOWED_GAMES,
   boardDateKey,
   filterByPeriod,
-  isAllowedGame,
   isDeviceType,
+  legacyGameSlugs,
   previousBoardDateKey,
+  resolveGameSlug,
   type DeviceType,
   type GameSlug,
   type LeaderboardEntry,
@@ -21,9 +22,9 @@ const ASTEROIDS_WAVE_MAX = 20
 const SNAKE_LENGTH_MILESTONE_MIN = 20
 const SNAKE_LENGTH_MILESTONE_MAX = 100
 const SNAKE_LENGTH_MILESTONE_STEP = 10
-const STRIDE_ROW_MILESTONE_MIN = 50
-const STRIDE_ROW_MILESTONE_MAX = 200
-const STRIDE_ROW_MILESTONE_STEP = 50
+const CROSSWALK_ROW_MILESTONE_MIN = 50
+const CROSSWALK_ROW_MILESTONE_MAX = 200
+const CROSSWALK_ROW_MILESTONE_STEP = 50
 
 export type RecordDirection = 'lower' | 'higher'
 
@@ -94,16 +95,16 @@ function buildSnakeFastestLengthRecords(): RecordDef[] {
   return defs
 }
 
-function buildStrideFastestRowRecords(): RecordDef[] {
+function buildCrosswalkFastestRowRecords(): RecordDef[] {
   const defs: RecordDef[] = []
   for (
-    let rows = STRIDE_ROW_MILESTONE_MIN;
-    rows <= STRIDE_ROW_MILESTONE_MAX;
-    rows += STRIDE_ROW_MILESTONE_STEP
+    let rows = CROSSWALK_ROW_MILESTONE_MIN;
+    rows <= CROSSWALK_ROW_MILESTONE_MAX;
+    rows += CROSSWALK_ROW_MILESTONE_STEP
   ) {
     defs.push({
       id: `fastest-row-${rows}`,
-      game: 'stride',
+      game: 'crosswalk',
       label: `Fastest to ${rows}`,
       direction: 'lower',
       unit: 'ms',
@@ -112,9 +113,9 @@ function buildStrideFastestRowRecords(): RecordDef[] {
   return defs
 }
 
-const STRIDE_MOST_COINS: RecordDef = {
+const CROSSWALK_MOST_COINS: RecordDef = {
   id: 'most-coins',
-  game: 'stride',
+  game: 'crosswalk',
   label: 'Most coins in a run',
   direction: 'higher',
   unit: 'count',
@@ -150,12 +151,11 @@ export const SCORE_STREAK_THRESHOLDS: Record<GameSlug, number> = {
   asteroids: 1000,
   patriot: 1000,
   snake: 50,
-  stride: 40,
+  crosswalk: 40,
   stacker: 15,
   centroid: 6000,
   pop: 300,
   simon: 10,
-  crosswalk: 800,
   spotter: 955_000, // ≈ under 45s
   pellets: 2000,
 }
@@ -191,12 +191,12 @@ const RECORD_DEFS: RecordDef[] = [
   ...buildCrossRunStreakRecords(),
   ASTEROIDS_HIGHEST_COMBO,
   PATRIOT_DIRECT_STREAK,
-  STRIDE_MOST_COINS,
+  CROSSWALK_MOST_COINS,
   POP_CENTER_STREAK,
   STACKER_PERFECT_STREAK,
   ...buildAsteroidsWaveRecords(),
   ...buildSnakeFastestLengthRecords(),
-  ...buildStrideFastestRowRecords(),
+  ...buildCrosswalkFastestRowRecords(),
 ]
 
 const DEFS_BY_KEY = new Map(
@@ -208,8 +208,9 @@ export function listRecordDefs(game: GameSlug): RecordDef[] {
 }
 
 export function getRecordDef(game: string, recordId: string): RecordDef | null {
-  if (!isAllowedGame(game)) return null
-  return DEFS_BY_KEY.get(`${game}::${recordId}`) ?? null
+  const resolved = resolveGameSlug(game)
+  if (!resolved) return null
+  return DEFS_BY_KEY.get(`${resolved}::${recordId}`) ?? null
 }
 
 export function isAsteroidsWaveTimeRecord(recordId: string): number | null {
@@ -235,15 +236,15 @@ export function isSnakeFastestLengthRecord(recordId: string): number | null {
   return length
 }
 
-export function isStrideFastestRowRecord(recordId: string): number | null {
+export function isCrosswalkFastestRowRecord(recordId: string): number | null {
   const match = /^fastest-row-(\d+)$/.exec(recordId)
   if (!match) return null
   const rows = Number(match[1])
   if (
     !Number.isInteger(rows) ||
-    rows < STRIDE_ROW_MILESTONE_MIN ||
-    rows > STRIDE_ROW_MILESTONE_MAX ||
-    rows % STRIDE_ROW_MILESTONE_STEP !== 0
+    rows < CROSSWALK_ROW_MILESTONE_MIN ||
+    rows > CROSSWALK_ROW_MILESTONE_MAX ||
+    rows % CROSSWALK_ROW_MILESTONE_STEP !== 0
   ) {
     return null
   }
@@ -340,10 +341,11 @@ function isBetter(
 }
 
 async function historyFor(game: GameSlug, recordId: string): Promise<RecordEntry[]> {
+  const games = [game, ...legacyGameSlugs(game)]
   const rows = await db()
     .select()
     .from(recordScores)
-    .where(and(eq(recordScores.game, game), eq(recordScores.recordId, recordId)))
+    .where(and(inArray(recordScores.game, games), eq(recordScores.recordId, recordId)))
   return rows.map(rowToEntry)
 }
 
@@ -652,7 +654,7 @@ export {
   SNAKE_LENGTH_MILESTONE_MIN,
   SNAKE_LENGTH_MILESTONE_MAX,
   SNAKE_LENGTH_MILESTONE_STEP,
-  STRIDE_ROW_MILESTONE_MIN,
-  STRIDE_ROW_MILESTONE_MAX,
-  STRIDE_ROW_MILESTONE_STEP,
+  CROSSWALK_ROW_MILESTONE_MIN,
+  CROSSWALK_ROW_MILESTONE_MAX,
+  CROSSWALK_ROW_MILESTONE_STEP,
 }

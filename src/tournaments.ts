@@ -11,6 +11,7 @@ import {
   matchAttempts,
   maybeEndWhenBracketFinished,
   maybeLockBracket,
+  previewBracket,
   publicBracket,
   resolveKind,
   resolveReadyMatches,
@@ -25,7 +26,7 @@ export type { TournamentKind } from './bracket.js'
 export type { PublicBracket, PublicBracketMatch, PublicBracketSide } from './bracket.js'
 
 /** Games eligible for rolling daily/weekly events (excludes unfinished / non-event titles). */
-const EVENT_GAMES = ALLOWED_GAMES.filter((g) => g !== 'crosswalk' && g !== 'spotter' && g !== 'stride')
+const EVENT_GAMES = ALLOWED_GAMES.filter((g) => g !== 'crosswalk' && g !== 'spotter')
 
 export type TournamentStatus = 'upcoming' | 'active' | 'ended'
 export type TournamentCadence = 'daily' | 'weekly'
@@ -154,7 +155,6 @@ const GAME_LABELS: Record<GameSlug, string> = {
   asteroids: 'Asteroids',
   simon: 'Simon',
   crosswalk: 'Crosswalk',
-  stride: 'Stride',
   spotter: 'Spotter',
   pellets: 'Pellets',
 }
@@ -944,7 +944,7 @@ export async function getTournamentDetail(
     players: t.players.map((p) => ({ id: p.id, name: p.name, joinedAt: p.joinedAt })),
     standings: await withAvatarIds(computeStandings(t)),
     placePoints: PLACE_POINTS,
-    bracket: publicBracket(t),
+    bracket: publicBracket(t) ?? previewBracket(t),
     playerStatus,
     // Hide invite once every seat is filled — no more entries to recruit.
     inviteCode: isHost && !rosterFull ? t.inviteCode ?? null : null,

@@ -7,9 +7,9 @@ import {
   SNAKE_LENGTH_MILESTONE_MAX,
   SNAKE_LENGTH_MILESTONE_MIN,
   SNAKE_LENGTH_MILESTONE_STEP,
-  STRIDE_ROW_MILESTONE_MAX,
-  STRIDE_ROW_MILESTONE_MIN,
-  STRIDE_ROW_MILESTONE_STEP,
+  CROSSWALK_ROW_MILESTONE_MAX,
+  CROSSWALK_ROW_MILESTONE_MIN,
+  CROSSWALK_ROW_MILESTONE_STEP,
   THRESHOLD_STREAK_ID,
   type RecordEntry,
 } from './records.js'
@@ -69,7 +69,7 @@ function lengthTimeMs(length: number, skill: number, rand: () => number) {
   return Math.max(6_500, Math.round(foods * secPerFood * 1000))
 }
 
-function strideRowTimeMs(rows: number, skill: number, rand: () => number) {
+function crosswalkRowTimeMs(rows: number, skill: number, rand: () => number) {
   const secPerRow = 0.95 - skill * 0.35 + rand() * 0.28
   return Math.max(8_000, Math.round(rows * secPerRow * 1000))
 }
@@ -129,7 +129,7 @@ export function buildRecordsSeed(seed = 20260904) {
       ),
     )
 
-  store['stride::most-coins'] = players
+  store['crosswalk::most-coins'] = players
     .filter((p) => p.skill > 0.08 || rand() < 0.45)
     .slice(0, 20)
     .map((p) =>
@@ -225,18 +225,18 @@ export function buildRecordsSeed(seed = 20260904) {
   }
 
   for (
-    let rows = STRIDE_ROW_MILESTONE_MIN;
-    rows <= STRIDE_ROW_MILESTONE_MAX;
-    rows += STRIDE_ROW_MILESTONE_STEP
+    let rows = CROSSWALK_ROW_MILESTONE_MIN;
+    rows <= CROSSWALK_ROW_MILESTONE_MAX;
+    rows += CROSSWALK_ROW_MILESTONE_STEP
   ) {
-    const key = `stride::fastest-row-${rows}`
-    const need = rows / STRIDE_ROW_MILESTONE_MAX
+    const key = `crosswalk::fastest-row-${rows}`
+    const need = rows / CROSSWALK_ROW_MILESTONE_MAX
     const pool = players.filter((p) => p.skill >= need * 0.28)
     const count = Math.max(5, Math.min(16, Math.round(12 - rows * 0.02 + rand() * 3)))
     store[key] = pool.slice(0, count).map((p) =>
       entry(
         p.name,
-        strideRowTimeMs(rows, p.skill, rand),
+        crosswalkRowTimeMs(rows, p.skill, rand),
         stamp(Math.floor(rand() * 30), rand),
         p.device,
       ),

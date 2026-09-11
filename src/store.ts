@@ -6,12 +6,11 @@ export const ALLOWED_GAMES = [
   'asteroids',
   'patriot',
   'snake',
-  'stride',
+  'crosswalk',
   'stacker',
   'centroid',
   'pop',
   'simon',
-  'crosswalk',
   'spotter',
   'pellets',
 ] as const
@@ -22,10 +21,18 @@ const GAME_SLUG_ALIASES: Record<string, string> = {
   'dead-center': 'centroid',
   whack: 'pop',
   'whack-a-mole': 'pop',
+  stride: 'crosswalk',
 }
 
 export function canonicalizeGameSlug(game: string): string {
   return GAME_SLUG_ALIASES[game] ?? game
+}
+
+/** Former slugs that now map to this canonical game (for reading old DB rows). */
+export function legacyGameSlugs(canonical: GameSlug): string[] {
+  return Object.entries(GAME_SLUG_ALIASES)
+    .filter(([, target]) => target === canonical)
+    .map(([alias]) => alias)
 }
 
 export const PERIODS = ['daily', 'weekly', 'monthly', 'all'] as const
@@ -65,7 +72,6 @@ function emptyStore(): Store {
     simon: [],
     crosswalk: [],
     spotter: [],
-    stride: [],
     pellets: [],
   }
 }
@@ -107,7 +113,6 @@ export async function replaceAllBoards(next: Store) {
     asteroids: Array.isArray(next.asteroids) ? next.asteroids : [],
     simon: Array.isArray(next.simon) ? next.simon : [],
     crosswalk: Array.isArray(next.crosswalk) ? next.crosswalk : [],
-    stride: Array.isArray(next.stride) ? next.stride : [],
     spotter: Array.isArray(next.spotter) ? next.spotter : [],
     pellets: Array.isArray(next.pellets) ? next.pellets : [],
   }

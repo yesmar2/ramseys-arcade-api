@@ -11,12 +11,14 @@ import { seedLeaderboards } from './seedBoards.js'
 import { seedRecords } from './seedRecords.js'
 import { ALLOWED_GAMES } from './store.js'
 import { applySeedRevision } from './seedRevision.js'
+import { friendsRouter } from './friendsRoutes.js'
 import { groupsRouter } from './groupsRoutes.js'
 import { invitesRouter } from './invitesRoutes.js'
 import { tournamentsRouter } from './tournamentsRoutes.js'
 import { trophiesRouter } from './trophiesRoutes.js'
 import { checkDbHealth } from './db/client.js'
 import { runMigrations } from './db/migrate.js'
+import { migrateStrideToCrosswalk } from './migrateStrideToCrosswalk.js'
 
 /** Load .env into process.env when present (does not override existing vars). */
 function loadDotEnv() {
@@ -59,6 +61,7 @@ const CORS_ORIGIN = process.env.CORS_ORIGIN
 
 async function main() {
   await runMigrations()
+  await migrateStrideToCrosswalk()
 
   const app = express()
 
@@ -88,6 +91,7 @@ async function main() {
   app.use('/tournaments', tournamentsRouter)
   app.use('/groups', groupsRouter)
   app.use('/invites', invitesRouter)
+  app.use('/friends', friendsRouter)
   app.use('/trophies', trophiesRouter)
 
   const forceSeed = process.env.SEED_FORCE === '1' || process.env.SEED_FORCE === 'true'

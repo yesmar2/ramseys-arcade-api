@@ -10,6 +10,7 @@ import {
 } from './groups.js'
 import {
   getTournament,
+  isTournamentRosterFull,
   joinTournament,
 } from './tournaments.js'
 
@@ -146,6 +147,20 @@ export function publicInvite(invite: DirectedInvite): PublicInvite {
   }
 }
 
+/** Drop pending directed invites once an event has no open seats. */
+export async function revokePendingTournamentInvites(targetId: string) {
+  await db()
+    .update(directedInvites)
+    .set({ status: 'revoked' })
+    .where(
+      and(
+        eq(directedInvites.status, 'pending'),
+        eq(directedInvites.kind, 'tournament'),
+        eq(directedInvites.targetId, targetId),
+      ),
+    )
+}
+
 async function recipientNames(opts: {
   playerName?: string
   accountId?: string
@@ -216,6 +231,9 @@ export async function createDirectedInvite(input: {
       fail('Directed invites are for private events', 400, 'NOT_PRIVATE')
     }
     if (!t.inviteCode) fail('This event has no invite code', 400, 'NO_INVITE')
+    if (isTournamentRosterFull(t)) {
+      fail('This event is full — invites are closed', 409, 'EVENT_FULL')
+    }
     if (t.players.some((p) => p.name === toName)) {
       fail(`${toName} is already in this event`, 409, 'ALREADY_MEMBER')
     }
@@ -270,6 +288,13 @@ export async function listPendingInvites(opts: {
   for (const row of rows.map(rowToInvite).sort((a, b) => b.createdAt - a.createdAt)) {
     if (row.status !== 'pending' || isExpired(row, now) || !names.has(row.toName)) continue
     if (await alreadyOnTarget(row.kind, row.targetId, row.toName)) continue
+    if (row.kind === 'tournament') {
+      const t = await getTournament(row.targetId)
+      if (!t || isTournamentRosterFull(t)) {
+        await revokePendingTournamentInvites(row.targetId)
+        continue
+      }
+    }
     out.push(publicInvite(row))
   }
   return out

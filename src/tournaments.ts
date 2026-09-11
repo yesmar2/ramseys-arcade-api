@@ -5,6 +5,7 @@ import {
   armMatchClocks,
   bracketHasChampion,
   earliestOpenMatchDeadline,
+  finalMatch,
   findOpenMatch,
   isBracketSize,
   matchAttempts,
@@ -350,6 +351,13 @@ export function getMaxPlayers(t: Tournament): number | null {
   const n = normalizeTournament(t).rules?.maxPlayers
   if (n == null || n <= 0) return null
   return n
+}
+
+/** True when a capped roster has no open seats (brackets lock at this point). */
+export function isTournamentRosterFull(t: Tournament): boolean {
+  const cap = getMaxPlayers(t)
+  if (cap == null) return false
+  return normalizeTournament(t).players.length >= cap
 }
 
 function playerFinishedAllGames(t: Tournament, playerId: string): boolean {
@@ -853,10 +861,11 @@ export function getTournamentPlayerStatus(
     }
     const open = findOpenMatch(normalized, player.id)
     if (!open) {
+      // No open match (won/lost/waiting) — leftover tries from a finished match don't matter.
       return {
         attemptsUsed: 0,
         maxAttempts: finiteMax,
-        attemptsRemaining: finiteMax,
+        attemptsRemaining: 0,
         canPlay: false,
         best: null,
       }
@@ -929,6 +938,7 @@ export async function getTournamentDetail(
     playerStatus = getTournamentPlayerStatus(t, opts.playerName, detailGame, now)
   }
   const isHost = Boolean(opts?.accountId && t.createdBy?.accountId === opts.accountId)
+  const rosterFull = isTournamentRosterFull(t)
   return {
     ...publicTournament(t, now),
     players: t.players.map((p) => ({ id: p.id, name: p.name, joinedAt: p.joinedAt })),
@@ -936,7 +946,8 @@ export async function getTournamentDetail(
     placePoints: PLACE_POINTS,
     bracket: publicBracket(t),
     playerStatus,
-    inviteCode: isHost ? t.inviteCode ?? null : null,
+    // Hide invite once every seat is filled — no more entries to recruit.
+    inviteCode: isHost && !rosterFull ? t.inviteCode ?? null : null,
     isHost,
   }
 }
@@ -1171,6 +1182,10 @@ export async function joinTournament(
   maybeLockBracket(t, now)
   putTournament(store, t)
   await writeStore(store)
+  if (isTournamentRosterFull(t)) {
+    const { revokePendingTournamentInvites } = await import('./invites.js')
+    await revokePendingTournamentInvites(t.id)
+  }
   return {
     tournament: (await getTournamentDetail(id, now, {
       ...detailAccessOpts(access),
@@ -1196,6 +1211,9 @@ export async function submitTournamentScore(
   attemptsUsed: number
   attemptsRemaining: number | null
   maxAttempts: number | null
+  youWonMatch: boolean
+  youWonTournament: boolean
+  matchOpponent: string | null
 }> {
   const store = await ensureStore()
   const raw = store.tournaments.find((x) => x.id === id)
@@ -1320,8 +1338,30 @@ export async function submitTournamentScore(
 
   const attemptsUsed = format === 'open' && resolveKind(t) !== 'bracket' ? used : used + 1
   const finiteMax = Number.isFinite(maxAttempts) ? maxAttempts : null
-  const attemptsRemaining =
+  let attemptsRemaining =
     finiteMax == null ? null : Math.max(0, finiteMax - attemptsUsed)
+
+  let youWonMatch = false
+  let youWonTournament = false
+  let matchOpponent: string | null = null
+  if (resolveKind(t) === 'bracket' && openMatch) {
+    const match = t.bracket?.matches.find((m) => m.id === openMatch.id)
+    if (match?.winnerId) {
+      // Match decided — unused attempts on this round no longer matter.
+      attemptsRemaining = 0
+      if (match.winnerId === player.id) youWonMatch = true
+      const oppId = match.playerIds.find((pid) => pid && pid !== player.id) ?? null
+      matchOpponent = oppId ? t.players.find((p) => p.id === oppId)?.name ?? null : null
+    }
+    if (bracketHasChampion(t)) {
+      const fin = finalMatch(t)
+      if (fin?.winnerId === player.id) {
+        youWonTournament = true
+        youWonMatch = true
+        attemptsRemaining = 0
+      }
+    }
+  }
 
   return {
     tournament: (await getTournamentDetail(id, now, {
@@ -1336,6 +1376,9 @@ export async function submitTournamentScore(
     attemptsUsed,
     attemptsRemaining,
     maxAttempts: finiteMax,
+    youWonMatch,
+    youWonTournament,
+    matchOpponent,
   }
 }
 

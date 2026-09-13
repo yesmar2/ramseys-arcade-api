@@ -57,7 +57,12 @@ export function isDevToolsEnabled() {
   return process.env.NODE_ENV !== 'production'
 }
 
-/** Hand out an existing (or new) claim token so a local client can act as that tag. */
+/**
+ * Hand out an existing tag's claim token so a local client can act as that
+ * tag for testing. Only ever borrows a tag that's already claimed by a real
+ * account — never mints a new, ownerless tag (every gamer tag must belong to
+ * a signed-in account).
+ */
 export async function assumeNameForDev(name: string): Promise<{ name: string; token: string }> {
   if (!isDevToolsEnabled()) {
     throw Object.assign(new Error('Impersonation is disabled'), {
@@ -70,18 +75,13 @@ export async function assumeNameForDev(name: string): Promise<{ name: string; to
     throw Object.assign(new Error('Name required'), { status: 400, code: 'NAME_REQUIRED' })
   }
   const existing = await getClaim(cleaned)
-  if (existing) {
-    return { name: cleaned, token: existing.token }
+  if (!existing || !existing.accountId) {
+    throw Object.assign(
+      new Error('That tag isn’t signed in anywhere yet — impersonation can only borrow an existing tag'),
+      { status: 404, code: 'NAME_UNCLAIMED' },
+    )
   }
-  const next: NameClaim = { token: mintToken(), claimedAt: Date.now() }
-  await db().insert(nameClaims).values({
-    name: cleaned,
-    token: next.token,
-    claimedAt: next.claimedAt,
-    accountId: null,
-    avatarId: null,
-  })
-  return { name: cleaned, token: next.token }
+  return { name: cleaned, token: existing.token }
 }
 
 export async function isNameAvailable(
@@ -229,15 +229,21 @@ export async function assertOwnsName(
       code: 'NAME_UNCLAIMED',
     })
   }
-  const tokenOk = Boolean(token && token === existing.token)
-  const accountOk = Boolean(accountId && existing.accountId === accountId)
-  if (!tokenOk && !accountOk) {
+  // Account-linked tags can only be controlled by that account — a leftover
+  // device claim token must not let another signed-in account rename them
+  // (that was rewriting group rosters when switching Google accounts).
+  if (existing.accountId) {
+    if (accountId && existing.accountId === accountId) return cleaned
     throw Object.assign(new Error('That name is already taken'), {
       status: 409,
       code: 'NAME_TAKEN',
     })
   }
-  return cleaned
+  if (token && token === existing.token) return cleaned
+  throw Object.assign(new Error('That name is already taken'), {
+    status: 409,
+    code: 'NAME_TAKEN',
+  })
 }
 
 /**
@@ -328,14 +334,19 @@ export async function linkNameToAccount(
   }
 
   const prev = previousName ? cleanPlayerName(previousName) : ''
-  // Guest tag → account rename: move scores before claims are shuffled.
+  // Only migrate when the previous tag already belongs to this account, or is
+  // still a guest claim on this device. Never migrate another account's tag
+  // just because a claim token was left in localStorage.
   if (prev && prev !== cleaned) {
     const prevClaim = await getClaim(prev)
-    const canMigrate =
-      (prevClaim && prevClaim.accountId === accountId) ||
-      (prevClaim && previousToken && previousToken === prevClaim.token) ||
-      (prevClaim && claimToken && claimToken === prevClaim.token)
-    if (canMigrate) {
+    const ownedByThisAccount = Boolean(prevClaim && prevClaim.accountId === accountId)
+    const guestOnDevice = Boolean(
+      prevClaim &&
+        !prevClaim.accountId &&
+        ((previousToken && previousToken === prevClaim.token) ||
+          (claimToken && claimToken === prevClaim.token)),
+    )
+    if (ownedByThisAccount || guestOnDevice) {
       try {
         const renamed = await renameGamerTag(prev, cleaned, {
           fromToken: previousToken ?? claimToken,

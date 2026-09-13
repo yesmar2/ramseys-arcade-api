@@ -53,6 +53,13 @@ export type PublicBracketSide = {
   attemptsUsed: number
 }
 
+/** Where an empty seat's occupant comes from, e.g. the loser of winners R2. */
+export type SlotFeed = {
+  from: 'winner' | 'loser'
+  bracket: BracketSide
+  round: number
+}
+
 export type PublicBracketMatch = {
   id: string
   round: number
@@ -61,7 +68,36 @@ export type PublicBracketMatch = {
   winnerId: string | null
   playEndsAt: number | null
   players: [PublicBracketSide | null, PublicBracketSide | null]
+  /** Per-seat source, so an unfilled seat can name what it is waiting on. */
+  from: [SlotFeed | null, SlotFeed | null]
 }
+
+/**
+ * Invert the draw's winnerTo/loserTo routing into "who feeds this seat".
+ * Single-elim matches carry no feeds, so their seats simply stay unlabelled.
+ */
+function slotFeeds(matches: BracketMatch[]): Map<string, [SlotFeed | null, SlotFeed | null]> {
+  const feeds = new Map<string, [SlotFeed | null, SlotFeed | null]>()
+  const seatsOf = (id: string) => {
+    const existing = feeds.get(id)
+    if (existing) return existing
+    const row: [SlotFeed | null, SlotFeed | null] = [null, null]
+    feeds.set(id, row)
+    return row
+  }
+  for (const m of matches) {
+    const source = (from: 'winner' | 'loser'): SlotFeed => ({
+      from,
+      bracket: matchSide(m),
+      round: m.round,
+    })
+    if (m.winnerTo) seatsOf(m.winnerTo.matchId)[m.winnerTo.side] = source('winner')
+    if (m.loserTo) seatsOf(m.loserTo.matchId)[m.loserTo.side] = source('loser')
+  }
+  return feeds
+}
+
+const NO_FEEDS: [SlotFeed | null, SlotFeed | null] = [null, null]
 
 export type PublicBracket = {
   lockedAt: number
@@ -608,7 +644,10 @@ export function previewBracket(t: Tournament): PublicBracket | null {
   if (elimination === 'double') {
     // Show the real double-elim shape, seated in join order.
     const byId = new Map(t.players.map((p) => [p.id, p]))
-    const matches = buildDoubleElim(t.players, size).map<PublicBracketMatch>((m) => ({
+    const built = buildDoubleElim(t.players, size)
+    // Feeds point at unprefixed ids, so resolve them before renaming for preview.
+    const feeds = slotFeeds(built)
+    const matches = built.map<PublicBracketMatch>((m) => ({
       id: `preview-${m.id}`,
       round: m.round,
       slot: m.slot,
@@ -616,6 +655,7 @@ export function previewBracket(t: Tournament): PublicBracket | null {
       winnerId: null,
       playEndsAt: null,
       players: [seatOf(byId.get(m.playerIds[0] ?? '')), seatOf(byId.get(m.playerIds[1] ?? ''))],
+      from: feeds.get(m.id) ?? NO_FEEDS,
     }))
     return { lockedAt: 0, elimination, matches }
   }
@@ -632,6 +672,7 @@ export function previewBracket(t: Tournament): PublicBracket | null {
       winnerId: null,
       playEndsAt: null,
       players: [seatOf(t.players[slot * 2]), seatOf(t.players[slot * 2 + 1])],
+      from: NO_FEEDS,
     })
   }
   for (let round = 2; round <= rounds; round++) {
@@ -645,6 +686,7 @@ export function previewBracket(t: Tournament): PublicBracket | null {
         winnerId: null,
         playEndsAt: null,
         players: [null, null],
+        from: NO_FEEDS,
       })
     }
   }
@@ -654,6 +696,7 @@ export function previewBracket(t: Tournament): PublicBracket | null {
 export function publicBracket(t: Tournament): PublicBracket | null {
   if (!t.bracket) return null
   const byId = new Map(t.players.map((p) => [p.id, p]))
+  const feeds = slotFeeds(t.bracket.matches)
   return {
     lockedAt: t.bracket.lockedAt,
     elimination: resolveElimination(t),
@@ -684,6 +727,7 @@ export function publicBracket(t: Tournament): PublicBracket | null {
           attemptsUsed: matchAttempts(t, id, m.id),
         }
       }) as [PublicBracketSide | null, PublicBracketSide | null],
+      from: feeds.get(m.id) ?? NO_FEEDS,
       })),
   }
 }

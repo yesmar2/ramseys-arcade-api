@@ -315,6 +315,12 @@ export function lockBracket(t: Tournament, now: number): boolean {
   if (resolveElimination(t) === 'double') {
     t.bracket = { lockedAt: now, matches: buildDoubleElim(field, size) }
     t.startsAt = now
+    // Same first-round walkovers the single-elim path applies. A double draw
+    // normally locks on a full power-of-two field and has none, but without
+    // this an under-full field leaves half-seated matches that nothing can
+    // ever resolve: the clock only arms on two seated players, and so does
+    // the winner check. The bracket would hang forever.
+    applyByes(t)
     settleUnfillableSlots(t)
     armMatchClocks(t, now)
     return true

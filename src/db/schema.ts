@@ -7,6 +7,7 @@ import {
   pgTable,
   primaryKey,
   text,
+  uniqueIndex,
 } from 'drizzle-orm/pg-core'
 
 /** Auth accounts. */
@@ -153,6 +154,41 @@ export const directedInvites = pgTable(
   (t) => [
     index('invites_to_status_idx').on(t.toName, t.status),
     index('invites_target_idx').on(t.kind, t.targetId, t.status),
+  ],
+)
+
+/** 1:1 friend request — pending until accepted (becomes a `friendships` row) or declined/revoked. */
+export const friendRequests = pgTable(
+  'friend_requests',
+  {
+    id: text('id').primaryKey(),
+    fromAccountId: text('from_account_id').notNull(),
+    fromName: text('from_name'),
+    toAccountId: text('to_account_id').notNull(),
+    toName: text('to_name').notNull(),
+    status: text('status').notNull(),
+    createdAt: bigint('created_at', { mode: 'number' }).notNull(),
+    expiresAt: bigint('expires_at', { mode: 'number' }).notNull(),
+  },
+  (t) => [
+    index('friend_requests_to_status_idx').on(t.toAccountId, t.status),
+    index('friend_requests_from_status_idx').on(t.fromAccountId, t.status),
+  ],
+)
+
+/** Accepted friendship. One row per pair — accountIdA/B kept in a canonical (sorted) order. */
+export const friendships = pgTable(
+  'friendships',
+  {
+    id: text('id').primaryKey(),
+    accountIdA: text('account_id_a').notNull(),
+    accountIdB: text('account_id_b').notNull(),
+    createdAt: bigint('created_at', { mode: 'number' }).notNull(),
+  },
+  (t) => [
+    uniqueIndex('friendships_pair_idx').on(t.accountIdA, t.accountIdB),
+    index('friendships_a_idx').on(t.accountIdA),
+    index('friendships_b_idx').on(t.accountIdB),
   ],
 )
 

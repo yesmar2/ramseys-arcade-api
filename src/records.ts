@@ -150,7 +150,7 @@ const MIN_CROSS_RUN_STREAK = 2
 export const SCORE_STREAK_THRESHOLDS: Record<GameSlug, number> = {
   asteroids: 1000,
   patriot: 1000,
-  snake: 200,
+  snake: 300,
   crosswalk: 40,
   stacker: 15,
   centroid: 6000,
@@ -366,7 +366,7 @@ export async function getRecordBoard(
   const def = getRecordDef(game, recordId)
   if (!def) return []
   const pool = filterByNames(filterByPeriod(await historyFor(game, recordId), period, now), scope)
-  return sortEntries(pool, def.direction).slice(0, MAX_BOARD)
+  return bestPerPlayer(sortEntries(pool, def.direction)).slice(0, MAX_BOARD)
 }
 
 export async function bestRecordForName(
@@ -381,9 +381,11 @@ export async function bestRecordForName(
   if (!def) return null
   const cleaned = name.trim().slice(0, 12).toUpperCase()
   if (!cleaned) return null
-  const pool = sortEntries(
-    filterByNames(filterByPeriod(await historyFor(game, recordId), period, now), scope),
-    def.direction,
+  const pool = bestPerPlayer(
+    sortEntries(
+      filterByNames(filterByPeriod(await historyFor(game, recordId), period, now), scope),
+      def.direction,
+    ),
   )
   const mine = pool.filter((e) => e.name === cleaned)
   if (!mine.length) return null
@@ -407,14 +409,23 @@ export async function listGameRecords(
   return { records }
 }
 
-function wouldQualifyForBoard(
-  entries: RecordEntry[],
-  value: number,
-  direction: RecordDirection,
-): boolean {
-  const sorted = sortEntries(entries, direction)
-  if (sorted.length < MAX_BOARD) return true
-  return isBetter(value, sorted[MAX_BOARD - 1].score, direction)
+/**
+ * Best entry per player, in board order.
+ *
+ * Every qualifying run writes its own row, so without this a player who set
+ * the same streak on three runs takes the whole podium with three copies of
+ * one result. Keeping only their best also means beating your own mark
+ * replaces it rather than sitting next to it.
+ */
+function bestPerPlayer(sorted: RecordEntry[]): RecordEntry[] {
+  const seen = new Set<string>()
+  const out: RecordEntry[] = []
+  for (const entry of sorted) {
+    if (seen.has(entry.name)) continue
+    seen.add(entry.name)
+    out.push(entry)
+  }
+  return out
 }
 
 export async function addRecord(
@@ -447,21 +458,16 @@ export async function addRecord(
     const best = sortEntries(filterByPeriod(mine, period, now), def.direction)[0]
     return !best || isBetter(value, best.score, def.direction)
   }
-  const qualifiesOnBoard = (period: Period) =>
-    wouldQualifyForBoard(
-      filterByPeriod(history, period, now),
-      value,
-      def.direction,
-    )
+  /*
+   * Only store a run that beats the player's own best in some period. The
+   * board-space check used to let anything in while a board had room, which
+   * is how one streak of two ended up on the podium three times over.
+   */
   const accept =
     improvesPeriod('all') ||
     improvesPeriod('daily') ||
     improvesPeriod('weekly') ||
-    improvesPeriod('monthly') ||
-    qualifiesOnBoard('all') ||
-    qualifiesOnBoard('daily') ||
-    qualifiesOnBoard('weekly') ||
-    qualifiesOnBoard('monthly')
+    improvesPeriod('monthly')
   if (!accept) {
     const board = await getRecordBoard(game, recordId, 'all')
     const you = await bestRecordForName(game, recordId, cleaned, 'all')
@@ -514,7 +520,7 @@ export async function addRecord(
   const next = await historyFor(game, recordId)
   const ranks: Partial<Record<Period, number>> = {}
   for (const period of ['daily', 'weekly', 'monthly', 'all'] as const) {
-    const pool = sortEntries(filterByPeriod(next, period), def.direction)
+    const pool = bestPerPlayer(sortEntries(filterByPeriod(next, period), def.direction))
     const index = pool.findIndex((e) => e.id === entry.id)
     if (index !== -1) ranks[period] = index + 1
   }

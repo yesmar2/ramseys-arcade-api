@@ -158,10 +158,12 @@ export const SCORE_STREAK_THRESHOLDS: Record<GameSlug, number> = {
   simon: 10,
   spotter: 955_000, // ≈ under 45s
   pellets: 2000,
+  findbug: 940_000, // ≈ a full five-scene run under 60s
 }
 
 function thresholdStreakLabel(game: GameSlug, threshold: number): string {
   if (game === 'spotter') return 'Sub-45s clears in a row'
+  if (game === 'findbug') return 'Sub-60s sweeps in a row'
   return `Scores over ${threshold.toLocaleString()} in a row`
 }
 

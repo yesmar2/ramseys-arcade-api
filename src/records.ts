@@ -137,6 +137,14 @@ const STACKER_PERFECT_STREAK: RecordDef = {
   unit: 'count',
 }
 
+const PELLETS_CRUMB_STREAK: RecordDef = {
+  id: 'crumb-streak',
+  game: 'pellets',
+  label: 'Crumbs in a row',
+  direction: 'higher',
+  unit: 'count',
+}
+
 export const PLAY_DAYS_STREAK_ID = 'play-days-streak'
 export const THRESHOLD_STREAK_ID = 'threshold-streak'
 
@@ -196,6 +204,7 @@ const RECORD_DEFS: RecordDef[] = [
   CROSSWALK_MOST_COINS,
   POP_CENTER_STREAK,
   STACKER_PERFECT_STREAK,
+  PELLETS_CRUMB_STREAK,
   ...buildAsteroidsWaveRecords(),
   ...buildSnakeFastestLengthRecords(),
   ...buildCrosswalkFastestRowRecords(),
@@ -659,6 +668,7 @@ export {
   ASTEROIDS_WAVE_MAX,
   ASTEROIDS_HIGHEST_COMBO,
   PATRIOT_DIRECT_STREAK,
+  PELLETS_CRUMB_STREAK,
   SNAKE_LENGTH_MILESTONE_MIN,
   SNAKE_LENGTH_MILESTONE_MAX,
   SNAKE_LENGTH_MILESTONE_STEP,

@@ -48,6 +48,7 @@ const createSchema = z.object({
   durationHours: z.number().int().min(0).max(168),
   roundPlayHours: z.number().int().min(1).max(168).optional(),
   kind: z.enum(['scores', 'bracket']).optional(),
+  elimination: z.enum(['single', 'double']).optional(),
 })
 
 function claimError(err: unknown, res: import('express').Response) {
@@ -100,6 +101,7 @@ tournamentsRouter.post('/', async (req, res) => {
       maxPlayers: parsed.data.maxPlayers,
       durationHours: parsed.data.durationHours,
       roundPlayHours: parsed.data.roundPlayHours,
+      elimination: parsed.data.elimination,
       kind: parsed.data.kind,
     }
     const tournament = await createTournament(input, {

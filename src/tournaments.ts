@@ -8,6 +8,7 @@ import {
   finalMatch,
   findOpenMatch,
   isBracketSize,
+  isDoubleElimSize,
   matchAttempts,
   maybeEndWhenBracketFinished,
   maybeLockBracket,
@@ -16,6 +17,7 @@ import {
   resolveKind,
   resolveReadyMatches,
   resolveTimedOutMatches,
+  type Elimination,
   type TournamentBracket,
   type TournamentKind,
 } from './bracket.js'
@@ -47,6 +49,8 @@ export type TournamentRules = {
   unlimitedDuration?: boolean
   /** Bracket only: hours each open match may be played before it auto-resolves. */
   roundPlayHours?: number
+  /** Bracket only: 'double' adds a losers bracket + grand final. Default single. */
+  elimination?: Elimination
 }
 
 export type TournamentCreator = {
@@ -157,6 +161,7 @@ const GAME_LABELS: Record<GameSlug, string> = {
   crosswalk: 'Crosswalk',
   spotter: 'Spotter',
   pellets: 'Pellets',
+  findbug: 'Find the Bug',
 }
 
 function ymdInTz(ms: number, timeZone = BOARD_TZ): Ymd {
@@ -725,7 +730,18 @@ export async function listTournaments(
       .filter((t) => normalizeTournament(t).players.some((p) => p.name === cleanedPlayer))
       .map((t) => publicTournament(t, now))
   } else {
-    list = list.filter((t) => !t.private)
+    // "All" is everything this viewer may see: public events, plus the private
+    // ones they host or already play in. Private events they have no claim to
+    // stay hidden.
+    list = store.tournaments
+      .filter((raw) => {
+        const t = normalizeTournament(raw)
+        if ((t.visibility ?? 'public') !== 'private') return true
+        if (accountId && t.createdBy?.accountId === accountId) return true
+        if (cleanedPlayer && t.players.some((p) => p.name === cleanedPlayer)) return true
+        return false
+      })
+      .map((t) => publicTournament(t, now))
   }
   return list.sort((a, b) => {
     const order = { active: 0, upcoming: 1, ended: 2 } as const
@@ -964,6 +980,8 @@ export type CreateTournamentInput = {
   durationHours: number
   /** Bracket only: hours to play each open match. */
   roundPlayHours?: number
+  /** Bracket only: 'double' adds a losers bracket. Default single. */
+  elimination?: Elimination
   kind?: TournamentKind
 }
 
@@ -981,10 +999,19 @@ export async function createTournament(
   }
 
   const kind: TournamentKind = input.kind === 'bracket' ? 'bracket' : 'scores'
+  const elimination: Elimination =
+    kind === 'bracket' && input.elimination === 'double' ? 'double' : 'single'
   const games = [...new Set(input.games)]
   if (kind === 'bracket') {
     if (games.length !== 1) {
       throw Object.assign(new Error('Bracket events use one game'), { status: 400 })
+    }
+    // A losers bracket with byes strands players, so require a full draw.
+    if (elimination === 'double' && !isDoubleElimSize(input.maxPlayers)) {
+      throw Object.assign(
+        new Error('Double elimination needs 2, 4, 8, 16, 32, or 64 players'),
+        { status: 400 },
+      )
     }
   } else if (games.length < 1 || games.length > MAX_PRIVATE_GAMES) {
     throw Object.assign(new Error('Pick 1–5 games'), { status: 400 })
@@ -1051,7 +1078,7 @@ export async function createTournament(
   const blurb =
     input.blurb?.trim().slice(0, 280) ||
     (kind === 'bracket'
-      ? `Single-elim bracket — higher score wins each match. ${gameLabel(games[0]!)}.`
+      ? `${elimination === 'double' ? 'Double' : 'Single'}-elim bracket — higher score wins each match. ${gameLabel(games[0]!)}.`
       : games.length > 1
         ? `Private event: ${games.map(gameLabel).join(', ')}. Place points across games — highest total wins.`
         : defaultCommunityBlurb(games, maxAttempts))
@@ -1060,7 +1087,7 @@ export async function createTournament(
     maxPlayers: maxPlayers > 0 ? maxPlayers : 0,
     scoring: 'best',
     ...(unlimitedDuration ? { unlimitedDuration: true } : {}),
-    ...(kind === 'bracket' ? { roundPlayHours } : {}),
+    ...(kind === 'bracket' ? { roundPlayHours, elimination } : {}),
   }
 
   const tournament: Tournament = {

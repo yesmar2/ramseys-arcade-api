@@ -16,6 +16,14 @@ export function bracketDrawSize(n: number): number {
   return 2 ** Math.ceil(Math.log2(capped))
 }
 
+export type Elimination = 'single' | 'double'
+
+/** Which half of a double-elim draw a match belongs to. Absent = winners. */
+export type BracketSide = 'wb' | 'lb' | 'gf'
+
+/** Where a result lands. Double-elim routing can't be derived from round+slot. */
+export type MatchFeed = { matchId: string; side: 0 | 1 }
+
 export type BracketMatch = {
   id: string
   round: number
@@ -24,6 +32,13 @@ export type BracketMatch = {
   winnerId: string | null
   /** When both sides are seated: deadline to finish attempts before auto-resolve. */
   playEndsAt?: number | null
+  /** Undefined on single-elim (and pre-existing) matches — treated as 'wb'. */
+  bracket?: BracketSide
+  /** Set only on double-elim matches; single-elim uses round arithmetic. */
+  winnerTo?: MatchFeed | null
+  loserTo?: MatchFeed | null
+  /** A grand-final reset that is no longer needed, or a slot nothing can fill. */
+  void?: boolean
 }
 
 export type TournamentBracket = {
@@ -42,6 +57,7 @@ export type PublicBracketMatch = {
   id: string
   round: number
   slot: number
+  bracket: BracketSide
   winnerId: string | null
   playEndsAt: number | null
   players: [PublicBracketSide | null, PublicBracketSide | null]
@@ -49,7 +65,21 @@ export type PublicBracketMatch = {
 
 export type PublicBracket = {
   lockedAt: number
+  elimination: Elimination
   matches: PublicBracketMatch[]
+}
+
+export function resolveElimination(t: Pick<Tournament, 'rules'>): Elimination {
+  return t.rules?.elimination === 'double' ? 'double' : 'single'
+}
+
+export function matchSide(m: Pick<BracketMatch, 'bracket'>): BracketSide {
+  return m.bracket ?? 'wb'
+}
+
+/** Double elim needs a full draw — byes in a losers bracket get ugly fast. */
+export function isDoubleElimSize(n: number): boolean {
+  return isBracketSize(n) && Number.isInteger(Math.log2(n))
 }
 
 export function resolveKind(t: Pick<Tournament, 'kind'>): TournamentKind {
@@ -136,6 +166,107 @@ export function armMatchClocks(t: Tournament, now: number): boolean {
   return changed
 }
 
+const wbId = (round: number, slot: number) => `wb-${round}-${slot}`
+const lbId = (round: number, slot: number) => `lb-${round}-${slot}`
+const GF_ID = 'gf-1-0'
+const GF_RESET_ID = 'gf-2-0'
+
+/** Losers-bracket match count for round `l` of a 2^n draw. */
+function lbRoundSize(n: number, l: number): number {
+  return 2 ** (n - 1 - Math.ceil(l / 2))
+}
+
+/**
+ * Build a full double-elimination draw.
+ *
+ * Winners rounds 1..n feed forward as usual; their losers drop into the
+ * losers bracket, which alternates "minor" rounds (LB survivors pair off) with
+ * "major" rounds (LB survivors meet the freshly-dropped WB losers). The LB
+ * champion meets the WB champion in the grand final, and because the WB
+ * champion has not lost yet, an LB win there forces a reset match.
+ */
+function buildDoubleElim(field: TournamentPlayer[], size: number): BracketMatch[] {
+  const n = Math.log2(size)
+  const lbRounds = Math.max(0, 2 * n - 2)
+  const matches: BracketMatch[] = []
+  const seeds = seededBracketOrder(size)
+  const count = field.length
+
+  const make = (
+    id: string,
+    bracket: BracketSide,
+    round: number,
+    slot: number,
+    playerIds: [string | null, string | null] = [null, null],
+  ): BracketMatch => ({
+    id,
+    round,
+    slot,
+    bracket,
+    playerIds,
+    winnerId: null,
+    playEndsAt: null,
+    winnerTo: null,
+    loserTo: null,
+  })
+
+  // --- winners bracket ---
+  for (let round = 1; round <= n; round++) {
+    for (let slot = 0; slot < 2 ** (n - round); slot++) {
+      const m = make(wbId(round, slot), 'wb', round, slot)
+      if (round === 1) {
+        const seedA = seeds[slot * 2]!
+        const seedB = seeds[slot * 2 + 1]!
+        m.playerIds = [
+          seedA <= count ? field[seedA - 1]!.id : null,
+          seedB <= count ? field[seedB - 1]!.id : null,
+        ]
+      }
+      m.winnerTo =
+        round === n
+          ? { matchId: GF_ID, side: 0 }
+          : { matchId: wbId(round + 1, Math.floor(slot / 2)), side: (slot % 2) as 0 | 1 }
+
+      if (lbRounds === 0) {
+        // Two-player draw: the only loser goes straight to the grand final.
+        m.loserTo = { matchId: GF_ID, side: 1 }
+      } else if (round === 1) {
+        m.loserTo = { matchId: lbId(1, Math.floor(slot / 2)), side: (slot % 2) as 0 | 1 }
+      } else {
+        m.loserTo = { matchId: lbId(2 * (round - 1), slot), side: 1 }
+      }
+      matches.push(m)
+    }
+  }
+
+  // --- losers bracket ---
+  for (let l = 1; l <= lbRounds; l++) {
+    for (let slot = 0; slot < lbRoundSize(n, l); slot++) {
+      const m = make(lbId(l, slot), 'lb', l, slot)
+      if (l === lbRounds) {
+        m.winnerTo = { matchId: GF_ID, side: 1 }
+      } else if (l % 2 === 1) {
+        // Minor round: survivors line up 1:1 against the next wave of WB losers.
+        m.winnerTo = { matchId: lbId(l + 1, slot), side: 0 }
+      } else {
+        // Major round: survivors pair off.
+        m.winnerTo = { matchId: lbId(l + 1, Math.floor(slot / 2)), side: (slot % 2) as 0 | 1 }
+      }
+      matches.push(m)
+    }
+  }
+
+  // --- grand final (+ reset) ---
+  const gf = make(GF_ID, 'gf', 1, 0)
+  // Only used when the LB champion wins game one; the WB champion keeps side 0.
+  gf.winnerTo = { matchId: GF_RESET_ID, side: 1 }
+  gf.loserTo = { matchId: GF_RESET_ID, side: 0 }
+  matches.push(gf)
+  matches.push(make(GF_RESET_ID, 'gf', 2, 0))
+
+  return matches
+}
+
 export function lockBracket(t: Tournament, now: number): boolean {
   if (t.bracket?.lockedAt) return false
   const n = t.players.length
@@ -144,6 +275,15 @@ export function lockBracket(t: Tournament, now: number): boolean {
   const field = [...t.players]
   shuffleInPlace(field, rng)
   const size = bracketDrawSize(n)
+
+  if (resolveElimination(t) === 'double') {
+    t.bracket = { lockedAt: now, matches: buildDoubleElim(field, size) }
+    t.startsAt = now
+    settleUnfillableSlots(t)
+    armMatchClocks(t, now)
+    return true
+  }
+
   const firstRound = size / 2
   const seeds = seededBracketOrder(size)
   const matches: BracketMatch[] = []
@@ -243,14 +383,101 @@ function pickWinner(t: Tournament, match: BracketMatch): string | null {
   return joinRank(t, a) <= joinRank(t, b) ? a : b
 }
 
+function seat(t: Tournament, feed: MatchFeed | null | undefined, playerId: string | null) {
+  if (!feed || !playerId || !t.bracket) return
+  const target = t.bracket.matches.find((m) => m.id === feed.matchId)
+  if (!target || target.void) return
+  target.playerIds[feed.side] = playerId
+}
+
+/**
+ * Move a decided match's players onward.
+ *
+ * Single-elim matches (including brackets locked before double-elim existed)
+ * carry no feed links and keep using round arithmetic.
+ */
 function propagateWinner(t: Tournament, match: BracketMatch) {
   if (!match.winnerId || !t.bracket) return
-  const next = t.bracket.matches.find(
-    (m) => m.round === match.round + 1 && m.slot === Math.floor(match.slot / 2),
-  )
-  if (!next) return
-  const side = match.slot % 2
-  next.playerIds[side] = match.winnerId
+
+  if (!match.winnerTo && !match.loserTo) {
+    const next = t.bracket.matches.find(
+      (m) => m.round === match.round + 1 && m.slot === Math.floor(match.slot / 2),
+    )
+    if (!next) return
+    next.playerIds[match.slot % 2] = match.winnerId
+    return
+  }
+
+  const [a, b] = match.playerIds
+  const loserId = match.winnerId === a ? b : a
+
+  if (matchSide(match) === 'gf' && match.round === 1) {
+    // The WB champion arrives unbeaten: losing game one only levels the series.
+    const wbChampWon = match.winnerId === a
+    const reset = t.bracket.matches.find((m) => m.id === GF_RESET_ID)
+    if (wbChampWon) {
+      if (reset) reset.void = true
+      return
+    }
+    seat(t, match.winnerTo, match.winnerId)
+    seat(t, match.loserTo, loserId)
+    return
+  }
+
+  seat(t, match.winnerTo, match.winnerId)
+  seat(t, match.loserTo, loserId)
+}
+
+/**
+ * Advance anyone left waiting on a seat that can never be filled.
+ *
+ * Only reachable if a double-elim draw locks without a full roster (creation
+ * enforces a power-of-two field, so this is a safety net): a winners-bracket
+ * bye produces no loser, which would otherwise strand its losers-bracket match.
+ */
+function settleUnfillableSlots(t: Tournament): boolean {
+  if (!t.bracket) return false
+  const byId = new Map(t.bracket.matches.map((m) => [m.id, m]))
+  let changed = false
+
+  for (let pass = 0; pass < t.bracket.matches.length + 2; pass++) {
+    // A slot is dead when its feeder is decided (or void) and sends nobody.
+    const dead = new Set<string>()
+    for (const m of t.bracket.matches) {
+      const occupants = m.playerIds.filter(Boolean).length
+      const settled = Boolean(m.winnerId) || m.void
+      if (!settled) continue
+      if (m.loserTo && (m.void || occupants < 2)) dead.add(`${m.loserTo.matchId}:${m.loserTo.side}`)
+      if (m.winnerTo && m.void) dead.add(`${m.winnerTo.matchId}:${m.winnerTo.side}`)
+    }
+
+    let moved = false
+    for (const m of t.bracket.matches) {
+      if (m.winnerId || m.void) continue
+      const [a, b] = m.playerIds
+      const aDead = !a && dead.has(`${m.id}:0`)
+      const bDead = !b && dead.has(`${m.id}:1`)
+      if (a && bDead) {
+        m.winnerId = a
+        propagateWinner(t, m)
+        moved = true
+      } else if (b && aDead) {
+        m.winnerId = b
+        propagateWinner(t, m)
+        moved = true
+      } else if (aDead && bDead) {
+        m.void = true
+        if (m.winnerTo) {
+          const next = byId.get(m.winnerTo.matchId)
+          if (next) moved = true
+        }
+        moved = true
+      }
+    }
+    if (!moved) break
+    changed = true
+  }
+  return changed
 }
 
 export function resolveTimedOutMatches(t: Tournament, maxAttempts: number, now: number): boolean {
@@ -302,25 +529,54 @@ export function resolveMatchIfReady(
   if (!winner) return false
   match.winnerId = winner
   propagateWinner(t, match)
+  settleUnfillableSlots(t)
   return true
+}
+
+/** Cascade order: winners, then losers, then the grand final. */
+const SIDE_ORDER: Record<BracketSide, number> = { wb: 0, lb: 1, gf: 2 }
+
+function orderedMatches(t: Tournament): BracketMatch[] {
+  return [...(t.bracket?.matches ?? [])].sort(
+    (a, b) =>
+      SIDE_ORDER[matchSide(a)] - SIDE_ORDER[matchSide(b)] ||
+      a.round - b.round ||
+      a.slot - b.slot,
+  )
 }
 
 export function finalMatch(t: Tournament): BracketMatch | undefined {
   const matches = t.bracket?.matches
   if (!matches?.length) return undefined
+
+  if (resolveElimination(t) === 'double') {
+    const reset = matches.find((m) => m.id === GF_RESET_ID)
+    // The reset only counts once it is actually in play.
+    if (reset && !reset.void && reset.playerIds[0] && reset.playerIds[1]) return reset
+    return matches.find((m) => m.id === GF_ID)
+  }
+
   const maxRound = Math.max(...matches.map((m) => m.round))
   return matches.find((m) => m.round === maxRound)
 }
 
 export function bracketHasChampion(t: Tournament): boolean {
-  return Boolean(finalMatch(t)?.winnerId)
+  if (resolveElimination(t) !== 'double') {
+    return Boolean(finalMatch(t)?.winnerId)
+  }
+  const matches = t.bracket?.matches
+  if (!matches?.length) return false
+  const gf = matches.find((m) => m.id === GF_ID)
+  if (!gf?.winnerId) return false
+  // WB champion winning game one ends it; otherwise the reset decides.
+  if (gf.winnerId === gf.playerIds[0]) return true
+  const reset = matches.find((m) => m.id === GF_RESET_ID)
+  return Boolean(reset?.winnerId)
 }
 
 export function resolveReadyMatches(t: Tournament, maxAttempts: number, force = false): boolean {
-  if (!t.bracket) return false
-  const ordered = [...t.bracket.matches].sort((a, b) => a.round - b.round || a.slot - b.slot)
   let changed = false
-  for (const match of ordered) {
+  for (const match of orderedMatches(t)) {
     if (resolveMatchIfReady(t, match, maxAttempts, force)) changed = true
   }
   return changed
@@ -333,21 +589,88 @@ export function maybeEndWhenBracketFinished(t: Tournament, now: number): boolean
   return true
 }
 
+/**
+ * Cosmetic bracket shape for a bracket-kind event that hasn't locked yet —
+ * shows the full round structure with players seated in join order (not the
+ * real seeded draw) so the shape is visible while the roster fills. Replaced
+ * outright by the real, shuffled bracket once `lockBracket` runs.
+ */
+export function previewBracket(t: Tournament): PublicBracket | null {
+  if (resolveKind(t) !== 'bracket' || t.bracket?.lockedAt) return null
+  const cap = t.rules?.maxPlayers ?? 0
+  const size = isBracketSize(cap)
+    ? bracketDrawSize(cap)
+    : bracketDrawSize(Math.max(BRACKET_PLAYERS_MIN, t.players.length))
+  const elimination = resolveElimination(t)
+  const seatOf = (p: TournamentPlayer | null | undefined): PublicBracketSide | null =>
+    p ? { id: p.id, name: p.name, score: null, attemptsUsed: 0 } : null
+
+  if (elimination === 'double') {
+    // Show the real double-elim shape, seated in join order.
+    const byId = new Map(t.players.map((p) => [p.id, p]))
+    const matches = buildDoubleElim(t.players, size).map<PublicBracketMatch>((m) => ({
+      id: `preview-${m.id}`,
+      round: m.round,
+      slot: m.slot,
+      bracket: matchSide(m),
+      winnerId: null,
+      playEndsAt: null,
+      players: [seatOf(byId.get(m.playerIds[0] ?? '')), seatOf(byId.get(m.playerIds[1] ?? ''))],
+    }))
+    return { lockedAt: 0, elimination, matches }
+  }
+
+  const firstRound = size / 2
+  const rounds = Math.log2(size)
+  const matches: PublicBracketMatch[] = []
+  for (let slot = 0; slot < firstRound; slot++) {
+    matches.push({
+      id: `preview-1-${slot}`,
+      round: 1,
+      slot,
+      bracket: 'wb',
+      winnerId: null,
+      playEndsAt: null,
+      players: [seatOf(t.players[slot * 2]), seatOf(t.players[slot * 2 + 1])],
+    })
+  }
+  for (let round = 2; round <= rounds; round++) {
+    const count = size / 2 ** round
+    for (let slot = 0; slot < count; slot++) {
+      matches.push({
+        id: `preview-${round}-${slot}`,
+        round,
+        slot,
+        bracket: 'wb',
+        winnerId: null,
+        playEndsAt: null,
+        players: [null, null],
+      })
+    }
+  }
+  return { lockedAt: 0, elimination, matches }
+}
+
 export function publicBracket(t: Tournament): PublicBracket | null {
   if (!t.bracket) return null
   const byId = new Map(t.players.map((p) => [p.id, p]))
   return {
     lockedAt: t.bracket.lockedAt,
-    matches: t.bracket.matches.map((m) => ({
+    elimination: resolveElimination(t),
+    // A voided grand-final reset never happened — don't show an empty card.
+    matches: t.bracket.matches
+      .filter((m) => !m.void)
+      .map((m) => ({
       id: m.id,
       round: m.round,
       slot: m.slot,
+      bracket: matchSide(m),
       winnerId: m.winnerId,
       playEndsAt: m.playEndsAt ?? null,
       players: m.playerIds.map((id) => {
         if (!id) {
           const filled = m.playerIds.filter(Boolean).length
-          if (m.round === 1 && filled === 1 && m.winnerId) {
+          if (m.round === 1 && matchSide(m) !== 'gf' && filled === 1 && m.winnerId) {
             return { id: '', name: 'BYE', score: null, attemptsUsed: 0 }
           }
           return null
@@ -361,7 +684,7 @@ export function publicBracket(t: Tournament): PublicBracket | null {
           attemptsUsed: matchAttempts(t, id, m.id),
         }
       }) as [PublicBracketSide | null, PublicBracketSide | null],
-    })),
+      })),
   }
 }
 

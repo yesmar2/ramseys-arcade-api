@@ -390,7 +390,7 @@ export function matchAttempts(t: Tournament, playerId: string, matchId: string):
   return t.scores.filter((s) => s.playerId === playerId && s.matchId === matchId).length
 }
 
-function bestInMatch(
+export function bestInMatch(
   t: Tournament,
   playerId: string,
   matchId: string,

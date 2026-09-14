@@ -5,6 +5,7 @@ import {
   armMatchClocks,
   bracketHasChampion,
   earliestOpenMatchDeadline,
+  bestInMatch,
   finalMatch,
   playerNameFor,
   findOpenMatch,
@@ -736,6 +737,48 @@ export function tournamentWinner(t: Tournament, now = Date.now()): string | null
   return top.name
 }
 
+export type PodiumEntry = {
+  place: number
+  name: string
+  /** Total place points; the number that decides a multi-game event. */
+  points: number
+  /** Best raw score, for a single-game event where points say nothing. */
+  score: number | null
+}
+
+/**
+ * Top of the standings, for the events list.
+ *
+ * A bracket is decided by who beat whom, never by score: ordering its players
+ * by points puts someone knocked out in round two above the runner-up. So a
+ * finished draw reports its final — winner then loser — and a running one
+ * reports nothing, because until it is over there is no standing to give.
+ */
+function publicPodium(t: Tournament, now: number): PodiumEntry[] {
+  if (resolveKind(t) === 'bracket') {
+    if (tournamentStatus(t, now) !== 'ended') return []
+    const fin = finalMatch(t)
+    if (!fin?.winnerId) return []
+    const runnerUp = fin.playerIds.find((id) => id && id !== fin.winnerId) ?? null
+    const seat = (id: string, place: number): PodiumEntry => ({
+      place,
+      name: playerNameFor(t, id),
+      points: 0,
+      score: bestInMatch(t, id, fin.id)?.score ?? null,
+    })
+    return runnerUp ? [seat(fin.winnerId, 1), seat(runnerUp, 2)] : [seat(fin.winnerId, 1)]
+  }
+  return computeStandings(t)
+    .filter((row) => row.gamesPlayed > 0)
+    .slice(0, 3)
+    .map((row, i) => ({
+      place: i + 1,
+      name: row.name,
+      points: row.totalPoints,
+      score: t.games.length === 1 ? (row.byGame[t.games[0]!]?.score ?? null) : null,
+    }))
+}
+
 function publicTournament(t: Tournament, now = Date.now()) {
   const normalized = normalizeTournament(t)
   const isPrivate = normalized.visibility === 'private'
@@ -761,6 +804,7 @@ function publicTournament(t: Tournament, now = Date.now()) {
     playerCount: normalized.players.length,
     nextDeadlineAt,
     winner: tournamentWinner(normalized, now),
+    podium: publicPodium(normalized, now),
   }
 }
 
@@ -845,6 +889,19 @@ export async function listTournaments(
           .map((t) => t.id)
       : [],
   )
+  if (cleanedPlayer) {
+    const byId = new Map(store.tournaments.map((t) => [t.id, t]))
+    list = list.map((row) => {
+      const raw = byId.get(row.id)
+      if (!raw) return row
+      const t = normalizeTournament(raw)
+      // Same reason as the podium: a bracket has no score-ranked standing.
+      if (resolveKind(t) === 'bracket') return row
+      const standings = computeStandings(t)
+      const idx = standings.findIndex((r) => r.name === cleanedPlayer && r.gamesPlayed > 0)
+      return idx === -1 ? row : { ...row, yourPlace: idx + 1, yourPoints: standings[idx]!.totalPoints }
+    })
+  }
   return list.sort((a, b) => {
     const mine = (t: (typeof list)[number]) => (joinedIds.has(t.id) ? 0 : 1)
     const mineDiff = mine(a) - mine(b)

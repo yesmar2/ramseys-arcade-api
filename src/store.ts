@@ -14,6 +14,7 @@ export const ALLOWED_GAMES = [
   'spotter',
   'pellets',
   'findbug',
+  'crumbtrail',
 ] as const
 export type GameSlug = (typeof ALLOWED_GAMES)[number]
 
@@ -75,6 +76,7 @@ function emptyStore(): Store {
     spotter: [],
     pellets: [],
     findbug: [],
+    crumbtrail: [],
   }
 }
 
@@ -118,6 +120,7 @@ export async function replaceAllBoards(next: Store) {
     spotter: Array.isArray(next.spotter) ? next.spotter : [],
     pellets: Array.isArray(next.pellets) ? next.pellets : [],
     findbug: Array.isArray(next.findbug) ? next.findbug : [],
+    crumbtrail: Array.isArray(next.crumbtrail) ? next.crumbtrail : [],
   }
   await db().transaction(async (tx) => {
     await tx.delete(leaderboardScores)

@@ -162,6 +162,7 @@ const GAME_LABELS: Record<GameSlug, string> = {
   spotter: 'Spotter',
   pellets: 'Pellets',
   findbug: 'Find the Bug',
+  crumbtrail: 'Crumbtrail',
 }
 
 function ymdInTz(ms: number, timeZone = BOARD_TZ): Ymd {

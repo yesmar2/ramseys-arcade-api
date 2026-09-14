@@ -55,6 +55,7 @@ const GAME_BANDS: Record<GameSlug, ScoreProfile> = {
   spotter: { min: 940_000, max: 999_500, step: 1000 },
   pellets: { min: 120, max: 18600, step: 10 },
   findbug: { min: 850_000, max: 975_000, step: 500 },
+  crumbtrail: { min: 150, max: 21400, step: 10 },
 }
 
 function lerp(a: number, b: number, t: number) {
@@ -150,6 +151,7 @@ export function buildSeed(seed = 20260904) {
     spotter: [],
     pellets: [],
     findbug: [],
+    crumbtrail: [],
   }
 
   NAMES.forEach((name, i) => {

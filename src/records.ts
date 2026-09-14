@@ -145,6 +145,22 @@ const PELLETS_CRUMB_STREAK: RecordDef = {
   unit: 'count',
 }
 
+const CRUMBTRAIL_CRUMB_STREAK: RecordDef = {
+  id: 'crumb-streak',
+  game: 'crumbtrail',
+  label: 'Crumbs in a row',
+  direction: 'higher',
+  unit: 'count',
+}
+
+const CRUMBTRAIL_ROWS: RecordDef = {
+  id: 'most-rows',
+  game: 'crumbtrail',
+  label: 'Rows climbed',
+  direction: 'higher',
+  unit: 'count',
+}
+
 export const PLAY_DAYS_STREAK_ID = 'play-days-streak'
 export const THRESHOLD_STREAK_ID = 'threshold-streak'
 
@@ -206,6 +222,8 @@ const RECORD_DEFS: RecordDef[] = [
   POP_CENTER_STREAK,
   STACKER_PERFECT_STREAK,
   PELLETS_CRUMB_STREAK,
+  CRUMBTRAIL_ROWS,
+  CRUMBTRAIL_CRUMB_STREAK,
   ...buildAsteroidsWaveRecords(),
   ...buildSnakeFastestLengthRecords(),
   ...buildCrosswalkFastestRowRecords(),
@@ -670,6 +688,8 @@ export {
   ASTEROIDS_HIGHEST_COMBO,
   PATRIOT_DIRECT_STREAK,
   PELLETS_CRUMB_STREAK,
+  CRUMBTRAIL_ROWS,
+  CRUMBTRAIL_CRUMB_STREAK,
   SNAKE_LENGTH_MILESTONE_MIN,
   SNAKE_LENGTH_MILESTONE_MAX,
   SNAKE_LENGTH_MILESTONE_STEP,

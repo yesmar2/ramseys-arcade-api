@@ -6,6 +6,7 @@ import {
   bracketHasChampion,
   earliestOpenMatchDeadline,
   finalMatch,
+  playerNameFor,
   findOpenMatch,
   isBracketSize,
   isDoubleElimSize,
@@ -22,6 +23,7 @@ import {
   type TournamentKind,
 } from './bracket.js'
 import { withAvatarIds } from './names.js'
+import { awardEventWin } from './trophies.js'
 import { ALLOWED_GAMES, BOARD_TZ, canonicalizeGameSlug, isAllowedGame, resolveGameSlug, type GameSlug } from './store.js'
 
 export type { TournamentKind } from './bracket.js'
@@ -715,6 +717,25 @@ export function tournamentStatus(t: Tournament, now = Date.now()): TournamentSta
   return 'active'
 }
 
+/**
+ * Who won, once there is an answer.
+ *
+ * A bracket is decided by its grand final — not by the highest round number,
+ * which in a double draw is the losers final. A scores event is decided by the
+ * standings, which are already ordered.
+ */
+export function tournamentWinner(t: Tournament, now = Date.now()): string | null {
+  const normalized = normalizeTournament(t)
+  if (tournamentStatus(normalized, now) !== 'ended') return null
+  if (resolveKind(normalized) === 'bracket') {
+    const fin = finalMatch(normalized)
+    return fin?.winnerId ? playerNameFor(normalized, fin.winnerId) : null
+  }
+  const [top] = computeStandings(normalized)
+  if (!top || top.gamesPlayed === 0) return null
+  return top.name
+}
+
 function publicTournament(t: Tournament, now = Date.now()) {
   const normalized = normalizeTournament(t)
   const isPrivate = normalized.visibility === 'private'
@@ -739,7 +760,41 @@ function publicTournament(t: Tournament, now = Date.now()) {
     status: tournamentStatus(normalized, now),
     playerCount: normalized.players.length,
     nextDeadlineAt,
+    winner: tournamentWinner(normalized, now),
   }
+}
+
+/*
+ * Awarded lazily, because an event ends on a clock nobody is watching: a
+ * bracket resolves when its round times out, which happens on whoever loads
+ * the page next. Insert is a no-op once the trophy exists, and the in-process
+ * set keeps a busy list from retrying every read.
+ */
+const awardedEvents = new Set<string>()
+
+async function awardEndedEventTrophies(store: Store, now: number) {
+  const pending: Promise<unknown>[] = []
+  for (const raw of store.tournaments) {
+    if (awardedEvents.has(raw.id)) continue
+    const t = normalizeTournament(raw)
+    const winner = tournamentWinner(t, now)
+    if (!winner) continue
+    awardedEvents.add(t.id)
+    const { y, m, d } = ymdInTz(t.startsAt)
+    const top = computeStandings(t).find((row) => row.name === winner)
+    pending.push(
+      awardEventWin({
+        eventId: t.id,
+        eventTitle: t.title,
+        periodKey: dateKey(y, m, d),
+        name: winner,
+        score: top?.totalPoints ?? 0,
+        games: t.games.length,
+        awardedAt: now,
+      }).catch(() => false),
+    )
+  }
+  if (pending.length) await Promise.all(pending)
 }
 
 export type TournamentListFilter = 'all' | 'official' | 'mine' | 'joined'
@@ -751,6 +806,7 @@ export async function listTournaments(
   playerName?: string,
 ) {
   const store = await ensureStore(now)
+  await awardEndedEventTrophies(store, now)
   const cleanedPlayer = playerName ? cleanName(playerName) : ''
   let list = store.tournaments.map((t) => publicTournament(t, now))
   if (filter === 'official') list = list.filter((t) => t.official)
@@ -776,10 +832,27 @@ export async function listTournaments(
       })
       .map((t) => publicTournament(t, now))
   }
+  /*
+   * Events you are in come first: one waiting on your move matters more than
+   * one you have never opened. Within that, running before filling before
+   * finished — and finished events run newest first, because the interesting
+   * thing about a result is that it is recent, not that it is old.
+   */
+  const joinedIds = new Set(
+    cleanedPlayer
+      ? store.tournaments
+          .filter((t) => normalizeTournament(t).players.some((p) => p.name === cleanedPlayer))
+          .map((t) => t.id)
+      : [],
+  )
   return list.sort((a, b) => {
+    const mine = (t: (typeof list)[number]) => (joinedIds.has(t.id) ? 0 : 1)
+    const mineDiff = mine(a) - mine(b)
+    if (mineDiff !== 0) return mineDiff
     const order = { active: 0, upcoming: 1, ended: 2 } as const
     const statusDiff = order[a.status] - order[b.status]
     if (statusDiff !== 0) return statusDiff
+    if (a.status === 'ended' && b.status === 'ended') return b.startsAt - a.startsAt
     const cadenceRank = (c: string | null | undefined) =>
       c === 'daily' ? 0 : c === 'weekly' ? 1 : 2
     const cadenceDiff = cadenceRank(a.cadence) - cadenceRank(b.cadence)

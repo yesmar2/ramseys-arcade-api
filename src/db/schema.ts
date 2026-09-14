@@ -203,6 +203,9 @@ export const trophyAwards = pgTable(
     score: integer('score').notNull(),
     games: integer('games').notNull(),
     accountId: text('account_id'),
+    /** Set on event wins; null on the rolling leaderboard trophies. */
+    eventId: text('event_id'),
+    eventTitle: text('event_title'),
     awardedAt: bigint('awarded_at', { mode: 'number' }).notNull(),
   },
   (t) => [

@@ -7,7 +7,7 @@ import {
   weekStartKey,
 } from './store.js'
 
-export type TrophyPeriod = 'weekly' | 'monthly'
+export type TrophyPeriod = 'weekly' | 'monthly' | 'event'
 export const MAX_TROPHY_RANK = 10
 
 export type TrophyAward = {
@@ -19,6 +19,9 @@ export type TrophyAward = {
   score: number
   games: number
   accountId?: string
+  /** Set when the trophy came from winning an event rather than a board. */
+  eventId?: string
+  eventTitle?: string
   awardedAt: number
 }
 
@@ -36,6 +39,8 @@ function rowToAward(row: typeof trophyAwards.$inferSelect): TrophyAward {
     score: row.score,
     games: row.games,
     ...(row.accountId ? { accountId: row.accountId } : {}),
+    ...(row.eventId ? { eventId: row.eventId } : {}),
+    ...(row.eventTitle ? { eventTitle: row.eventTitle } : {}),
     awardedAt: row.awardedAt,
   }
 }
@@ -78,8 +83,9 @@ async function setCursor(next: { weeklyInitialized: boolean; monthlyInitialized:
     })
 }
 
+/** Board trophies only — event wins are awarded directly, not by period. */
 async function awardClosedPeriod(
-  period: TrophyPeriod,
+  period: Exclude<TrophyPeriod, 'event'>,
   periodKey: number,
   now: number,
 ): Promise<boolean> {
@@ -217,6 +223,47 @@ export type TrophySummary = {
   total: number
   podium: number
   topTen: number
+  /** Events won, counted separately from the rolling board trophies. */
+  events: number
+}
+
+/**
+ * Record an event win.
+ *
+ * Winning a bracket or a scores event left no trace anywhere once the page was
+ * closed — the celebration fired once and that was it. These sit alongside the
+ * weekly and monthly board trophies, tagged with the event so they can name it.
+ */
+export async function awardEventWin(opts: {
+  eventId: string
+  eventTitle: string
+  periodKey: number
+  name: string
+  score: number
+  games: number
+  accountId?: string | null
+  awardedAt?: number
+}): Promise<boolean> {
+  const name = opts.name.trim().slice(0, 12).toUpperCase()
+  if (!name) return false
+  const result = await db()
+    .insert(trophyAwards)
+    .values({
+      id: `event-${opts.eventId}-${name}`,
+      period: 'event',
+      periodKey: opts.periodKey,
+      name,
+      rank: 1,
+      score: Math.max(0, Math.floor(opts.score)),
+      games: Math.max(0, Math.floor(opts.games)),
+      ...(opts.accountId ? { accountId: opts.accountId } : {}),
+      eventId: opts.eventId,
+      eventTitle: opts.eventTitle.slice(0, 60),
+      awardedAt: opts.awardedAt ?? Date.now(),
+    })
+    .onConflictDoNothing()
+    .returning({ id: trophyAwards.id })
+  return result.length > 0
 }
 
 export type TrophyCount = Pick<TrophySummary, 'total' | 'podium'>
@@ -224,11 +271,13 @@ export type TrophyCount = Pick<TrophySummary, 'total' | 'podium'>
 function summarizeAwards(awards: TrophyAward[]): TrophySummary {
   let podium = 0
   let topTen = 0
+  let events = 0
   for (const award of awards) {
+    if (award.period === 'event') events++
     if (award.rank <= 3) podium++
     else topTen++
   }
-  return { total: awards.length, podium, topTen }
+  return { total: awards.length, podium, topTen, events }
 }
 
 export async function trophySummaryForName(name: string): Promise<TrophySummary> {

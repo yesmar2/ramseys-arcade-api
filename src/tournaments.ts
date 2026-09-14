@@ -62,6 +62,38 @@ export type TournamentPlayer = {
   id: string
   name: string
   joinedAt: number
+  /**
+   * Account that holds this seat.
+   *
+   * Joining has always required a signed-in account, but the seat never
+   * recorded whose it was — which is how a seat could be carried off by
+   * whoever next used the same device. Optional because seats created before
+   * this existed have none; those are treated as unowned and can no longer be
+   * renamed into by anyone.
+   */
+  accountId?: string
+}
+
+/**
+ * May the account making this request carry `seat` to a new name?
+ *
+ * Only its owner may. The client remembers its seat id per event on the
+ * device, and that alone used to be enough — so signing out and signing in as
+ * someone else re-joined carrying the previous player's seat id, renaming
+ * their entry and handing over their score with it.
+ *
+ * A seat with no owner recorded predates seats having one, and cannot be
+ * carried by anybody: failing this check costs a rename its history, while
+ * getting it wrong costs somebody else theirs. Those seats are stamped the
+ * next time their real owner joins under their own name, which the client
+ * does on load, so the unowned window is short.
+ */
+export function seatCarriesTo(
+  seat: Pick<TournamentPlayer, 'accountId'> | undefined,
+  accountId: string | undefined,
+): boolean {
+  if (!seat?.accountId || !accountId) return false
+  return seat.accountId === accountId
 }
 
 export type TournamentScore = {
@@ -1140,6 +1172,13 @@ export async function joinTournament(
 
   const existingByName = t.players.find((p) => p.name === cleaned)
   if (existingByName) {
+    // Reaching here means assertCanUseName passed, so this really is them:
+    // a good moment to stamp ownership on a seat that predates it.
+    if (!existingByName.accountId && access.accountId) {
+      existingByName.accountId = access.accountId
+      putTournament(store, t)
+      await writeStore(store)
+    }
     return {
       tournament: (await getTournamentDetail(id, now, {
         ...detailAccessOpts(access),
@@ -1150,10 +1189,21 @@ export async function joinTournament(
     }
   }
 
-  // Same device / seat after a gamer-tag rename: keep player id + scores.
+  /*
+   * Same seat after a gamer-tag rename: keep player id + scores.
+   *
+   * Only for the account that actually holds the seat. The client remembers
+   * its seat id per event on the device, and that memory used to be enough on
+   * its own — so signing out and signing in as someone else re-joined with the
+   * previous player's seat id, and this branch quietly renamed their entry,
+   * handing over their score with it. A seat nobody owns (created before seats
+   * recorded an account) is no longer renameable at all: failing to a fresh
+   * entry costs a rename its history, while getting it wrong costs somebody
+   * else theirs.
+   */
   if (playerId) {
     const seat = t.players.find((p) => p.id === playerId)
-    if (seat) {
+    if (seat && seatCarriesTo(seat, access.accountId)) {
       const conflict = t.players.find((p) => p.name === cleaned && p.id !== seat.id)
       if (t.bracket?.lockedAt && seat.name !== cleaned) {
         return {
@@ -1192,7 +1242,12 @@ export async function joinTournament(
     }
   }
 
-  const player: TournamentPlayer = { id: uid(), name: cleaned, joinedAt: now }
+  const player: TournamentPlayer = {
+    id: uid(),
+    name: cleaned,
+    joinedAt: now,
+    ...(access.accountId ? { accountId: access.accountId } : {}),
+  }
   if (resolveKind(t) === 'bracket' && t.bracket?.lockedAt) {
     throw Object.assign(new Error('The bracket is already drawn'), {
       status: 409,

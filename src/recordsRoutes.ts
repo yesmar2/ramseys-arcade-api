@@ -58,10 +58,13 @@ recordsRouter.get('/:game', async (req, res) => {
     return
   }
   const { records } = await listGameRecords(game, period, Date.now(), scope)
+  // The holder's mark is drawn beside each record, so send their avatar too.
   res.json({
     game,
     period,
-    records,
+    records: await Promise.all(
+      records.map(async (r) => ({ ...r, top: r.top ? await withAvatarId(r.top) : r.top })),
+    ),
   })
 })
 

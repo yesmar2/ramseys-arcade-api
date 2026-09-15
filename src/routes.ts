@@ -30,10 +30,17 @@ leaderboardsRouter.get('/bests', async (req, res) => {
     res.status(400).json({ error: 'name query param required' })
     return
   }
+  const periodParam = req.query.period
+  if (periodParam != null && periodParam !== '' && !isPeriod(periodParam)) {
+    res.status(400).json({ error: 'Invalid period' })
+    return
+  }
+  const period: Period = isPeriod(periodParam) ? periodParam : 'all'
   const cleaned = name.slice(0, 12).toUpperCase()
   res.json({
     name: cleaned,
-    bests: await bestsForName(name),
+    period,
+    bests: await bestsForName(name, period),
     avatarId: (await withAvatarId({ name: cleaned })).avatarId,
   })
 })

@@ -438,10 +438,13 @@ export async function bestForName(
   return { ...best, rank: pool.findIndex((e) => e.id === best.id) + 1 }
 }
 
-export async function bestsForName(name: string): Promise<Partial<Record<GameSlug, number>>> {
+export async function bestsForName(
+  name: string,
+  period: Period = 'all',
+): Promise<Partial<Record<GameSlug, number>>> {
   const out: Partial<Record<GameSlug, number>> = {}
   for (const game of ALLOWED_GAMES) {
-    const row = await bestForName(game, name, 'all')
+    const row = await bestForName(game, name, period)
     if (row) out[game] = row.score
   }
   return out

@@ -274,7 +274,7 @@ function summarizeAwards(awards: TrophyAward[]): TrophySummary {
   let events = 0
   for (const award of awards) {
     if (award.period === 'event') events++
-    if (award.rank <= 3) podium++
+    else if (award.rank <= 3) podium++
     else topTen++
   }
   return { total: awards.length, podium, topTen, events }
@@ -297,7 +297,7 @@ export async function trophySummariesForNames(
   for (const award of rows) {
     const row = out[award.name] ?? { total: 0, podium: 0 }
     row.total++
-    if (award.rank <= 3) row.podium++
+    if (award.period !== 'event' && award.rank <= 3) row.podium++
     out[award.name] = row
   }
   return out

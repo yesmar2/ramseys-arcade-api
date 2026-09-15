@@ -194,10 +194,32 @@ export async function verifyMagicLink(token: string): Promise<{
   }
 }
 
+/*
+ * Nearly every request carries a session token, and looking it up is two
+ * round trips before any work starts. Remember the answer for a minute;
+ * logging out drops it.
+ */
+const SESSION_CACHE_TTL_MS = 60_000
+const sessionCache = new Map<string, { at: number; account: Account | null }>()
+
+export function invalidateSessionCache(token?: string) {
+  if (token) sessionCache.delete(token)
+  else sessionCache.clear()
+}
+
 export async function resolveSession(
   sessionToken: string | null | undefined,
 ): Promise<Account | null> {
   if (!sessionToken) return null
+  const hit = sessionCache.get(sessionToken)
+  if (hit && Date.now() - hit.at < SESSION_CACHE_TTL_MS) return hit.account
+  const account = await resolveSessionFromDb(sessionToken)
+  if (sessionCache.size > 5_000) sessionCache.clear()
+  sessionCache.set(sessionToken, { at: Date.now(), account })
+  return account
+}
+
+async function resolveSessionFromDb(sessionToken: string): Promise<Account | null> {
   const rows = await db()
     .select()
     .from(sessions)
@@ -215,6 +237,7 @@ export async function resolveSession(
 
 export async function logoutSession(sessionToken: string | null | undefined) {
   if (!sessionToken) return
+  invalidateSessionCache(sessionToken)
   await db().delete(sessions).where(eq(sessions.token, sessionToken))
 }
 

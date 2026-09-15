@@ -180,7 +180,10 @@ let ensuring: Promise<void> | null = null
 /** Award global-rank trophies for completed weekly/monthly periods (lazy rollover). */
 export async function ensurePeriodTrophies(now = Date.now()) {
   if (now - lastEnsuredAt < ENSURE_EVERY_MS) return
-  if (ensuring) return ensuring
+  // Only the first pass of a process holds the request. Later ones run
+  // behind it: a week rolling over can land a moment late, but nobody waits
+  // a second on their profile for it.
+  if (ensuring) return lastEnsuredAt ? undefined : ensuring
   ensuring = (async () => {
     const cursor = await getCursor()
     const weekCount = cursor.weeklyInitialized ? 1 : 8
@@ -200,6 +203,10 @@ export async function ensurePeriodTrophies(now = Date.now()) {
   })().finally(() => {
     ensuring = null
   })
+  if (lastEnsuredAt) {
+    ensuring.catch(() => {})
+    return
+  }
   return ensuring
 }
 

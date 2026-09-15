@@ -1,9 +1,13 @@
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { sql } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/postgres-js'
 import postgres from 'postgres'
 import * as schema from './schema.js'
 
 let sqlClient: ReturnType<typeof postgres> | null = null
+
+/** Per-request query counter, so a response can say how many round trips it cost. */
+export const queryStats = new AsyncLocalStorage<{ queries: number }>()
 let dbInstance: ReturnType<typeof drizzle<typeof schema>> | null = null
 
 export function requireDatabaseUrl(): string {
@@ -23,6 +27,10 @@ function ensurePool() {
     idle_timeout: 20,
     connect_timeout: 30,
     prepare: false,
+    debug: () => {
+      const stats = queryStats.getStore()
+      if (stats) stats.queries++
+    },
   })
   return sqlClient
 }

@@ -1,5 +1,5 @@
 import crypto from 'node:crypto'
-import { eq, inArray } from 'drizzle-orm'
+import { eq } from 'drizzle-orm'
 import { db } from './db/client.js'
 import { nameClaims } from './db/schema.js'
 import { renamePlayerAcrossGroups } from './groups.js'
@@ -48,6 +48,39 @@ export async function getClaim(name: string): Promise<NameClaim | null> {
   if (!cleaned) return null
   const rows = await db().select().from(nameClaims).where(eq(nameClaims.name, cleaned)).limit(1)
   return rows[0] ? claimFromRow(rows[0]) : null
+}
+
+/*
+ * Every board, roster and profile response looks up avatars by tag, and a
+ * request could spend a dozen round trips on that alone. The claims table
+ * is a couple of hundred rows: read it once, keep it for a minute, and drop
+ * it whenever this module writes a claim. Writes still read the database
+ * directly through getClaim, so ownership checks are never stale.
+ */
+type ClaimRow = typeof nameClaims.$inferSelect
+const CLAIMS_TTL_MS = 60_000
+let claimsCache: { at: number; byName: Map<string, ClaimRow> } | null = null
+let claimsLoading: Promise<Map<string, ClaimRow>> | null = null
+
+export function invalidateClaimCache() {
+  claimsCache = null
+}
+
+async function loadClaims(): Promise<Map<string, ClaimRow>> {
+  if (claimsCache && Date.now() - claimsCache.at < CLAIMS_TTL_MS) return claimsCache.byName
+  if (claimsLoading) return claimsLoading
+  claimsLoading = db()
+    .select()
+    .from(nameClaims)
+    .then((rows) => {
+      const byName = new Map(rows.map((r) => [r.name, r] as const))
+      claimsCache = { at: Date.now(), byName }
+      return byName
+    })
+    .finally(() => {
+      claimsLoading = null
+    })
+  return claimsLoading
 }
 
 /** Local/dev only. Production Render sets NODE_ENV=production. */
@@ -128,6 +161,7 @@ async function releaseOtherAccountNames(
   for (const row of owned) {
     if (row.name === keepName) continue
     released.push(row.name)
+    invalidateClaimCache()
     await db().delete(nameClaims).where(eq(nameClaims.name, row.name))
   }
   return released
@@ -182,6 +216,7 @@ export async function assertCanUseName(
     const next: NameClaim = { token: mintToken(), claimedAt: Date.now() }
     next.accountId = accountId
     await releaseAndMigrateAccountNames(accountId, cleaned)
+    invalidateClaimCache()
     await db().insert(nameClaims).values({
       name: cleaned,
       token: next.token,
@@ -198,6 +233,7 @@ export async function assertCanUseName(
   if (tokenOk || accountOk) {
     if (accountId && tokenOk && !existing.accountId) {
       await releaseAndMigrateAccountNames(accountId, cleaned)
+      invalidateClaimCache()
       await db()
         .update(nameClaims)
         .set({ accountId })
@@ -287,6 +323,7 @@ export async function renameGamerTag(
 
   await migratePlayerScores(from, to)
 
+  invalidateClaimCache()
   if (fromAvatar) {
     const toRow = await getClaim(to)
     if (toRow && !toRow.avatarId) {
@@ -367,6 +404,7 @@ export async function linkNameToAccount(
   let created = false
   let token: string
 
+  invalidateClaimCache()
   if (!existing) {
     token = mintToken()
     await db().insert(nameClaims).values({
@@ -436,7 +474,11 @@ export async function reconcileAccountNames(
 export async function namesOwnedByAccount(
   accountId: string,
 ): Promise<{ name: string; token: string; avatarId: AvatarId }[]> {
-  const rows = await reconcileAccountNames(accountId)
+  if (!accountId) return []
+  // The common case — one tag per account — is answered from the cache. An
+  // account holding several tags is reconciled through the database.
+  const cached = [...(await loadClaims()).values()].filter((r) => r.accountId === accountId)
+  const rows = cached.length <= 1 ? cached : await reconcileAccountNames(accountId)
   const result: { name: string; token: string; avatarId: AvatarId }[] = []
   for (const row of rows) {
     result.push({
@@ -452,7 +494,7 @@ export async function namesOwnedByAccount(
 export async function resolveAvatarId(name: string): Promise<AvatarId> {
   const cleaned = cleanPlayerName(name)
   if (!cleaned) return defaultAvatarId('')
-  const claim = await getClaim(cleaned)
+  const claim = (await loadClaims()).get(cleaned)
   if (claim?.avatarId && isAvatarId(claim.avatarId)) return claim.avatarId
   return defaultAvatarId(cleaned)
 }
@@ -467,14 +509,7 @@ export async function withAvatarIds<T extends { name: string }>(
   rows: T[],
 ): Promise<Array<T & { avatarId: AvatarId }>> {
   if (!rows.length) return []
-  const cleanedNames = [
-    ...new Set(rows.map((r) => cleanPlayerName(r.name)).filter(Boolean)),
-  ]
-  const claimRows =
-    cleanedNames.length > 0
-      ? await db().select().from(nameClaims).where(inArray(nameClaims.name, cleanedNames))
-      : []
-  const byName = new Map(claimRows.map((r) => [r.name, r] as const))
+  const byName = await loadClaims()
   return rows.map((row) => {
     const cleaned = cleanPlayerName(row.name)
     const claim = byName.get(cleaned)
@@ -502,6 +537,7 @@ export async function setNameAvatar(
       code: 'NAME_UNCLAIMED',
     })
   }
+  invalidateClaimCache()
   await db()
     .update(nameClaims)
     .set({ avatarId })

@@ -175,21 +175,50 @@ function topBoard(entries: LeaderboardEntry[]) {
 
 type Ymd = { y: number; m: number; d: number; weekday: string }
 
+/*
+ * Calendar maths in the board's time zone is the hot loop of every board:
+ * each period filter asks what day a score landed on, for every score. A
+ * fresh Intl formatter per call cost more than the query did, so there is
+ * one formatter per zone, and each timestamp's answer is kept — scores
+ * never move, and there are only a few thousand of them.
+ */
+const formatters = new Map<string, Intl.DateTimeFormat>()
+const ymdCache = new Map<number, Ymd>()
+const YMD_CACHE_MAX = 50_000
+
+function formatterFor(timeZone: string) {
+  let fmt = formatters.get(timeZone)
+  if (!fmt) {
+    fmt = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      weekday: 'short',
+    })
+    formatters.set(timeZone, fmt)
+  }
+  return fmt
+}
+
 function ymdInTz(ms: number, timeZone = BOARD_TZ): Ymd {
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    weekday: 'short',
-  }).formatToParts(new Date(ms))
+  if (timeZone === BOARD_TZ) {
+    const hit = ymdCache.get(ms)
+    if (hit) return hit
+  }
+  const parts = formatterFor(timeZone).formatToParts(new Date(ms))
   const get = (type: string) => parts.find((p) => p.type === type)?.value ?? ''
-  return {
+  const out = {
     y: Number(get('year')),
     m: Number(get('month')),
     d: Number(get('day')),
     weekday: get('weekday'),
   }
+  if (timeZone === BOARD_TZ) {
+    if (ymdCache.size >= YMD_CACHE_MAX) ymdCache.clear()
+    ymdCache.set(ms, out)
+  }
+  return out
 }
 
 function dateKey(y: number, m: number, d: number) {
@@ -332,7 +361,7 @@ export function filterByClosedPeriod(
  * thousand rows: load it in one query, hand out per-game slices, and throw
  * it away after a short while or as soon as anything writes.
  */
-const HISTORY_TTL_MS = 30_000
+const HISTORY_TTL_MS = 10 * 60_000
 let historyCache: { at: number; byGame: Map<string, LeaderboardEntry[]> } | null = null
 let historyLoading: Promise<Map<string, LeaderboardEntry[]>> | null = null
 

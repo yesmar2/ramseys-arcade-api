@@ -42,29 +42,42 @@ function fail(message: string, status: number, code?: string): never {
   throw Object.assign(new Error(message), { status, code })
 }
 
+/*
+ * There are a handful of groups and a few dozen memberships, and every
+ * scoped board request needs one of them. Load them all in two queries and
+ * keep them for a minute; any write through this module drops the copy.
+ */
+const GROUPS_TTL_MS = 60_000
+let groupsCache: { at: number; groups: Group[] } | null = null
+let groupsLoading: Promise<Group[]> | null = null
+
+export function invalidateGroupsCache() {
+  groupsCache = null
+}
+
 async function loadGroup(id: string): Promise<Group | null> {
   const cleaned = id.trim()
   if (!cleaned) return null
-  const rows = await db().select().from(groups).where(eq(groups.id, cleaned)).limit(1)
-  const g = rows[0]
-  if (!g) return null
-  const members = await db()
-    .select()
-    .from(groupMembers)
-    .where(eq(groupMembers.groupId, g.id))
-  return {
-    id: g.id,
-    name: g.name,
-    inviteCode: g.inviteCode,
-    createdBy: { accountId: g.createdByAccountId },
-    members: members.map((m) => ({
-      name: cleanPlayerName(m.name),
-      joinedAt: m.joinedAt,
-    })),
-  }
+  const g = (await loadAllGroups()).find((x) => x.id === cleaned)
+  // A copy, because callers edit the group they are working on.
+  return g ? { ...g, members: g.members.map((m) => ({ ...m })) } : null
 }
 
 async function loadAllGroups(): Promise<Group[]> {
+  if (groupsCache && Date.now() - groupsCache.at < GROUPS_TTL_MS) return groupsCache.groups
+  if (groupsLoading) return groupsLoading
+  groupsLoading = loadAllGroupsFromDb()
+    .then((list) => {
+      groupsCache = { at: Date.now(), groups: list }
+      return list
+    })
+    .finally(() => {
+      groupsLoading = null
+    })
+  return groupsLoading
+}
+
+async function loadAllGroupsFromDb(): Promise<Group[]> {
   const groupRows = await db().select().from(groups)
   if (!groupRows.length) return []
   const memberRows = await db().select().from(groupMembers)
@@ -168,11 +181,25 @@ export async function publicGroup(
 
 export async function listGroupsFor(opts: GroupAccessOpts = {}) {
   const all = await loadAllGroups()
+  // Work out the viewer's tags once, not once per group.
+  const names = new Set<string>()
+  const player = cleanPlayerName(opts.playerName ?? '')
+  if (player) names.add(player)
+  for (const owned of await accountNames(opts.accountId)) names.add(owned)
   const out = []
   for (const g of all) {
-    if ((await isGroupMember(g, opts)) || isGroupOwner(g, opts.accountId)) {
-      out.push(await publicGroup(g, opts))
-    }
+    const member = g.members.some((m) => names.has(m.name))
+    const owner = isGroupOwner(g, opts.accountId)
+    if (!member && !owner) continue
+    out.push({
+      id: g.id,
+      name: g.name,
+      memberCount: g.members.length,
+      members: await withAvatarIds(g.members),
+      isOwner: owner,
+      isMember: member,
+      inviteCode: owner ? g.inviteCode : null,
+    })
   }
   return out
 }
@@ -212,6 +239,7 @@ export async function createGroup(
     members,
   }
 
+  invalidateGroupsCache()
   await db().transaction(async (tx) => {
     await tx.insert(groups).values({
       id: group.id,
@@ -251,6 +279,7 @@ export async function joinGroup(
   }
   if (group.members.length >= MAX_MEMBERS) fail('This group is full', 409, 'GROUP_FULL')
 
+  invalidateGroupsCache()
   await db().insert(groupMembers).values({
     groupId: group.id,
     name,
@@ -271,6 +300,7 @@ export async function leaveGroup(id: string, rawName: string, accountId?: string
   if (isGroupOwner(group, accountId) && group.members.length > 1) {
     fail('Transfer or remove others before leaving as owner, or delete the group', 409, 'OWNER_LEAVE')
   }
+  invalidateGroupsCache()
   await db()
     .delete(groupMembers)
     .where(and(eq(groupMembers.groupId, id), eq(groupMembers.name, name)))
@@ -287,6 +317,7 @@ export async function kickMember(id: string, accountId: string, rawName: string)
   if (!isGroupOwner(group, accountId)) fail('Only the owner can remove members', 403)
   const name = cleanPlayerName(rawName)
   if (!name) fail('Name required', 400)
+  invalidateGroupsCache()
   await db()
     .delete(groupMembers)
     .where(and(eq(groupMembers.groupId, id), eq(groupMembers.name, name)))
@@ -300,6 +331,7 @@ export async function renameGroup(id: string, accountId: string, rawName: string
   if (!isGroupOwner(group, accountId)) fail('Only the owner can rename', 403)
   const name = rawName.trim().slice(0, 32)
   if (name.length < 2) fail('Name must be at least 2 characters', 400)
+  invalidateGroupsCache()
   await db().update(groups).set({ name }).where(eq(groups.id, id))
   group.name = name
   return publicGroup(group, { accountId })
@@ -310,6 +342,7 @@ export async function rotateInvite(id: string, accountId: string) {
   if (!group) fail('Group not found', 404, 'GROUP_NOT_FOUND')
   if (!isGroupOwner(group, accountId)) fail('Only the owner can rotate the invite', 403)
   const inviteCode = generateInviteCode()
+  invalidateGroupsCache()
   await db().update(groups).set({ inviteCode }).where(eq(groups.id, id))
   group.inviteCode = inviteCode
   return publicGroup(group, { accountId })
@@ -319,6 +352,7 @@ export async function deleteGroup(id: string, accountId: string) {
   const group = await getGroup(id)
   if (!group) fail('Group not found', 404, 'GROUP_NOT_FOUND')
   if (!isGroupOwner(group, accountId)) fail('Only the owner can delete', 403)
+  invalidateGroupsCache()
   await db().delete(groups).where(eq(groups.id, id))
   return { ok: true }
 }
@@ -327,6 +361,7 @@ export async function renamePlayerAcrossGroups(fromRaw: string, toRaw: string) {
   const from = cleanPlayerName(fromRaw)
   const to = cleanPlayerName(toRaw)
   if (!from || !to || from === to) return { updated: 0 }
+  invalidateGroupsCache()
   const updated = await db()
     .update(groupMembers)
     .set({ name: to })

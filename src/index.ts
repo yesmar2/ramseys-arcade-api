@@ -16,7 +16,7 @@ import { groupsRouter } from './groupsRoutes.js'
 import { invitesRouter } from './invitesRoutes.js'
 import { tournamentsRouter } from './tournamentsRoutes.js'
 import { trophiesRouter } from './trophiesRoutes.js'
-import { checkDbHealth } from './db/client.js'
+import { checkDbHealth, queryStats } from './db/client.js'
 import { runMigrations } from './db/migrate.js'
 import { migrateStrideToCrosswalk } from './migrateStrideToCrosswalk.js'
 
@@ -73,6 +73,31 @@ async function main() {
     }),
   )
   app.use(express.json({ limit: '32kb' }))
+
+  // Every response says what it cost: wall time and database round trips.
+  // The database is a network hop away, so the round-trip count is the number
+  // that matters when something feels slow. LOG_REQUESTS=1 prints it too.
+  app.use((req, res, next) => {
+    const started = performance.now()
+    queryStats.run({ queries: 0 }, () => {
+      const stats = queryStats.getStore()
+      const writeHead = res.writeHead.bind(res)
+      res.writeHead = ((...args: Parameters<typeof res.writeHead>) => {
+        res.setHeader('X-Elapsed-Ms', String(Math.round(performance.now() - started)))
+        res.setHeader('X-Db-Queries', String(stats?.queries ?? 0))
+        return writeHead(...args)
+      }) as typeof res.writeHead
+      res.on('finish', () => {
+        if (process.env.LOG_REQUESTS === '1') {
+          const ms = Math.round(performance.now() - started)
+          console.log(
+            `${req.method} ${req.originalUrl.slice(0, 90)} ${res.statusCode} ${ms}ms ${stats?.queries ?? 0}q`,
+          )
+        }
+      })
+      next()
+    })
+  })
 
   app.get('/health', async (_req, res) => {
     const dbHealth = await checkDbHealth()

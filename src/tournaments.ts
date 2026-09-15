@@ -318,7 +318,22 @@ function gameLabel(slug: GameSlug) {
   return GAME_LABELS[slug] ?? slug
 }
 
+/*
+ * Normalising is idempotent, and nearly everything in this module starts by
+ * doing it, so an object that has already been through it is handed back as
+ * is rather than copied again. In-place edits to a normalised event keep it
+ * normalised: they only ever add players and scores with canonical slugs.
+ */
+const normalizedTournaments = new WeakSet<Tournament>()
+
 function normalizeTournament(t: Tournament): Tournament {
+  if (normalizedTournaments.has(t)) return t
+  const out = normalizeTournamentUncached(t)
+  normalizedTournaments.add(out)
+  return out
+}
+
+function normalizeTournamentUncached(t: Tournament): Tournament {
   let format =
     t.format ??
     (t.cadence === 'weekly' ? 'place-points' : 'open')
@@ -567,38 +582,73 @@ function tournamentToRow(t: Tournament) {
   }
 }
 
+/*
+ * The store is every event as one JSON row each. This process is the only
+ * writer, so the copy in memory is the truth between writes: reads share it
+ * for a few seconds instead of loading and re-parsing every event per
+ * request, and a write puts back only the events whose JSON changed rather
+ * than all of them. `lastWritten` is what the database holds, by id.
+ */
+const STORE_TTL_MS = 10_000
+let storeCache: { at: number; store: Store } | null = null
+let storeLoading: Promise<Store> | null = null
+const lastWritten = new Map<string, string>()
+
 async function writeStore(store: Store) {
-  const list = store.tournaments.map(normalizeTournament)
-  await db().transaction(async (tx) => {
-    const existing = await tx.select({ id: tournamentsTable.id }).from(tournamentsTable)
-    const nextIds = new Set(list.map((t) => t.id))
-    const toDelete = existing.map((r) => r.id).filter((id) => !nextIds.has(id))
-    if (toDelete.length) {
-      await tx.delete(tournamentsTable).where(inArray(tournamentsTable.id, toDelete))
-    }
-    for (const t of list) {
-      const row = tournamentToRow(t)
-      await tx
-        .insert(tournamentsTable)
-        .values(row)
-        .onConflictDoUpdate({
-          target: tournamentsTable.id,
-          set: {
-            data: row.data,
-            official: row.official,
-            cadence: row.cadence,
-            startsAt: row.startsAt,
-            endsAt: row.endsAt,
-            visibility: row.visibility,
-            inviteCode: row.inviteCode,
-          },
-        })
-    }
-  })
+  store.tournaments = store.tournaments.map(normalizeTournament)
+  const list = store.tournaments
+  const nextIds = new Set(list.map((t) => t.id))
+  const toDelete = [...lastWritten.keys()].filter((id) => !nextIds.has(id))
+  const changed = list
+    .map((t) => ({ t, json: JSON.stringify(t) }))
+    .filter(({ t, json }) => lastWritten.get(t.id) !== json)
+  if (toDelete.length || changed.length) {
+    await db().transaction(async (tx) => {
+      if (toDelete.length) {
+        await tx.delete(tournamentsTable).where(inArray(tournamentsTable.id, toDelete))
+      }
+      for (const { t } of changed) {
+        const row = tournamentToRow(t)
+        await tx
+          .insert(tournamentsTable)
+          .values(row)
+          .onConflictDoUpdate({
+            target: tournamentsTable.id,
+            set: {
+              data: row.data,
+              official: row.official,
+              cadence: row.cadence,
+              startsAt: row.startsAt,
+              endsAt: row.endsAt,
+              visibility: row.visibility,
+              inviteCode: row.inviteCode,
+            },
+          })
+      }
+    })
+  }
+  for (const id of toDelete) lastWritten.delete(id)
+  for (const { t, json } of changed) lastWritten.set(t.id, json)
+  storeCache = { at: Date.now(), store }
 }
 
 async function ensureStore(now = Date.now()): Promise<Store> {
+  if (storeCache && now - storeCache.at < STORE_TTL_MS) {
+    // A day or week can tick over while the copy is fresh.
+    const store = storeCache.store
+    if (ensureRollingEvents(store, now)) await writeStore(store)
+    return store
+  }
+  if (storeLoading) return storeLoading
+  storeLoading = loadStoreFromDb(now).finally(() => {
+    storeLoading = null
+  })
+  return storeLoading
+}
+
+async function loadStoreFromDb(now: number): Promise<Store> {
   const rows = await db().select().from(tournamentsTable)
+  lastWritten.clear()
   let store: Store
   if (rows.length === 0) {
     store = emptyStore(now)
@@ -608,6 +658,7 @@ async function ensureStore(now = Date.now()): Promise<Store> {
   store = {
     tournaments: rows.map((r) => normalizeTournament(r.data as Tournament)),
   }
+  for (const t of store.tournaments) lastWritten.set(t.id, JSON.stringify(t))
   let migrated = false
   for (const t of store.tournaments) {
     if (t.createdBy && !t.official && t.visibility !== 'private') {
@@ -621,6 +672,7 @@ async function ensureStore(now = Date.now()): Promise<Store> {
   }
   if (migrated) await writeStore(store)
   if (ensureRollingEvents(store, now)) await writeStore(store)
+  storeCache = { at: Date.now(), store }
   return store
 }
 
@@ -725,14 +777,18 @@ export function tournamentStatus(t: Tournament, now = Date.now()): TournamentSta
  * which in a double draw is the losers final. A scores event is decided by the
  * standings, which are already ordered.
  */
-export function tournamentWinner(t: Tournament, now = Date.now()): string | null {
+export function tournamentWinner(
+  t: Tournament,
+  now = Date.now(),
+  standings?: StandingRow[],
+): string | null {
   const normalized = normalizeTournament(t)
   if (tournamentStatus(normalized, now) !== 'ended') return null
   if (resolveKind(normalized) === 'bracket') {
     const fin = finalMatch(normalized)
     return fin?.winnerId ? playerNameFor(normalized, fin.winnerId) : null
   }
-  const [top] = computeStandings(normalized)
+  const [top] = standings ?? computeStandings(normalized)
   if (!top || top.gamesPlayed === 0) return null
   return top.name
 }
@@ -754,7 +810,7 @@ export type PodiumEntry = {
  * finished draw reports its final — winner then loser — and a running one
  * reports nothing, because until it is over there is no standing to give.
  */
-function publicPodium(t: Tournament, now: number): PodiumEntry[] {
+function publicPodium(t: Tournament, now: number, standings?: StandingRow[]): PodiumEntry[] {
   if (resolveKind(t) === 'bracket') {
     if (tournamentStatus(t, now) !== 'ended') return []
     const fin = finalMatch(t)
@@ -768,7 +824,7 @@ function publicPodium(t: Tournament, now: number): PodiumEntry[] {
     })
     return runnerUp ? [seat(fin.winnerId, 1), seat(runnerUp, 2)] : [seat(fin.winnerId, 1)]
   }
-  return computeStandings(t)
+  return (standings ?? computeStandings(t))
     .filter((row) => row.gamesPlayed > 0)
     .slice(0, 3)
     .map((row, i) => ({
@@ -779,11 +835,29 @@ function publicPodium(t: Tournament, now: number): PodiumEntry[] {
     }))
 }
 
-function publicTournament(t: Tournament, now = Date.now()) {
+/** Standings for an event, worked out once per request however many times they are asked for. */
+function standingsMemo() {
+  const memo = new Map<string, StandingRow[]>()
+  return (t: Tournament): StandingRow[] => {
+    let rows = memo.get(t.id)
+    if (!rows) {
+      rows = computeStandings(t)
+      memo.set(t.id, rows)
+    }
+    return rows
+  }
+}
+
+function publicTournament(
+  t: Tournament,
+  now = Date.now(),
+  standingsOf: (t: Tournament) => StandingRow[] = computeStandings,
+) {
   const normalized = normalizeTournament(t)
   const isPrivate = normalized.visibility === 'private'
-  const nextDeadlineAt =
-    resolveKind(normalized) === 'bracket' ? earliestOpenMatchDeadline(normalized) : null
+  const bracket = resolveKind(normalized) === 'bracket'
+  const standings = bracket ? [] : standingsOf(normalized)
+  const nextDeadlineAt = bracket ? earliestOpenMatchDeadline(normalized) : null
   return {
     id: normalized.id,
     title: normalized.title,
@@ -803,8 +877,8 @@ function publicTournament(t: Tournament, now = Date.now()) {
     status: tournamentStatus(normalized, now),
     playerCount: normalized.players.length,
     nextDeadlineAt,
-    winner: tournamentWinner(normalized, now),
-    podium: publicPodium(normalized, now),
+    winner: tournamentWinner(normalized, now, bracket ? undefined : standings),
+    podium: publicPodium(normalized, now, bracket ? undefined : standings),
   }
 }
 
@@ -852,7 +926,8 @@ export async function listTournaments(
   const store = await ensureStore(now)
   await awardEndedEventTrophies(store, now)
   const cleanedPlayer = playerName ? cleanName(playerName) : ''
-  let list = store.tournaments.map((t) => publicTournament(t, now))
+  const standingsOf = standingsMemo()
+  let list = store.tournaments.map((t) => publicTournament(t, now, standingsOf))
   if (filter === 'official') list = list.filter((t) => t.official)
   else if (filter === 'mine') {
     if (!accountId) return []
@@ -861,7 +936,7 @@ export async function listTournaments(
     if (!cleanedPlayer) return []
     list = store.tournaments
       .filter((t) => normalizeTournament(t).players.some((p) => p.name === cleanedPlayer))
-      .map((t) => publicTournament(t, now))
+      .map((t) => publicTournament(t, now, standingsOf))
   } else {
     // "All" is everything this viewer may see: public events, plus the private
     // ones they host or already play in. Private events they have no claim to
@@ -874,7 +949,7 @@ export async function listTournaments(
         if (cleanedPlayer && t.players.some((p) => p.name === cleanedPlayer)) return true
         return false
       })
-      .map((t) => publicTournament(t, now))
+      .map((t) => publicTournament(t, now, standingsOf))
   }
   /*
    * Events you are in come first: one waiting on your move matters more than
@@ -897,7 +972,7 @@ export async function listTournaments(
       const t = normalizeTournament(raw)
       // Same reason as the podium: a bracket has no score-ranked standing.
       if (resolveKind(t) === 'bracket') return row
-      const standings = computeStandings(t)
+      const standings = standingsOf(t)
       const idx = standings.findIndex((r) => r.name === cleanedPlayer && r.gamesPlayed > 0)
       return idx === -1 ? row : { ...row, yourPlace: idx + 1, yourPoints: standings[idx]!.totalPoints }
     })

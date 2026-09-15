@@ -1,4 +1,4 @@
-import { and, eq, lt } from 'drizzle-orm'
+import { and, eq, inArray, lt } from 'drizzle-orm'
 import { db } from './db/client.js'
 import { directedInvites } from './db/schema.js'
 import { cleanPlayerName, namesOwnedByAccount } from './names.js'
@@ -281,11 +281,18 @@ export async function listPendingInvites(opts: {
   if (names.size === 0) return []
 
   const now = opts.now ?? Date.now()
-  await expirePending(now)
 
-  const rows = await db().select().from(directedInvites)
+  // One query for what could be pending for these tags; anything that has
+  // lapsed is marked revoked only when there is something to mark.
+  const rows = await db()
+    .select()
+    .from(directedInvites)
+    .where(and(eq(directedInvites.status, 'pending'), inArray(directedInvites.toName, [...names])))
+  const invites = rows.map(rowToInvite).sort((a, b) => b.createdAt - a.createdAt)
+  if (invites.some((row) => isExpired(row, now))) await expirePending(now)
+
   const out: PublicInvite[] = []
-  for (const row of rows.map(rowToInvite).sort((a, b) => b.createdAt - a.createdAt)) {
+  for (const row of invites) {
     if (row.status !== 'pending' || isExpired(row, now) || !names.has(row.toName)) continue
     if (await alreadyOnTarget(row.kind, row.targetId, row.toName)) continue
     if (row.kind === 'tournament') {

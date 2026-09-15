@@ -57,11 +57,16 @@ leaderboardsRouter.get('/rank', async (req, res) => {
   const name = typeof req.query.name === 'string' ? req.query.name.trim() : ''
   if (name) {
     const data = await rankForName(name, 2, period, Date.now(), scope)
+    // One avatar lookup for the player and their neighbours together.
+    const [me, nearby] = await Promise.all([
+      withAvatarId({ name: name.slice(0, 12).toUpperCase() }),
+      withAvatarIds(data.nearby),
+    ])
     res.json({
       ...data,
       period,
-      avatarId: (await withAvatarId({ name: name.slice(0, 12).toUpperCase() })).avatarId,
-      nearby: await withAvatarIds(data.nearby),
+      avatarId: me.avatarId,
+      nearby,
     })
     return
   }

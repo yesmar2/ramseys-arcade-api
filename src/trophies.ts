@@ -91,15 +91,20 @@ async function awardClosedPeriod(
 ): Promise<boolean> {
   const ranked = (await globalRanksForClosedPeriod(period, periodKey)).slice(0, MAX_TROPHY_RANK)
   if (ranked.length === 0) return false
+  // One lookup for the whole period rather than one per award.
+  const ids = ranked.map((row) => awardId(period, periodKey, row.name))
+  const existing = new Set(
+    (
+      await db()
+        .select({ id: trophyAwards.id })
+        .from(trophyAwards)
+        .where(inArray(trophyAwards.id, ids))
+    ).map((r) => r.id),
+  )
   let changed = false
   for (const row of ranked) {
     const id = awardId(period, periodKey, row.name)
-    const existing = await db()
-      .select({ id: trophyAwards.id })
-      .from(trophyAwards)
-      .where(eq(trophyAwards.id, id))
-      .limit(1)
-    if (existing.length) continue
+    if (existing.has(id)) continue
     const accountId = await lookupAccountId(row.name)
     await db().insert(trophyAwards).values({
       id,
@@ -161,22 +166,41 @@ function listMonthKeysBefore(now: number, count: number) {
   return keys
 }
 
+/*
+ * The rollover only has work to do once a week and once a month, but it ran
+ * in full on every trophies request — a rank computation for the last week
+ * and month plus an existence check per award — which is what made a
+ * profile take six seconds to open. Run it at most every few minutes per
+ * process, and share one run between requests that arrive together.
+ */
+const ENSURE_EVERY_MS = 5 * 60_000
+let lastEnsuredAt = 0
+let ensuring: Promise<void> | null = null
+
 /** Award global-rank trophies for completed weekly/monthly periods (lazy rollover). */
 export async function ensurePeriodTrophies(now = Date.now()) {
-  const cursor = await getCursor()
-  const weekCount = cursor.weeklyInitialized ? 1 : 8
-  const monthCount = cursor.monthlyInitialized ? 1 : 6
+  if (now - lastEnsuredAt < ENSURE_EVERY_MS) return
+  if (ensuring) return ensuring
+  ensuring = (async () => {
+    const cursor = await getCursor()
+    const weekCount = cursor.weeklyInitialized ? 1 : 8
+    const monthCount = cursor.monthlyInitialized ? 1 : 6
 
-  for (const weekKey of listWeekKeysBefore(now, weekCount)) {
-    await awardClosedPeriod('weekly', weekKey, now)
-  }
+    for (const weekKey of listWeekKeysBefore(now, weekCount)) {
+      await awardClosedPeriod('weekly', weekKey, now)
+    }
 
-  for (const monthKeyVal of listMonthKeysBefore(now, monthCount)) {
-    await awardClosedPeriod('monthly', monthKeyVal, now)
-  }
+    for (const monthKeyVal of listMonthKeysBefore(now, monthCount)) {
+      await awardClosedPeriod('monthly', monthKeyVal, now)
+    }
 
-  await setCursor({ weeklyInitialized: true, monthlyInitialized: true })
-  await ensureShowcaseTrophies()
+    await setCursor({ weeklyInitialized: true, monthlyInitialized: true })
+    await ensureShowcaseTrophies()
+    lastEnsuredAt = Date.now()
+  })().finally(() => {
+    ensuring = null
+  })
+  return ensuring
 }
 
 export async function trophiesForName(name: string): Promise<TrophyAward[]> {
@@ -410,14 +434,18 @@ const SHOWCASE_AWARDS: ShowcaseAward[] = [
 /** Idempotent: fills showcase profiles with weekly/monthly podium + honor ribbons. */
 export async function ensureShowcaseTrophies() {
   let changed = false
+  const ids = SHOWCASE_AWARDS.map((row) => awardId(row.period, row.periodKey, row.name))
+  const present = new Set(
+    (
+      await db()
+        .select({ id: trophyAwards.id })
+        .from(trophyAwards)
+        .where(inArray(trophyAwards.id, ids))
+    ).map((r) => r.id),
+  )
   for (const row of SHOWCASE_AWARDS) {
     const id = awardId(row.period, row.periodKey, row.name)
-    const existing = await db()
-      .select({ id: trophyAwards.id })
-      .from(trophyAwards)
-      .where(eq(trophyAwards.id, id))
-      .limit(1)
-    if (existing.length) continue
+    if (present.has(id)) continue
     const accountId = await lookupAccountId(row.name)
     await db().insert(trophyAwards).values({
       ...row,

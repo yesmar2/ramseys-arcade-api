@@ -326,6 +326,7 @@ export async function replaceAllRecords(next: RecordsStore) {
       if (entry) cleaned.push({ game, recordId, entry })
     }
   }
+  invalidateRecordHistoryCache()
   await db().transaction(async (tx) => {
     await tx.delete(recordScores)
     const chunk = 200
@@ -370,13 +371,47 @@ function isBetter(
   return direction === 'lower' ? next < previous : next > previous
 }
 
+/*
+ * Record history, read once and kept for a moment — the same reason as the
+ * leaderboard cache: a game's record book is two dozen boards, and each was
+ * its own query.
+ */
+const HISTORY_TTL_MS = 30_000
+let historyCache: { at: number; byKey: Map<string, RecordEntry[]> } | null = null
+let historyLoading: Promise<Map<string, RecordEntry[]>> | null = null
+
+export function invalidateRecordHistoryCache() {
+  historyCache = null
+}
+
+async function loadRecordHistory(): Promise<Map<string, RecordEntry[]>> {
+  if (historyCache && Date.now() - historyCache.at < HISTORY_TTL_MS) return historyCache.byKey
+  if (historyLoading) return historyLoading
+  historyLoading = (async () => {
+    const rows = await db().select().from(recordScores)
+    const byKey = new Map<string, RecordEntry[]>()
+    for (const row of rows) {
+      const key = `${row.game}::${row.recordId}`
+      const list = byKey.get(key) ?? []
+      list.push(rowToEntry(row))
+      byKey.set(key, list)
+    }
+    historyCache = { at: Date.now(), byKey }
+    return byKey
+  })().finally(() => {
+    historyLoading = null
+  })
+  return historyLoading
+}
+
 async function historyFor(game: GameSlug, recordId: string): Promise<RecordEntry[]> {
-  const games = [game, ...legacyGameSlugs(game)]
-  const rows = await db()
-    .select()
-    .from(recordScores)
-    .where(and(inArray(recordScores.game, games), eq(recordScores.recordId, recordId)))
-  return rows.map(rowToEntry)
+  const byKey = await loadRecordHistory()
+  const out: RecordEntry[] = []
+  for (const g of [game, ...legacyGameSlugs(game)]) {
+    const list = byKey.get(`${g}::${recordId}`)
+    if (list) out.push(...list)
+  }
+  return out
 }
 
 function filterByNames<T extends { name: string }>(entries: T[], scope?: NameScope): T[] {
@@ -518,6 +553,7 @@ export async function addRecord(
     device: isDeviceType(device) ? device : 'desktop',
   }
 
+  invalidateRecordHistoryCache()
   await db().transaction(async (tx) => {
     await tx.insert(recordScores).values({
       id: entry.id,
@@ -675,6 +711,7 @@ export async function renamePlayerAcrossRecords(
   const to = toRaw.trim().slice(0, 12).toUpperCase()
   if (!from || !to || from === to) return { from, to, updated: 0 }
 
+  invalidateRecordHistoryCache()
   const updated = await db()
     .update(recordScores)
     .set({ name: to })

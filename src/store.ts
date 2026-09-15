@@ -108,6 +108,7 @@ export async function loadStore(): Promise<Store> {
 }
 
 export async function replaceAllBoards(next: Store) {
+  invalidateHistoryCache()
   const store = {
     stacker: Array.isArray(next.stacker) ? next.stacker : [],
     patriot: Array.isArray(next.patriot) ? next.patriot : [],
@@ -145,6 +146,7 @@ export async function replaceAllBoards(next: Store) {
 }
 
 export async function replaceGameBoard(game: GameSlug, entries: LeaderboardEntry[]) {
+  invalidateHistoryCache()
   const list = Array.isArray(entries) ? entries : []
   await db().transaction(async (tx) => {
     await tx.delete(leaderboardScores).where(eq(leaderboardScores.game, game))
@@ -320,13 +322,49 @@ export function filterByClosedPeriod(
   })
 }
 
+/*
+ * Score history, read once and kept for a moment.
+ *
+ * Every board, rank, and summary starts from a game's full history, and the
+ * global rank needs all twelve. Each was its own round trip to the database
+ * — about a tenth of a second each on Neon — so one rankings page cost a
+ * couple of seconds before it drew anything. The whole table is a few
+ * thousand rows: load it in one query, hand out per-game slices, and throw
+ * it away after a short while or as soon as anything writes.
+ */
+const HISTORY_TTL_MS = 30_000
+let historyCache: { at: number; byGame: Map<string, LeaderboardEntry[]> } | null = null
+let historyLoading: Promise<Map<string, LeaderboardEntry[]>> | null = null
+
+export function invalidateHistoryCache() {
+  historyCache = null
+}
+
+async function loadHistory(): Promise<Map<string, LeaderboardEntry[]>> {
+  if (historyCache && Date.now() - historyCache.at < HISTORY_TTL_MS) return historyCache.byGame
+  if (historyLoading) return historyLoading
+  historyLoading = (async () => {
+    const rows = await db()
+      .select()
+      .from(leaderboardScores)
+      .orderBy(desc(leaderboardScores.score), asc(leaderboardScores.at))
+    const byGame = new Map<string, LeaderboardEntry[]>()
+    for (const row of rows) {
+      const list = byGame.get(row.game) ?? []
+      list.push(rowToEntry(row))
+      byGame.set(row.game, list)
+    }
+    historyCache = { at: Date.now(), byGame }
+    return byGame
+  })().finally(() => {
+    historyLoading = null
+  })
+  return historyLoading
+}
+
 async function historyFor(game: GameSlug): Promise<LeaderboardEntry[]> {
-  const rows = await db()
-    .select()
-    .from(leaderboardScores)
-    .where(eq(leaderboardScores.game, game))
-    .orderBy(desc(leaderboardScores.score), asc(leaderboardScores.at))
-  return rows.map(rowToEntry)
+  const byGame = await loadHistory()
+  return byGame.get(game) ?? []
 }
 
 export async function getClosedBoard(
@@ -640,6 +678,7 @@ export async function addScore(
 
   const cutoff = now - RETAIN_DAYS * 24 * 60 * 60 * 1000
 
+  invalidateHistoryCache()
   await db().transaction(async (tx) => {
     await tx.insert(leaderboardScores).values({
       id: entry.id,
@@ -701,6 +740,7 @@ export async function renamePlayerAcrossLeaderboards(
   const to = toRaw.trim().slice(0, 12).toUpperCase()
   if (!from || !to || from === to) return { from, to, updated: 0 }
 
+  invalidateHistoryCache()
   const updated = await db()
     .update(leaderboardScores)
     .set({ name: to })

@@ -40,7 +40,7 @@ import {
   trophyAwards,
   trophyCursor,
 } from './db/schema.js'
-import { AVATAR_IDS } from './avatars.js'
+import { randomAvatarId } from './avatars.js'
 import { getClaim } from './names.js'
 import {
   ASTEROIDS_WAVE_MAX,
@@ -219,7 +219,7 @@ function makePlayers(existing: Set<string>): Player[] {
       tag,
       accountId: `seed-acct-${(i + 1).toString().padStart(3, '0')}`,
       email: `${tag.toLowerCase()}@seed.skermix.dev`,
-      avatarId: pick(AVATAR_IDS),
+      avatarId: randomAvatarId(rand),
       skill,
       activity,
       device: pick(DEVICES),

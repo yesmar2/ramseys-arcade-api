@@ -10,7 +10,7 @@ import {
   resolveAvatarId,
   setNameAvatar,
 } from './names.js'
-import { AVATAR_IDS } from './avatars.js'
+import { AVATAR_COLOR_COUNT, AVATAR_SHAPES } from './avatars.js'
 
 export const namesRouter = Router()
 
@@ -86,7 +86,7 @@ namesRouter.get('/:name', async (req, res) => {
     name,
     available: await isNameAvailable(name, token, account?.id),
     avatarId: await resolveAvatarId(name),
-    avatars: AVATAR_IDS,
+    avatars: { shapes: AVATAR_SHAPES, colors: AVATAR_COLOR_COUNT },
   })
 })
 

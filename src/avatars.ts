@@ -14,6 +14,14 @@ export const AVATAR_SHAPES = [
   'drop',
   'block',
   'mush',
+  'alien',
+  'fox',
+  'skull',
+  'slime',
+  'gem',
+  'bolt',
+  'rocket',
+  'pad',
 ] as const
 
 export type AvatarShape = (typeof AVATAR_SHAPES)[number]

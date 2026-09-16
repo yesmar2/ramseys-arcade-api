@@ -4,6 +4,7 @@ import { tournaments as tournamentsTable } from './db/schema.js'
 import {
   armMatchClocks,
   bracketDrawSize,
+  bracketGamesForRound,
   bracketHasChampion,
   earliestOpenMatchDeadline,
   bestInMatch,
@@ -56,11 +57,12 @@ export type TournamentRules = {
   /** Bracket only: 'double' adds a losers bracket + grand final. Default single. */
   elimination?: Elimination
   /**
-   * Bracket only: the game each winners round is played on, round 1 first.
-   * Absent means one game the whole way through, which is every bracket made
-   * before this existed.
+   * Bracket only: the games each winners round is played on, round 1 first.
+   * A round holds one or more; a bare slug is read as a round of one. Absent
+   * means one game the whole way through, which is every bracket made before
+   * this existed.
    */
-  roundGames?: string[]
+  roundGames?: (string | string[])[]
 }
 
 export type TournamentCreator = {
@@ -937,24 +939,6 @@ export function bracketRoundCount(maxPlayers: number): number {
   return Math.max(1, Math.round(Math.log2(size)))
 }
 
-/**
- * The game a bracket round is played on.
- *
- * Losers rounds reuse the winners round of the same number, so both halves of
- * round two play the same game, and the grand final follows the last winners
- * round. A losers bracket runs more rounds than the winners one, so anything
- * past the end clamps to the last rather than wrapping to round one.
- */
-export function bracketGameForRound(
-  t: Pick<Tournament, 'games' | 'rules'>,
-  round: number,
-): string {
-  const planned = t.rules?.roundGames ?? []
-  if (!planned.length) return t.games[0] ?? ''
-  const index = Math.min(Math.max(1, round), planned.length) - 1
-  return planned[index] ?? t.games[0] ?? ''
-}
-
 export async function listTournaments(
   now = Date.now(),
   filter: TournamentListFilter = 'all',
@@ -1261,8 +1245,8 @@ export type CreateTournamentInput = {
   roundPlayHours?: number
   /** Bracket only: 'double' adds a losers bracket. Default single. */
   elimination?: Elimination
-  /** Bracket only: game per winners round, round 1 first. */
-  roundGames?: string[]
+  /** Bracket only: games per winners round, round 1 first. */
+  roundGames?: (string | string[])[]
   kind?: TournamentKind
 }
 
@@ -1287,20 +1271,34 @@ export async function createTournament(
    * is the source of truth and `games` is derived from it. Without a plan it
    * stays what it always was: the single game picked for the whole draw.
    */
-  const roundPlan: GameSlug[] = []
+  /*
+   * Each round holds one or more games. A bare slug is accepted as a round of
+   * one so the shape stays compatible either way.
+   */
+  const roundPlan: GameSlug[][] = []
   if (kind === 'bracket' && input.roundGames?.length) {
     for (const entry of input.roundGames) {
-      const slug = resolveGameSlug(entry)
-      if (!slug) {
-        throw Object.assign(new Error('One or more round games are not available'), {
+      const list = Array.isArray(entry) ? entry : [entry]
+      const round: GameSlug[] = []
+      for (const raw of list) {
+        const slug = resolveGameSlug(raw)
+        if (!slug) {
+          throw Object.assign(new Error('One or more round games are not available'), {
+            status: 400,
+          })
+        }
+        if (!round.includes(slug)) round.push(slug)
+      }
+      if (!round.length) {
+        throw Object.assign(new Error('Every round needs at least one game'), {
           status: 400,
         })
       }
-      roundPlan.push(slug)
+      roundPlan.push(round)
     }
   }
   const games: GameSlug[] = roundPlan.length
-    ? [...new Set(roundPlan)]
+    ? [...new Set(roundPlan.flat())]
     : [...new Set(input.games)]
   if (kind === 'bracket') {
     if (!roundPlan.length && games.length !== 1) {
@@ -1386,8 +1384,10 @@ export async function createTournament(
     input.blurb?.trim().slice(0, 280) ||
     (kind === 'bracket'
       ? `${elimination === 'double' ? 'Double' : 'Single'}-elim bracket — higher score wins each match. ${
-          new Set(roundPlan).size > 1
-            ? `A different game each round: ${roundPlan.map(gameLabel).join(' → ')}.`
+          new Set(roundPlan.flat()).size > 1
+            ? `A different game each round: ${roundPlan
+                .map((round) => round.map(gameLabel).join(' + '))
+                .join(' → ')}.`
             : `${gameLabel(games[0]!)}.`
         }`
       : games.length > 1
@@ -1637,10 +1637,15 @@ export async function submitTournamentScore(
      * without this a round set to Pellets would happily accept a Snake run —
      * the match would still resolve, on a score from the wrong game.
      */
-    const wanted = bracketGameForRound(t, openMatch.round)
-    if (wanted && gameSlug !== wanted) {
-      const label = resolveGameSlug(wanted)
-      throw Object.assign(new Error(`This round is played on ${label ? gameLabel(label) : wanted}`), {
+    const roundGames = bracketGamesForRound(t, openMatch.round)
+    if (roundGames.length && !roundGames.includes(gameSlug)) {
+      const names = roundGames
+        .map((g) => {
+          const slug = resolveGameSlug(g)
+          return slug ? gameLabel(slug) : g
+        })
+        .join(' and ')
+      throw Object.assign(new Error(`This round is played on ${names}`), {
         status: 409,
         code: 'WRONG_ROUND_GAME',
       })
@@ -1659,13 +1664,13 @@ export async function submitTournamentScore(
 
   const used =
     openMatch
-      ? matchAttempts(t, player.id, openMatch.id)
+      ? matchAttempts(t, player.id, openMatch.id, gameSlug)
       : playerAttempts(t, player.id, gameSlug)
   const prevBest =
     t.scores
       .filter((s) =>
         openMatch
-          ? s.playerId === player.id && s.matchId === openMatch.id
+          ? s.playerId === player.id && s.matchId === openMatch.id && s.game === gameSlug
           : s.playerId === player.id && s.game === gameSlug,
       )
       .reduce((max, s) => Math.max(max, s.score), 0) || 0

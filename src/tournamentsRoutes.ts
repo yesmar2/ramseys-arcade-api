@@ -50,7 +50,11 @@ const createSchema = z.object({
   kind: z.enum(['scores', 'bracket']).optional(),
   elimination: z.enum(['single', 'double']).optional(),
   /** Bracket only: one game per winners round, round 1 first. */
-  roundGames: z.array(z.string().min(1)).min(1).max(6).optional(),
+  roundGames: z
+    .array(z.union([z.string().min(1), z.array(z.string().min(1)).min(1).max(5)]))
+    .min(1)
+    .max(6)
+    .optional(),
 })
 
 function claimError(err: unknown, res: import('express').Response) {

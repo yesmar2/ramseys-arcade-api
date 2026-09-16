@@ -386,16 +386,56 @@ export function findOpenMatch(t: Tournament, playerId: string): BracketMatch | n
   )
 }
 
-export function matchAttempts(t: Tournament, playerId: string, matchId: string): number {
-  return t.scores.filter((s) => s.playerId === playerId && s.matchId === matchId).length
+
+/**
+ * Games a round is played on.
+ *
+ * Stored as a list per round; a bare slug is read as a round of one, so plans
+ * written before rounds could hold several still load. Losers rounds reuse the
+ * winners round of the same number and the grand final the last, so anything
+ * past the end clamps rather than wrapping back to round one.
+ */
+export function bracketGamesForRound(
+  t: Pick<Tournament, 'games' | 'rules'>,
+  round: number,
+): string[] {
+  const raw = (t.rules as { roundGames?: unknown } | undefined)?.roundGames
+  const plan: string[][] = []
+  if (Array.isArray(raw)) {
+    for (const entry of raw) {
+      const list = (Array.isArray(entry) ? entry : [entry]).filter(
+        (g): g is string => typeof g === 'string' && g.length > 0,
+      )
+      if (list.length) plan.push(list)
+    }
+  }
+  if (!plan.length) return t.games.slice(0, 1)
+  const index = Math.min(Math.max(1, round), plan.length) - 1
+  return plan[index] ?? t.games.slice(0, 1)
+}
+
+export function matchAttempts(
+  t: Tournament,
+  playerId: string,
+  matchId: string,
+  game?: string,
+): number {
+  return t.scores.filter(
+    (s) =>
+      s.playerId === playerId && s.matchId === matchId && (!game || s.game === game),
+  ).length
 }
 
 export function bestInMatch(
   t: Tournament,
   playerId: string,
   matchId: string,
+  game?: string,
 ): { score: number; at: number } | null {
-  const rows = t.scores.filter((s) => s.playerId === playerId && s.matchId === matchId)
+  const rows = t.scores.filter(
+    (s) =>
+      s.playerId === playerId && s.matchId === matchId && (!game || s.game === game),
+  )
   if (rows.length === 0) return null
   let best = rows[0]!
   for (const row of rows) {
@@ -411,9 +451,42 @@ function joinRank(t: Tournament, playerId: string): number {
   return idx >= 0 ? idx : Number.MAX_SAFE_INTEGER
 }
 
+/** Head-to-head on one game: the better score, then the earlier one. */
+function wonGame(t: Tournament, match: BracketMatch, a: string, b: string, game: string) {
+  const bestA = bestInMatch(t, a, match.id, game)
+  const bestB = bestInMatch(t, b, match.id, game)
+  const scoreA = bestA?.score ?? 0
+  const scoreB = bestB?.score ?? 0
+  if (scoreA !== scoreB) return scoreA > scoreB ? a : b
+  if (bestA && bestB && bestA.at !== bestB.at) return bestA.at < bestB.at ? a : b
+  if (bestA && !bestB) return a
+  if (bestB && !bestA) return b
+  return null
+}
+
 function pickWinner(t: Tournament, match: BracketMatch): string | null {
   const [a, b] = match.playerIds
   if (!a || !b) return null
+
+  /*
+   * A round on several games is a series, won by taking the most of them —
+   * never by adding the scores up. Scores are not comparable across games:
+   * a Crumbtrail run is in the tens of thousands and a Snake run in the
+   * hundreds, so a total would just hand the match to whoever played the
+   * bigger-numbered game. An even split falls through to the tiebreak below.
+   */
+  const games = bracketGamesForRound(t, match.round)
+  if (games.length > 1) {
+    let winsA = 0
+    let winsB = 0
+    for (const game of games) {
+      const won = wonGame(t, match, a, b, game)
+      if (won === a) winsA += 1
+      else if (won === b) winsB += 1
+    }
+    if (winsA !== winsB) return winsA > winsB ? a : b
+  }
+
   const bestA = bestInMatch(t, a, match.id)
   const bestB = bestInMatch(t, b, match.id)
   const scoreA = bestA?.score ?? 0
@@ -554,13 +627,24 @@ export function resolveMatchIfReady(
   if (match.winnerId || !match.playerIds[0] || !match.playerIds[1]) return false
   const a = match.playerIds[0]
   const b = match.playerIds[1]
-  const usedA = matchAttempts(t, a, match.id)
-  const usedB = matchAttempts(t, b, match.id)
+  /*
+   * Attempts are per game, so a round on three games is done when a player has
+   * spent their tries on all three — not when they have burned them all on one.
+   */
+  const games = bracketGamesForRound(t, match.round)
   const finite = Number.isFinite(maxAttempts)
-  const doneA = finite && usedA >= maxAttempts
-  const doneB = finite && usedB >= maxAttempts
+  const spentAll = (player: string) =>
+    finite && games.every((game) => matchAttempts(t, player, match.id, game) >= maxAttempts)
+  const doneA = spentAll(a)
+  const doneB = spentAll(b)
   if (!force && !doneA && !doneB) return false
   if (!force && (!doneA || !doneB)) {
+    /*
+     * The early call: one player is finished and the other cannot catch them.
+     * Only safe on a single game, where "ahead" is one comparison. Across a
+     * series the remaining games can still swing it, so the match waits.
+     */
+    if (games.length > 1) return false
     const scoreA = bestInMatch(t, a, match.id)?.score ?? 0
     const scoreB = bestInMatch(t, b, match.id)?.score ?? 0
     const aheadPastCatchup =

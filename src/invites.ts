@@ -1,7 +1,7 @@
 import { and, eq, inArray, lt } from 'drizzle-orm'
 import { db } from './db/client.js'
 import { directedInvites } from './db/schema.js'
-import { cleanPlayerName, namesOwnedByAccount } from './names.js'
+import { cleanPlayerName, getClaim, namesOwnedByAccount } from './names.js'
 import {
   getGroup,
   isGroupMember,
@@ -201,6 +201,11 @@ export async function createDirectedInvite(input: {
   const now = input.now ?? Date.now()
   const toName = cleanPlayerName(input.toName)
   if (!toName) fail('Gamer tag required', 400, 'NAME_REQUIRED')
+
+  const claim = await getClaim(toName)
+  if (!claim?.accountId) {
+    fail(`Huh — ${toName} doesn’t exist in this arcade`, 404, 'NOT_A_PLAYER')
+  }
 
   const fromName = cleanPlayerName(input.fromName ?? '') || null
   if (fromName && fromName === toName) {

@@ -16,6 +16,7 @@ export const ALLOWED_GAMES = [
   'findbug',
   'crumbtrail',
   'bop',
+  'putt',
 ] as const
 export type GameSlug = (typeof ALLOWED_GAMES)[number]
 
@@ -85,6 +86,7 @@ function emptyStore(): Store {
     findbug: [],
     crumbtrail: [],
     bop: [],
+    putt: [],
   }
 }
 
@@ -131,6 +133,7 @@ export async function replaceAllBoards(next: Store) {
     findbug: Array.isArray(next.findbug) ? next.findbug : [],
     crumbtrail: Array.isArray(next.crumbtrail) ? next.crumbtrail : [],
     bop: Array.isArray(next.bop) ? next.bop : [],
+    putt: Array.isArray(next.putt) ? next.putt : [],
   }
   await db().transaction(async (tx) => {
     await tx.delete(leaderboardScores)

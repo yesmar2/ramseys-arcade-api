@@ -193,6 +193,7 @@ const BANDS: Record<GameSlug, { min: number; max: number; step?: number }> = {
   findbug: { min: 850_000, max: 975_000, step: 500 },
   crumbtrail: { min: 150, max: 21_400, step: 10 },
   bop: { min: 3, max: 74 },
+  putt: { min: 300, max: 3200, step: 100 },
 }
 
 function roundTo(value: number, step = 1) {

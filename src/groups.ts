@@ -242,8 +242,17 @@ export async function createGroup(
     fail(`You already have ${MAX_GROUPS_PER_ACCOUNT} groups`, 409, 'GROUP_LIMIT')
   }
 
+  /*
+   * The host joins their own roster, and the server works out which tag
+   * rather than trusting whatever the client last used. A group whose owner
+   * is not on it has no host to label and no way to leave — and it happened
+   * whenever the caller sent no tag at all.
+   */
+  const requested = cleanPlayerName(ownerName ?? '')
+  const owned = await accountNames(creator.accountId)
+  const tag = requested && owned.includes(requested) ? requested : (owned[0] ?? requested)
+
   const members: GroupMember[] = []
-  const tag = cleanPlayerName(ownerName ?? '')
   if (tag) members.push({ name: tag, joinedAt: now })
 
   const group: Group = {

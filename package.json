@@ -13,7 +13,8 @@
     "seed": "tsx src/writeSeed.ts",
     "seed:world": "tsx src/seedWorld.ts",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "tsx src/db/migrate-cli.ts"
+    "db:migrate": "tsx src/db/migrate-cli.ts",
+    "dev:neon": "neon-env run --branch dev -- tsx watch src/index.ts"
   },
   "dependencies": {
     "@neon/config": "^1.3.3",

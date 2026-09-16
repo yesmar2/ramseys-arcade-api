@@ -1,4 +1,5 @@
 import cors from 'cors'
+import { logDbTarget } from './env.js'
 import express from 'express'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -118,6 +119,8 @@ async function main() {
   app.use('/invites', invitesRouter)
   app.use('/friends', friendsRouter)
   app.use('/trophies', trophiesRouter)
+
+  logDbTarget()
 
   const forceSeed = process.env.SEED_FORCE === '1' || process.env.SEED_FORCE === 'true'
   const sampleSeed =

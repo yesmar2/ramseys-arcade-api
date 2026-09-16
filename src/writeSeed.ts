@@ -7,6 +7,7 @@ import { runMigrations } from './db/migrate.js'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { assertNotProduction } from './env.js'
 
 function loadDotEnv() {
   const candidates = [
@@ -41,6 +42,8 @@ function loadDotEnv() {
 }
 
 loadDotEnv()
+// After the .env is read, so the branch it names is the one we check.
+assertNotProduction('reseed the boards')
 await runMigrations()
 
 const game = process.argv[2]

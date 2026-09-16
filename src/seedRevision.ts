@@ -1,5 +1,6 @@
 import { eq } from 'drizzle-orm'
 import { db } from './db/client.js'
+import { refuseOnProduction } from './env.js'
 import { appMeta, leaderboardScores, recordScores, trophyAwards, trophyCursor } from './db/schema.js'
 
 /**
@@ -49,6 +50,14 @@ export async function applySeedRevision(forceEnv = false): Promise<boolean> {
   const force = forceEnv || process.env.SEED_FORCE === '1' || process.env.SEED_FORCE === 'true'
   const current = await readRev()
   if (!force && current === SEED_REVISION) return false
+
+  /*
+   * This drops every leaderboard score, record and trophy. It fires on a
+   * SEED_REVISION bump as well as on SEED_FORCE, which means editing a
+   * constant in this file is enough to empty the boards on the next boot —
+   * fine against a dev branch, not something to do to production by accident.
+   */
+  if (refuseOnProduction('clear leaderboards, records and trophies')) return false
 
   await clearBoardsAndRecords()
   await writeRev(SEED_REVISION)

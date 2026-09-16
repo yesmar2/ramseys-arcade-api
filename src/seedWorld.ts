@@ -70,6 +70,7 @@ import {
   type TournamentScore,
 } from './tournaments.js'
 import { awardEventWin, ensurePeriodTrophies } from './trophies.js'
+import { assertNotProduction } from './env.js'
 
 /* ---------- env ---------- */
 
@@ -844,6 +845,8 @@ async function seedTrophies(events: Tournament[]) {
 
 async function main() {
   loadDotEnv()
+  // After the .env is read, so the branch it names is the one we check.
+  assertNotProduction('rebuild the world')
   await runMigrations()
   const clearOnly = process.argv.includes('--clear')
   const youArg = process.argv.find((a) => a.startsWith('--you='))

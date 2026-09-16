@@ -3,6 +3,10 @@ dist/
 data/*.json
 !data/.gitkeep
 .env
+# Any local env variant — .env.production.bak and friends carry real
+# credentials, and only the template belongs in the repo.
+.env.*
+!.env.example
 *.log
 .DS_Store
 .neon

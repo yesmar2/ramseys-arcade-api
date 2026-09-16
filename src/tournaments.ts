@@ -967,14 +967,17 @@ export async function listTournaments(
   if (cleanedPlayer) {
     const byId = new Map(store.tournaments.map((t) => [t.id, t]))
     list = list.map((row) => {
+      const joined = joinedIds.has(row.id)
       const raw = byId.get(row.id)
-      if (!raw) return row
+      if (!raw) return { ...row, joined }
       const t = normalizeTournament(raw)
       // Same reason as the podium: a bracket has no score-ranked standing.
-      if (resolveKind(t) === 'bracket') return row
+      if (resolveKind(t) === 'bracket') return { ...row, joined }
       const standings = standingsOf(t)
       const idx = standings.findIndex((r) => r.name === cleanedPlayer && r.gamesPlayed > 0)
-      return idx === -1 ? row : { ...row, yourPlace: idx + 1, yourPoints: standings[idx]!.totalPoints }
+      return idx === -1
+        ? { ...row, joined }
+        : { ...row, joined, yourPlace: idx + 1, yourPoints: standings[idx]!.totalPoints }
     })
   }
   return list.sort((a, b) => {

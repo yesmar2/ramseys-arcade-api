@@ -1,6 +1,7 @@
 import { eq, inArray } from 'drizzle-orm'
 import { db } from './db/client.js'
 import { tournaments as tournamentsTable } from './db/schema.js'
+import { fileMatchAlerts } from './matchAlerts.js'
 import {
   armMatchClocks,
   bracketDrawSize,
@@ -950,6 +951,7 @@ export async function listTournaments(
 ) {
   const store = await ensureStore(now)
   await awardEndedEventTrophies(store, now)
+  await fileMatchAlerts(store.tournaments.map(normalizeTournament), now)
   const cleanedPlayer = playerName ? cleanName(playerName) : ''
   const standingsOf = standingsMemo()
   let list = store.tournaments.map((t) => publicTournament(t, now, standingsOf))

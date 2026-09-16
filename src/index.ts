@@ -16,6 +16,7 @@ import { friendsRouter } from './friendsRoutes.js'
 import { groupsRouter } from './groupsRoutes.js'
 import { invitesRouter } from './invitesRoutes.js'
 import { tournamentsRouter } from './tournamentsRoutes.js'
+import { notificationsRouter } from './notificationsRoutes.js'
 import { trophiesRouter } from './trophiesRoutes.js'
 import { checkDbHealth, queryStats } from './db/client.js'
 import { runMigrations } from './db/migrate.js'
@@ -119,6 +120,7 @@ async function main() {
   app.use('/invites', invitesRouter)
   app.use('/friends', friendsRouter)
   app.use('/trophies', trophiesRouter)
+  app.use('/notifications', notificationsRouter)
 
   logDbTarget()
 

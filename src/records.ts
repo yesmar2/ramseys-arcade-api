@@ -1,6 +1,8 @@
 import { and, desc, eq, inArray } from 'drizzle-orm'
 import { db } from './db/client.js'
 import { leaderboardScores, recordScores } from './db/schema.js'
+import { getClaim } from './names.js'
+import { dayKey, notify } from './notifications.js'
 import {
   ALLOWED_GAMES,
   boardDateKey,
@@ -540,6 +542,8 @@ export async function addRecord(
   const value = Math.floor(score)
   const cleaned = name.trim().slice(0, 12).toUpperCase() || 'PLAYER'
   const history = await historyFor(game, recordId)
+  // Who holds the board right now, so a change of hands can be spotted below.
+  const priorLeader = bestPerPlayer(sortEntries(history, def.direction))[0] ?? null
   const mine = history.filter((e) => e.name === cleaned)
   const now = Date.now()
   const improvesPeriod = (period: Period) => {
@@ -594,6 +598,7 @@ export async function addRecord(
   })
 
   const next = await historyFor(game, recordId)
+  await notifyRecordTaken(game, recordId, def, priorLeader, cleaned, next, now)
   const ranks: Partial<Record<Period, number>> = {}
   for (const period of ['daily', 'weekly', 'monthly', 'all'] as const) {
     const pool = bestPerPlayer(sortEntries(filterByPeriod(next, period), def.direction))
@@ -745,4 +750,55 @@ export {
   CROSSWALK_ROW_MILESTONE_MIN,
   CROSSWALK_ROW_MILESTONE_MAX,
   CROSSWALK_ROW_MILESTONE_STEP,
+}
+
+/** `crumbtrail` -> `Crumbtrail`, for a notification body. */
+function titleCase(slug: string): string {
+  return slug
+    .split('-')
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ')
+}
+
+/**
+ * Tell the previous holder that a record board changed hands.
+ *
+ * Deliberately narrow: only the player who actually held #1 and just lost it
+ * hears anything. "Someone posted a good score" would fire on every submission
+ * across 65 boards; "you are no longer the record holder" fires only when a
+ * player's own standing changed, which is bounded by the handful of boards
+ * anyone actually leads.
+ *
+ * Inbox only — never pushed. The record will still be gone when they next open
+ * the app, so there is nothing here worth a buzz.
+ */
+async function notifyRecordTaken(
+  game: GameSlug,
+  recordId: string,
+  def: RecordDef,
+  priorLeader: RecordEntry | null,
+  taker: string,
+  next: RecordEntry[],
+  now: number,
+) {
+  if (!priorLeader || priorLeader.name === taker) return
+  const leader = bestPerPlayer(sortEntries(next, def.direction))[0] ?? null
+  if (leader?.name !== taker) return
+
+  try {
+    const claim = await getClaim(priorLeader.name)
+    if (!claim?.accountId) return
+    await notify({
+      accountId: claim.accountId,
+      kind: 'record-lost',
+      title: `${taker} took your ${def.label} record`,
+      body: `${titleCase(game)} · ${def.label}`,
+      href: `#/records/${game}/${recordId}/all`,
+      // One row a day however many boards they lose; the count carries the rest.
+      digestKey: `record-lost:${dayKey(now)}`,
+      now,
+    })
+  } catch {
+    // A record stands or falls on its own; telling someone about it is extra.
+  }
 }

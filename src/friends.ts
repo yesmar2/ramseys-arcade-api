@@ -1,6 +1,7 @@
 import { and, eq, lt, or } from 'drizzle-orm'
 import { db } from './db/client.js'
 import { friendRequests, friendships } from './db/schema.js'
+import { notify } from './notifications.js'
 import { cleanPlayerName, getClaim, namesOwnedByAccount, resolveAvatarId } from './names.js'
 import type { AvatarId } from './avatars.js'
 
@@ -155,6 +156,15 @@ export async function sendFriendRequest(
   if (reverse) {
     await setRequestStatus(reverse.id, 'accepted')
     await createFriendship(fromAccountId, toAccountId, now)
+    const fromNameNow = await displayNameFor(fromAccountId)
+    await notify({
+      accountId: toAccountId,
+      kind: 'friend-accepted',
+      title: `${fromNameNow} added you back`,
+      body: 'You are now friends.',
+      href: '#/friends',
+      now,
+    }).catch(() => undefined)
     return { status: 'accepted' }
   }
 
@@ -178,6 +188,15 @@ export async function sendFriendRequest(
     expiresAt: now + REQUEST_TTL_MS,
   }
   await db().insert(friendRequests).values(row)
+  await notify({
+    accountId: toAccountId,
+    kind: 'friend-request',
+    title: `${fromName} wants to be friends`,
+    href: '#/friends',
+    // One row per sender, however many times they ask.
+    digestKey: `friend-request:${fromAccountId}`,
+    now,
+  }).catch(() => undefined)
   return {
     status: 'pending',
     request: { id: row.id, direction: 'outgoing', name: row.toName, createdAt: row.createdAt },
@@ -236,6 +255,14 @@ export async function acceptFriendRequest(id: string, accountId: string, now = D
   if (row.toAccountId !== accountId) fail('Not allowed', 403, 'FORBIDDEN')
   await setRequestStatus(id, 'accepted')
   await createFriendship(row.fromAccountId, row.toAccountId, now)
+  // The sender is the one who has been waiting to hear back.
+  await notify({
+    accountId: row.fromAccountId,
+    kind: 'friend-accepted',
+    title: `${row.toName ?? 'They'} accepted your friend request`,
+    href: '#/friends',
+    now,
+  }).catch(() => undefined)
   return { accountId: row.fromAccountId, name: row.fromName ?? 'PLAYER' }
 }
 

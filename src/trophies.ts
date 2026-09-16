@@ -1,5 +1,7 @@
 import { desc, eq, inArray } from 'drizzle-orm'
 import { db } from './db/client.js'
+import { getClaim } from './names.js'
+import { notify } from './notifications.js'
 import { nameClaims, trophyAwards, trophyCursor } from './db/schema.js'
 import {
   globalRanksForClosedPeriod,
@@ -294,7 +296,32 @@ export async function awardEventWin(opts: {
     })
     .onConflictDoNothing()
     .returning({ id: trophyAwards.id })
+  // Only on a genuinely new award — the insert is a no-op on replay.
+  if (result.length > 0) await notifyEventWin(name, opts.eventTitle, opts.eventId)
   return result.length > 0
+}
+
+/**
+ * Congratulate the winner in the inbox.
+ *
+ * Inbox only. Winning is good news that keeps, and the player almost always
+ * just watched it happen on the bracket page anyway.
+ */
+async function notifyEventWin(name: string, eventTitle: string, eventId: string) {
+  try {
+    const claim = await getClaim(name)
+    if (!claim?.accountId) return
+    await notify({
+      accountId: claim.accountId,
+      kind: 'trophy',
+      title: `You won ${eventTitle}`,
+      body: 'A trophy has been added to your case.',
+      href: '#/rank',
+      digestKey: `trophy:${eventId}`,
+    })
+  } catch {
+    // The trophy is already recorded; the note about it is a nicety.
+  }
 }
 
 export type TrophyCount = Pick<TrophySummary, 'total' | 'podium'>

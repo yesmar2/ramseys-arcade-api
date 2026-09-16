@@ -224,3 +224,79 @@ export const appMeta = pgTable('app_meta', {
   key: text('key').primaryKey(),
   value: text('value').notNull(),
 })
+
+/**
+ * In-app notification inbox.
+ *
+ * Everything the arcade wants to tell a player lands here; only a small subset
+ * is ever also pushed to a device. `digestKey` collapses repeats — losing five
+ * records in a day is one row that counts to five, not five rows.
+ */
+export const notifications = pgTable(
+  'notifications',
+  {
+    id: text('id').primaryKey(),
+    accountId: text('account_id')
+      .notNull()
+      .references(() => accounts.id, { onDelete: 'cascade' }),
+    kind: text('kind').notNull(),
+    title: text('title').notNull(),
+    body: text('body'),
+    href: text('href'),
+    /** Repeat suppression: same key within a window folds into the live row. */
+    digestKey: text('digest_key'),
+    count: integer('count').notNull().default(1),
+    createdAt: bigint('created_at', { mode: 'number' }).notNull(),
+    updatedAt: bigint('updated_at', { mode: 'number' }).notNull(),
+    readAt: bigint('read_at', { mode: 'number' }),
+  },
+  (t) => [
+    index('notif_account_idx').on(t.accountId, t.updatedAt),
+    index('notif_unread_idx').on(t.accountId, t.readAt),
+    uniqueIndex('notif_digest_idx').on(t.accountId, t.digestKey),
+  ],
+)
+
+/**
+ * Web push endpoints, one row per device that opted in.
+ *
+ * Only bracket match clocks are ever delivered here — see `pushPolicy`.
+ */
+export const pushSubscriptions = pgTable(
+  'push_subscriptions',
+  {
+    id: text('id').primaryKey(),
+    accountId: text('account_id')
+      .notNull()
+      .references(() => accounts.id, { onDelete: 'cascade' }),
+    endpoint: text('endpoint').notNull(),
+    p256dh: text('p256dh').notNull(),
+    auth: text('auth').notNull(),
+    /** IANA zone, for holding notifications out of the middle of the night. */
+    timeZone: text('time_zone'),
+    createdAt: bigint('created_at', { mode: 'number' }).notNull(),
+    lastSeenAt: bigint('last_seen_at', { mode: 'number' }).notNull(),
+    failedAt: bigint('failed_at', { mode: 'number' }),
+  },
+  (t) => [
+    uniqueIndex('push_endpoint_idx').on(t.endpoint),
+    index('push_account_idx').on(t.accountId),
+  ],
+)
+
+/** Per-account delivery budget, so a bug can never turn into a flood. */
+export const pushLedger = pgTable(
+  'push_ledger',
+  {
+    id: text('id').primaryKey(),
+    accountId: text('account_id')
+      .notNull()
+      .references(() => accounts.id, { onDelete: 'cascade' }),
+    /** YYYYMMDD in the account's own zone. */
+    dayKey: integer('day_key').notNull(),
+    sent: integer('sent').notNull().default(0),
+    /** Dedup: one push per match transition, ever. */
+    lastKey: text('last_key'),
+  },
+  (t) => [uniqueIndex('push_ledger_day_idx').on(t.accountId, t.dayKey)],
+)

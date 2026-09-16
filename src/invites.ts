@@ -147,6 +147,50 @@ export function publicInvite(invite: DirectedInvite): PublicInvite {
   }
 }
 
+/**
+ * Invites the host has sent for one event, newest first.
+ *
+ * The other listing answers "what have I been invited to"; this answers "who
+ * have I invited", which is the question a host asks — without it, sending an
+ * invite leaves no trace anywhere they can see, so there is no way to tell a
+ * name they already chased from one they never got round to.
+ *
+ * Host only. Pending invites name people who have not joined, and sometimes
+ * people who have quietly decided not to; that is the host's business rather
+ * than the whole roster's.
+ */
+export async function listTournamentInvitesForHost(
+  targetId: string,
+  accountId: string,
+  now = Date.now(),
+): Promise<PublicInvite[]> {
+  const t = await getTournament(targetId)
+  if (!t) {
+    throw Object.assign(new Error('Event not found'), {
+      status: 404,
+      code: 'TOURNAMENT_NOT_FOUND',
+    })
+  }
+  if (!t.createdBy || t.createdBy.accountId !== accountId) {
+    throw Object.assign(new Error('Only the host can see invites'), {
+      status: 403,
+      code: 'EVENT_FORBIDDEN',
+    })
+  }
+
+  const rows = await db()
+    .select()
+    .from(directedInvites)
+    .where(and(eq(directedInvites.kind, 'tournament'), eq(directedInvites.targetId, targetId)))
+  const joined = new Set(t.players.map((p) => p.name))
+
+  return rows
+    .map(rowToInvite)
+    .filter((row) => row.status === 'pending' && !isExpired(row, now) && !joined.has(row.toName))
+    .sort((a, b) => b.createdAt - a.createdAt)
+    .map(publicInvite)
+}
+
 /** Drop pending directed invites once an event has no open seats. */
 export async function revokePendingTournamentInvites(targetId: string) {
   await db()

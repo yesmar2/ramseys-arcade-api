@@ -177,6 +177,21 @@ tournamentsRouter.get('/:id', async (req, res) => {
   }
 })
 
+tournamentsRouter.get('/:id/invites', async (req, res) => {
+  try {
+    const account = await accountFromRequest(req)
+    if (!account) {
+      res.status(401).json({ error: 'Sign in', code: 'AUTH_REQUIRED' })
+      return
+    }
+    const { listTournamentInvitesForHost } = await import('./invites.js')
+    const invites = await listTournamentInvitesForHost(req.params.id, account.id)
+    res.json({ invites })
+  } catch (err) {
+    claimError(err, res)
+  }
+})
+
 tournamentsRouter.post('/:id/join', async (req, res) => {
   const parsed = joinSchema.safeParse(req.body)
   if (!parsed.success) {

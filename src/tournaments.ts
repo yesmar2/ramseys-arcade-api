@@ -3,6 +3,7 @@ import { db } from './db/client.js'
 import { tournaments as tournamentsTable } from './db/schema.js'
 import {
   armMatchClocks,
+  bracketDrawSize,
   bracketHasChampion,
   earliestOpenMatchDeadline,
   bestInMatch,
@@ -54,6 +55,12 @@ export type TournamentRules = {
   roundPlayHours?: number
   /** Bracket only: 'double' adds a losers bracket + grand final. Default single. */
   elimination?: Elimination
+  /**
+   * Bracket only: the game each winners round is played on, round 1 first.
+   * Absent means one game the whole way through, which is every bracket made
+   * before this existed.
+   */
+  roundGames?: string[]
 }
 
 export type TournamentCreator = {
@@ -345,8 +352,15 @@ function normalizeTournamentUncached(t: Tournament): Tournament {
     const game = resolveGameSlug(s.game)
     return game && game !== s.game ? { ...s, game } : s
   })
+  /*
+   * Several games in a private event means place points across them — unless
+   * it is a bracket, where several games now just means a different one each
+   * round. A bracket is decided by who beat whom, so scoring it on place
+   * points is both wrong and, in the UI, a confusing thing to claim.
+   */
   if (
     games.length > 1 &&
+    resolveKind(t) !== 'bracket' &&
     format !== 'place-points' &&
     format !== 'cumulative' &&
     (visibility === 'private' || t.createdBy)
@@ -917,6 +931,30 @@ async function awardEndedEventTrophies(store: Store, now: number) {
 
 export type TournamentListFilter = 'all' | 'official' | 'mine' | 'joined'
 
+/** Rounds a draw of this size runs. */
+export function bracketRoundCount(maxPlayers: number): number {
+  const size = bracketDrawSize(Math.max(2, maxPlayers))
+  return Math.max(1, Math.round(Math.log2(size)))
+}
+
+/**
+ * The game a bracket round is played on.
+ *
+ * Losers rounds reuse the winners round of the same number, so both halves of
+ * round two play the same game, and the grand final follows the last winners
+ * round. A losers bracket runs more rounds than the winners one, so anything
+ * past the end clamps to the last rather than wrapping to round one.
+ */
+export function bracketGameForRound(
+  t: Pick<Tournament, 'games' | 'rules'>,
+  round: number,
+): string {
+  const planned = t.rules?.roundGames ?? []
+  if (!planned.length) return t.games[0] ?? ''
+  const index = Math.min(Math.max(1, round), planned.length) - 1
+  return planned[index] ?? t.games[0] ?? ''
+}
+
 export async function listTournaments(
   now = Date.now(),
   filter: TournamentListFilter = 'all',
@@ -1223,6 +1261,8 @@ export type CreateTournamentInput = {
   roundPlayHours?: number
   /** Bracket only: 'double' adds a losers bracket. Default single. */
   elimination?: Elimination
+  /** Bracket only: game per winners round, round 1 first. */
+  roundGames?: string[]
   kind?: TournamentKind
 }
 
@@ -1242,10 +1282,34 @@ export async function createTournament(
   const kind: TournamentKind = input.kind === 'bracket' ? 'bracket' : 'scores'
   const elimination: Elimination =
     kind === 'bracket' && input.elimination === 'double' ? 'double' : 'single'
-  const games = [...new Set(input.games)]
+  /*
+   * A bracket's games are whatever its rounds are played on, so the round plan
+   * is the source of truth and `games` is derived from it. Without a plan it
+   * stays what it always was: the single game picked for the whole draw.
+   */
+  const roundPlan: GameSlug[] = []
+  if (kind === 'bracket' && input.roundGames?.length) {
+    for (const entry of input.roundGames) {
+      const slug = resolveGameSlug(entry)
+      if (!slug) {
+        throw Object.assign(new Error('One or more round games are not available'), {
+          status: 400,
+        })
+      }
+      roundPlan.push(slug)
+    }
+  }
+  const games: GameSlug[] = roundPlan.length
+    ? [...new Set(roundPlan)]
+    : [...new Set(input.games)]
   if (kind === 'bracket') {
-    if (games.length !== 1) {
-      throw Object.assign(new Error('Bracket events use one game'), { status: 400 })
+    if (!roundPlan.length && games.length !== 1) {
+      throw Object.assign(new Error('Bracket events use one game per round'), { status: 400 })
+    }
+    if (roundPlan.length > bracketRoundCount(input.maxPlayers)) {
+      throw Object.assign(new Error('More round games than the draw has rounds'), {
+        status: 400,
+      })
     }
     // A losers bracket with byes strands players, so require a full draw.
     if (elimination === 'double' && !isDoubleElimSize(input.maxPlayers)) {
@@ -1301,7 +1365,9 @@ export async function createTournament(
     throw Object.assign(new Error('Player limit must be at least 2, or unlimited'), { status: 400 })
   }
   const format =
-    games.length > 1 ? 'place-points' : deriveCommunityFormat(maxAttempts)
+    games.length > 1 && kind !== 'bracket'
+      ? 'place-points'
+      : deriveCommunityFormat(maxAttempts)
 
   const activeCommunity = store.tournaments.filter(
     (t) =>
@@ -1319,7 +1385,11 @@ export async function createTournament(
   const blurb =
     input.blurb?.trim().slice(0, 280) ||
     (kind === 'bracket'
-      ? `${elimination === 'double' ? 'Double' : 'Single'}-elim bracket — higher score wins each match. ${gameLabel(games[0]!)}.`
+      ? `${elimination === 'double' ? 'Double' : 'Single'}-elim bracket — higher score wins each match. ${
+          new Set(roundPlan).size > 1
+            ? `A different game each round: ${roundPlan.map(gameLabel).join(' → ')}.`
+            : `${gameLabel(games[0]!)}.`
+        }`
       : games.length > 1
         ? `Private event: ${games.map(gameLabel).join(', ')}. Place points across games — highest total wins.`
         : defaultCommunityBlurb(games, maxAttempts))
@@ -1329,6 +1399,7 @@ export async function createTournament(
     scoring: 'best',
     ...(unlimitedDuration ? { unlimitedDuration: true } : {}),
     ...(kind === 'bracket' ? { roundPlayHours, elimination } : {}),
+    ...(roundPlan.length ? { roundGames: roundPlan } : {}),
   }
 
   const tournament: Tournament = {
@@ -1559,6 +1630,19 @@ export async function submitTournamentScore(
       throw Object.assign(new Error('It is not your match'), {
         status: 409,
         code: 'NOT_YOUR_MATCH',
+      })
+    }
+    /*
+     * Scores in a bracket are filed against the match, not the game, so
+     * without this a round set to Pellets would happily accept a Snake run —
+     * the match would still resolve, on a score from the wrong game.
+     */
+    const wanted = bracketGameForRound(t, openMatch.round)
+    if (wanted && gameSlug !== wanted) {
+      const label = resolveGameSlug(wanted)
+      throw Object.assign(new Error(`This round is played on ${label ? gameLabel(label) : wanted}`), {
+        status: 409,
+        code: 'WRONG_ROUND_GAME',
       })
     }
     if (openMatch.playEndsAt != null && now > openMatch.playEndsAt) {

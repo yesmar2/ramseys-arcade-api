@@ -49,6 +49,8 @@ const createSchema = z.object({
   roundPlayHours: z.number().int().min(1).max(168).optional(),
   kind: z.enum(['scores', 'bracket']).optional(),
   elimination: z.enum(['single', 'double']).optional(),
+  /** Bracket only: one game per winners round, round 1 first. */
+  roundGames: z.array(z.string().min(1)).min(1).max(6).optional(),
 })
 
 function claimError(err: unknown, res: import('express').Response) {
@@ -102,6 +104,7 @@ tournamentsRouter.post('/', async (req, res) => {
       durationHours: parsed.data.durationHours,
       roundPlayHours: parsed.data.roundPlayHours,
       elimination: parsed.data.elimination,
+      roundGames: parsed.data.roundGames,
       kind: parsed.data.kind,
     }
     const tournament = await createTournament(input, {

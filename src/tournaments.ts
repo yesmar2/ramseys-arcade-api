@@ -5,6 +5,7 @@ import {
   armMatchClocks,
   bracketDrawSize,
   bracketGamesForRound,
+  openMatchPairs,
   bracketHasChampion,
   earliestOpenMatchDeadline,
   bestInMatch,
@@ -895,6 +896,8 @@ function publicTournament(
     nextDeadlineAt,
     winner: tournamentWinner(normalized, now, bracket ? undefined : standings),
     podium: publicPodium(normalized, now, bracket ? undefined : standings),
+    // A live bracket has no standings to show, so the card shows who is on.
+    openMatches: bracket ? openMatchPairs(normalized) : [],
   }
 }
 

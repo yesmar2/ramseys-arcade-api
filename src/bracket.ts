@@ -618,6 +618,34 @@ export function earliestOpenMatchDeadline(t: Tournament): number | null {
   return min
 }
 
+export type OpenMatchPair = { a: string; b: string }
+
+/**
+ * The match-ups currently being played, for the event card.
+ *
+ * Only once the draw has locked — before that nobody has an opponent yet, and
+ * the whole point of hiding the preview is that nobody sees who they drew
+ * until the last seat fills. Ordered the way the bracket cascades, so the
+ * first few are the ones furthest along.
+ */
+export function openMatchPairs(t: Tournament, limit = 3): OpenMatchPair[] {
+  if (!t.bracket?.lockedAt) return []
+  const out: OpenMatchPair[] = []
+  const ordered = [...t.bracket.matches].sort(
+    (x, y) =>
+      SIDE_ORDER[matchSide(x)] - SIDE_ORDER[matchSide(y)] ||
+      x.round - y.round ||
+      x.slot - y.slot,
+  )
+  for (const match of ordered) {
+    if (out.length >= limit) break
+    const [a, b] = match.playerIds
+    if (match.winnerId || !a || !b) continue
+    out.push({ a: playerNameFor(t, a), b: playerNameFor(t, b) })
+  }
+  return out
+}
+
 export function resolveMatchIfReady(
   t: Tournament,
   match: BracketMatch,

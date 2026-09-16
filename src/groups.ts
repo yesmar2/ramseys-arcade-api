@@ -1,7 +1,7 @@
 import { and, eq } from 'drizzle-orm'
 import { db } from './db/client.js'
 import { groupMembers, groups } from './db/schema.js'
-import { cleanPlayerName, namesOwnedByAccount, withAvatarIds } from './names.js'
+import { cleanPlayerName, getClaim, namesOwnedByAccount, withAvatarIds } from './names.js'
 
 const MAX_GROUPS_PER_ACCOUNT = 5
 const MAX_MEMBERS = 20
@@ -154,6 +154,18 @@ export async function assertGroupBoardAccess(
   return group
 }
 
+/**
+ * Which tag on the roster belongs to the account that owns the group.
+ *
+ * The viewer's own `isOwner` says nothing about who the host is when the
+ * viewer is not them, and the roster had been guessing — labelling whoever
+ * joined first, which is not the same person.
+ */
+export async function groupOwnerName(group: Group): Promise<string | null> {
+  const owned = new Set(await accountNames(group.createdBy.accountId))
+  return group.members.find((m) => owned.has(m.name))?.name ?? null
+}
+
 export async function publicGroup(
   group: Group,
   opts: GroupAccessOpts = {},
@@ -164,6 +176,7 @@ export async function publicGroup(
   members: Array<GroupMember & { avatarId?: string }>
   isOwner: boolean
   isMember: boolean
+  ownerName: string | null
   inviteCode: string | null
 }> {
   const owner = isGroupOwner(group, opts.accountId)
@@ -175,6 +188,7 @@ export async function publicGroup(
     members: await withAvatarIds(group.members),
     isOwner: owner,
     isMember: member,
+    ownerName: await groupOwnerName(group),
     inviteCode: owner ? group.inviteCode : null,
   }
 }
@@ -198,6 +212,7 @@ export async function listGroupsFor(opts: GroupAccessOpts = {}) {
       members: await withAvatarIds(g.members),
       isOwner: owner,
       isMember: member,
+      ownerName: await groupOwnerName(g),
       inviteCode: owner ? g.inviteCode : null,
     })
   }
@@ -334,6 +349,40 @@ export async function renameGroup(id: string, accountId: string, rawName: string
   invalidateGroupsCache()
   await db().update(groups).set({ name }).where(eq(groups.id, id))
   group.name = name
+  return publicGroup(group, { accountId })
+}
+
+/**
+ * Hand the group to another member.
+ *
+ * A group made from the wrong account is otherwise stuck: only the owner can
+ * invite, rename or rotate the code, and there was no way to move that
+ * without rebuilding the roster somewhere else.
+ */
+export async function transferGroup(id: string, accountId: string, rawName: string) {
+  const group = await getGroup(id)
+  if (!group) fail('Group not found', 404, 'GROUP_NOT_FOUND')
+  if (!isGroupOwner(group, accountId)) fail('Only the owner can hand the group over', 403)
+
+  const toName = cleanPlayerName(rawName)
+  if (!toName) fail('Gamer tag required', 400, 'NAME_REQUIRED')
+  if (!group.members.some((m) => m.name === toName)) {
+    fail(`${toName} is not in this group`, 404, 'NOT_A_MEMBER')
+  }
+
+  // The new host has to be an account, or nobody could host it afterwards.
+  const claim = await getClaim(toName)
+  if (!claim?.accountId) {
+    fail(`${toName} has not signed in yet, so they cannot host`, 409, 'NOT_AN_ACCOUNT')
+  }
+  if (claim.accountId === accountId) return publicGroup(group, { accountId })
+
+  invalidateGroupsCache()
+  await db()
+    .update(groups)
+    .set({ createdByAccountId: claim.accountId })
+    .where(eq(groups.id, id))
+  group.createdBy = { accountId: claim.accountId }
   return publicGroup(group, { accountId })
 }
 

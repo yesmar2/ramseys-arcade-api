@@ -479,10 +479,10 @@ export async function bestsForName(
   return out
 }
 
-/** Placement points: 1st = 100 … 100th = 1. */
-export function placePoints(place: number): number {
-  if (place < 1 || place > MAX_BOARD) return 0
-  return Math.max(0, 101 - place)
+/** Placement points from a full-field place: 1st ≈ 100, last ≈ 1, scales with N. */
+export function placePoints(place: number, fieldSize: number): number {
+  if (place < 1 || fieldSize < 1 || place > fieldSize) return 0
+  return Math.max(1, Math.round((100 * (fieldSize - place + 1)) / fieldSize))
 }
 
 export type GlobalGamePlace = {
@@ -498,6 +498,7 @@ export type GlobalRankEntry = {
   byGame: Partial<Record<GameSlug, GlobalGamePlace>>
 }
 
+/** Unique players in score order for global rank — full field, not board-capped. */
 function placementsFromPool(pool: LeaderboardEntry[]): { name: string; place: number }[] {
   const seen = new Set<string>()
   const bests: string[] = []
@@ -505,7 +506,6 @@ function placementsFromPool(pool: LeaderboardEntry[]): { name: string; place: nu
     if (seen.has(entry.name)) continue
     seen.add(entry.name)
     bests.push(entry.name)
-    if (bests.length >= MAX_BOARD) break
   }
   return bests.map((name, i) => ({ name, place: i + 1 }))
 }
@@ -540,8 +540,10 @@ async function aggregateGlobalRanks(
   >()
 
   for (const game of ALLOWED_GAMES) {
-    for (const { name, place } of await placementsForGame(game)) {
-      const points = placePoints(place)
+    const placements = await placementsForGame(game)
+    const fieldSize = placements.length
+    for (const { name, place } of placements) {
+      const points = placePoints(place, fieldSize)
       if (points <= 0) continue
       const row = byName.get(name) ?? { score: 0, games: 0, byGame: {} }
       row.score += points

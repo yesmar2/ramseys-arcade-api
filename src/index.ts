@@ -17,6 +17,7 @@ import { groupsRouter } from './groupsRoutes.js'
 import { invitesRouter } from './invitesRoutes.js'
 import { tournamentsRouter } from './tournamentsRoutes.js'
 import { notificationsRouter } from './notificationsRoutes.js'
+import { publicVapidKey } from './push.js'
 import { trophiesRouter } from './trophiesRoutes.js'
 import { checkDbHealth, queryStats } from './db/client.js'
 import { runMigrations } from './db/migrate.js'
@@ -107,6 +108,9 @@ async function main() {
       ok: dbHealth.ok,
       games: ALLOWED_GAMES,
       db: dbHealth.ok,
+      // Whether VAPID is configured here. Without it the opt-in is hidden in
+      // the app, which is otherwise indistinguishable from the feature missing.
+      push: Boolean(publicVapidKey()),
       ...(dbHealth.error ? { error: dbHealth.error } : {}),
     })
   })

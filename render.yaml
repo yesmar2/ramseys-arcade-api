@@ -15,3 +15,13 @@ services:
       # Set in Render dashboard → Neon pooled connection string
       - key: DATABASE_URL
         sync: false
+      # Web push for bracket match alerts. Generate a pair with:
+      #   node -e "console.log(require('web-push').generateVAPIDKeys())"
+      # Without these the opt-in stays hidden in the app; /health reports
+      # "push": false so the state is visible from outside.
+      - key: VAPID_PUBLIC_KEY
+        sync: false
+      - key: VAPID_PRIVATE_KEY
+        sync: false
+      - key: VAPID_SUBJECT
+        value: mailto:hello@skermix.com

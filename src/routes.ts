@@ -1,5 +1,6 @@
 import { Router } from 'express'
 import { z } from 'zod'
+import { pageParams } from './paging.js'
 import { accountFromRequest } from './auth.js'
 import { resolveBoardScope } from './groups.js'
 import { assertCanUseName, withAvatarId, withAvatarIds } from './names.js'
@@ -11,6 +12,7 @@ import {
   bestsForName,
   boardsSummaryForPeriod,
   getBoard,
+  getBoardPage,
   globalRanks,
   isPeriod,
   qualifies,
@@ -77,15 +79,13 @@ leaderboardsRouter.get('/rank', async (req, res) => {
     })
     return
   }
-  const limitRaw = Number(req.query.limit ?? 50)
-  const limit = Number.isFinite(limitRaw)
-    ? Math.min(100, Math.max(1, Math.floor(limitRaw)))
-    : 50
+  const { limit, offset } = pageParams(req.query, 50)
   const all = await globalRanks(period, Date.now(), scope)
   res.json({
     period,
+    offset,
     totalPlayers: all.length,
-    entries: await withAvatarIds(all.slice(0, limit)),
+    entries: await withAvatarIds(all.slice(offset, offset + limit)),
   })
 })
 
@@ -157,10 +157,14 @@ leaderboardsRouter.get('/:game', async (req, res) => {
     return
   }
   const you = name ? await bestForName(game, name, period, Date.now(), scope) : null
+  const { limit, offset } = pageParams(req.query)
+  const page = await getBoardPage(game, period, { offset, limit, scope })
   res.json({
     game,
     period,
-    entries: await withAvatarIds(await getBoard(game, period, Date.now(), scope)),
+    offset,
+    total: page.total,
+    entries: await withAvatarIds(page.entries),
     you: you ? await withAvatarId(you) : null,
   })
 })

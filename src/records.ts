@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, sql } from 'drizzle-orm'
+import { and, desc, eq, inArray } from 'drizzle-orm'
 import { db } from './db/client.js'
 import { leaderboardScores, recordScores } from './db/schema.js'
 import {
@@ -16,8 +16,8 @@ import {
   type Period,
 } from './store.js'
 
-const MAX_BOARD = 100
-const MAX_HISTORY = 500
+/** Default page of a record board, for callers that ask for no depth. */
+const BOARD_PAGE = 100
 const ASTEROIDS_WAVE_MAX = 20
 const SNAKE_LENGTH_MILESTONE_MIN = 20
 const SNAKE_LENGTH_MILESTONE_MAX = 100
@@ -429,7 +429,32 @@ export async function getRecordBoard(
   const def = getRecordDef(game, recordId)
   if (!def) return []
   const pool = filterByNames(filterByPeriod(await historyFor(game, recordId), period, now), scope)
-  return bestPerPlayer(sortEntries(pool, def.direction)).slice(0, MAX_BOARD)
+  return bestPerPlayer(sortEntries(pool, def.direction)).slice(0, BOARD_PAGE)
+}
+
+/**
+ * One window onto a record board, and how deep it goes.
+ *
+ * A record board is one row per player, so `total` is the size of the field
+ * a rank is measured against — the number that makes 5,321st mean something.
+ */
+export async function getRecordBoardPage(
+  game: GameSlug,
+  recordId: string,
+  period: Period = 'all',
+  opts: { offset?: number; limit?: number; now?: number; scope?: NameScope } = {},
+): Promise<{ entries: RecordEntry[]; total: number }> {
+  const def = getRecordDef(game, recordId)
+  if (!def) return { entries: [], total: 0 }
+  const now = opts.now ?? Date.now()
+  const offset = Math.max(0, Math.floor(opts.offset ?? 0))
+  const limit = Math.max(1, Math.floor(opts.limit ?? BOARD_PAGE))
+  const pool = filterByNames(
+    filterByPeriod(await historyFor(game, recordId), period, now),
+    opts.scope,
+  )
+  const ranked = bestPerPlayer(sortEntries(pool, def.direction))
+  return { entries: ranked.slice(offset, offset + limit), total: ranked.length }
 }
 
 export async function bestRecordForName(
@@ -553,32 +578,19 @@ export async function addRecord(
     device: isDeviceType(device) ? device : 'desktop',
   }
 
+  /*
+   * Every attempt is kept. The old prune held the newest 500 rows per board,
+   * which quietly dropped a player's own best once the board got busy.
+   */
   invalidateRecordHistoryCache()
-  await db().transaction(async (tx) => {
-    await tx.insert(recordScores).values({
-      id: entry.id,
-      game,
-      recordId,
-      name: entry.name,
-      score: entry.score,
-      at: entry.at,
-      device: entry.device,
-    })
-    // Keep newest MAX_HISTORY rows for this board
-    await tx.execute(sql`
-      DELETE FROM record_scores AS rs
-      WHERE rs.game = ${game}
-        AND rs.record_id = ${recordId}
-        AND rs.id NOT IN (
-          SELECT keep.id FROM (
-            SELECT id
-            FROM record_scores
-            WHERE game = ${game} AND record_id = ${recordId}
-            ORDER BY at DESC
-            LIMIT ${MAX_HISTORY}
-          ) AS keep
-        )
-    `)
+  await db().insert(recordScores).values({
+    id: entry.id,
+    game,
+    recordId,
+    name: entry.name,
+    score: entry.score,
+    at: entry.at,
+    device: entry.device,
   })
 
   const next = await historyFor(game, recordId)

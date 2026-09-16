@@ -1,3 +1,4 @@
+import { pageParams } from './paging.js'
 import { Router } from 'express'
 import { z } from 'zod'
 import { accountFromRequest } from './auth.js'
@@ -7,6 +8,7 @@ import {
   addRecord,
   bestRecordForName,
   getRecordBoard,
+  getRecordBoardPage,
   getRecordDef,
   listGameRecords,
 } from './records.js'
@@ -92,13 +94,15 @@ recordsRouter.get('/:game/:recordId', async (req, res) => {
   const you = name
     ? await bestRecordForName(game, recordId, name, period, Date.now(), scope)
     : null
+  const { limit, offset } = pageParams(req.query)
+  const page = await getRecordBoardPage(game, recordId, period, { offset, limit, scope })
   res.json({
     game,
     record: def,
     period,
-    entries: await withAvatarIds(
-      await getRecordBoard(game, recordId, period, Date.now(), scope),
-    ),
+    offset,
+    total: page.total,
+    entries: await withAvatarIds(page.entries),
     you: you ? await withAvatarId(you) : null,
   })
 })

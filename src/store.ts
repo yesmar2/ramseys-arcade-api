@@ -1,4 +1,4 @@
-import { asc, desc, eq, sql } from 'drizzle-orm'
+import { asc, desc, eq } from 'drizzle-orm'
 import { db } from './db/client.js'
 import { leaderboardScores } from './db/schema.js'
 
@@ -59,9 +59,15 @@ export function isDeviceType(value: unknown): value is DeviceType {
 
 type Store = Record<GameSlug, LeaderboardEntry[]>
 
-const MAX_BOARD = 100
-const MAX_HISTORY = 500
-const RETAIN_DAYS = 100
+/*
+ * The board that counts: making the top 100 is what earns a celebration and
+ * a place on the default page. It is not a storage limit — every score is
+ * kept, and the deep tail is browsable a page at a time.
+ */
+const BOARD_CUT = 100
+
+/** Default page of a board, for callers that ask for no depth in particular. */
+const BOARD_PAGE = 100
 
 function emptyStore(): Store {
   return {
@@ -169,8 +175,8 @@ function sortByScore(entries: LeaderboardEntry[]) {
   return [...entries].sort((a, b) => b.score - a.score || a.at - b.at)
 }
 
-function topBoard(entries: LeaderboardEntry[]) {
-  return sortByScore(entries).slice(0, MAX_BOARD)
+function topBoard(entries: LeaderboardEntry[], limit = BOARD_PAGE) {
+  return sortByScore(entries).slice(0, limit)
 }
 
 type Ymd = { y: number; m: number; d: number; weekday: string }
@@ -409,8 +415,33 @@ export async function getBoard(
   period: Period = 'all',
   now = Date.now(),
   scope?: NameScope,
+  limit = BOARD_PAGE,
 ): Promise<LeaderboardEntry[]> {
-  return topBoard(filterByNames(filterByPeriod(await historyFor(game), period, now), scope))
+  return topBoard(
+    filterByNames(filterByPeriod(await historyFor(game), period, now), scope),
+    limit,
+  )
+}
+
+/**
+ * One window onto a board, and how deep it goes.
+ *
+ * The field is whole — every score ever posted — so a board is browsable all
+ * the way down rather than stopping at the hundredth row. `total` is what
+ * lets a caller know there is more below, and what a rank is out of.
+ */
+export async function getBoardPage(
+  game: GameSlug,
+  period: Period = 'all',
+  opts: { offset?: number; limit?: number; now?: number; scope?: NameScope } = {},
+): Promise<{ entries: LeaderboardEntry[]; total: number }> {
+  const now = opts.now ?? Date.now()
+  const offset = Math.max(0, Math.floor(opts.offset ?? 0))
+  const limit = Math.max(1, Math.floor(opts.limit ?? BOARD_PAGE))
+  const pool = sortByScore(
+    filterByNames(filterByPeriod(await historyFor(game), period, now), opts.scope),
+  )
+  return { entries: pool.slice(offset, offset + limit), total: pool.length }
 }
 
 export type PeriodBoardSummary = Record<Period, LeaderboardEntry[]>
@@ -640,7 +671,7 @@ export async function qualifies(
 ): Promise<boolean> {
   if (score <= 0) return false
   const board = await getBoard(game, period, now)
-  if (board.length < MAX_BOARD) return true
+  if (board.length < BOARD_CUT) return true
   return score > board[board.length - 1].score
 }
 
@@ -710,34 +741,20 @@ export async function addScore(
     device: isDeviceType(device) ? device : 'desktop',
   }
 
-  const cutoff = now - RETAIN_DAYS * 24 * 60 * 60 * 1000
-
+  /*
+   * Every score is kept. This used to prune to the top 500 per game and drop
+   * anything older than 100 days, which made sense when the store was a JSON
+   * file rewritten in full on every write — it is a table now, and a rank
+   * only means something if the field behind it is real.
+   */
   invalidateHistoryCache()
-  await db().transaction(async (tx) => {
-    await tx.insert(leaderboardScores).values({
-      id: entry.id,
-      game,
-      name: entry.name,
-      score: entry.score,
-      at: entry.at,
-      device: entry.device,
-    })
-    await tx.execute(sql`
-      DELETE FROM leaderboard_scores AS ls
-      WHERE ls.game = ${game}
-        AND (
-          ls.at < ${cutoff}
-          OR ls.id NOT IN (
-            SELECT keep.id FROM (
-              SELECT id
-              FROM leaderboard_scores
-              WHERE game = ${game}
-              ORDER BY score DESC, at ASC
-              LIMIT ${MAX_HISTORY}
-            ) AS keep
-          )
-        )
-    `)
+  await db().insert(leaderboardScores).values({
+    id: entry.id,
+    game,
+    name: entry.name,
+    score: entry.score,
+    at: entry.at,
+    device: entry.device,
   })
 
   const next = await historyFor(game)

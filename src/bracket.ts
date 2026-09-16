@@ -728,12 +728,17 @@ export function previewBracket(t: Tournament): PublicBracket | null {
     ? bracketDrawSize(cap)
     : bracketDrawSize(Math.max(BRACKET_PLAYERS_MIN, t.players.length))
   const elimination = resolveElimination(t)
-  const seatOf = (p: TournamentPlayer | null | undefined): PublicBracketSide | null =>
-    p ? { id: p.id, name: p.name, score: null, attemptsUsed: 0 } : null
 
+  /*
+   * The preview is the shape only — how many rounds, how the halves feed the
+   * final — and never who is in which seat.
+   *
+   * It used to seat everyone in join order, which was wrong twice over: the
+   * real draw is a seeded shuffle, so those pairings were not the ones anybody
+   * would actually play, and showing them gave away the one moment a bracket
+   * has before it starts. Nobody sees who they drew until the last seat fills.
+   */
   if (elimination === 'double') {
-    // Show the real double-elim shape, seated in join order.
-    const byId = new Map(t.players.map((p) => [p.id, p]))
     const built = buildDoubleElim(t.players, size)
     // Feeds point at unprefixed ids, so resolve them before renaming for preview.
     const feeds = slotFeeds(built)
@@ -744,7 +749,7 @@ export function previewBracket(t: Tournament): PublicBracket | null {
       bracket: matchSide(m),
       winnerId: null,
       playEndsAt: null,
-      players: [seatOf(byId.get(m.playerIds[0] ?? '')), seatOf(byId.get(m.playerIds[1] ?? ''))],
+      players: [null, null],
       from: feeds.get(m.id) ?? NO_FEEDS,
     }))
     return { lockedAt: 0, elimination, matches }
@@ -761,7 +766,7 @@ export function previewBracket(t: Tournament): PublicBracket | null {
       bracket: 'wb',
       winnerId: null,
       playEndsAt: null,
-      players: [seatOf(t.players[slot * 2]), seatOf(t.players[slot * 2 + 1])],
+      players: [null, null],
       from: NO_FEEDS,
     })
   }

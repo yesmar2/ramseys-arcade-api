@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import { z } from 'zod'
 import { accountFromRequest } from './auth.js'
+import { planErrorFields } from './plans.js'
 import { assertCanUseName } from './names.js'
 import { resolveGameSlug, type GameSlug } from './store.js'
 import {
@@ -63,6 +64,7 @@ function claimError(err: unknown, res: import('express').Response) {
   res.status(status).json({
     error: err instanceof Error ? err.message : 'Request failed',
     code,
+    ...planErrorFields(err),
   })
 }
 
@@ -114,6 +116,7 @@ tournamentsRouter.post('/', async (req, res) => {
     const tournament = await createTournament(input, {
       accountId: account.id,
       email: account.email,
+      plan: account.plan,
     })
     res.status(201).json({ tournament })
   } catch (err) {

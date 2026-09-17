@@ -10,6 +10,7 @@ import {
   verifyMagicLink,
 } from './auth.js'
 import { linkNameToAccount, namesOwnedByAccount } from './names.js'
+import { planLimits } from './plans.js'
 import { renamePlayerAcrossRecords } from './records.js'
 import { renamePlayerAcrossLeaderboards } from './store.js'
 import { renamePlayerAcrossTournaments } from './tournaments.js'
@@ -126,6 +127,8 @@ authRouter.get('/me', async (req, res) => {
   res.json({
     account,
     names: await namesOwnedByAccount(account.id),
+    // Sent so the client renders the real caps rather than its own copy.
+    limits: planLimits(account.plan),
   })
 })
 

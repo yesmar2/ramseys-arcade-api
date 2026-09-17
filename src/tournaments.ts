@@ -2,6 +2,7 @@ import { eq, inArray } from 'drizzle-orm'
 import { db } from './db/client.js'
 import { tournaments as tournamentsTable } from './db/schema.js'
 import { fileMatchAlerts } from './matchAlerts.js'
+import { planDenied, planLimits, type AccountPlan } from './plans.js'
 import {
   armMatchClocks,
   bracketDrawSize,
@@ -70,6 +71,7 @@ export type TournamentRules = {
 export type TournamentCreator = {
   accountId: string
   email: string
+  plan?: AccountPlan
 }
 
 export type TournamentPlayer = {
@@ -183,7 +185,6 @@ export const FORMAT_LABELS: Record<TournamentFormat, string> = {
   cumulative: 'Total score',
 }
 
-const MAX_PRIVATE_EVENTS_PER_ACCOUNT = 5
 const MAX_COMMUNITY_DURATION_HOURS = 168
 const MIN_COMMUNITY_DURATION_HOURS = 1
 
@@ -1265,6 +1266,8 @@ export async function createTournament(
   now = Date.now(),
 ) {
   const store = await ensureStore(now)
+  const plan: AccountPlan = creator.plan === 'plus' ? 'plus' : 'free'
+  const limits = planLimits(plan)
   const title = input.title.trim().slice(0, 60)
   if (title.length < 3) {
     throw Object.assign(new Error('Title must be at least 3 characters'), { status: 400 })
@@ -1323,6 +1326,20 @@ export async function createTournament(
         { status: 400 },
       )
     }
+    if (elimination === 'double' && !limits.doubleElimination) {
+      throw planDenied(
+        'doubleElimination',
+        plan,
+        'Double elimination is a Plus feature',
+      )
+    }
+    if (new Set(roundPlan.flat()).size > 1 && !limits.multiGameRounds) {
+      throw planDenied(
+        'multiGameRounds',
+        plan,
+        'A different game each round is a Plus feature',
+      )
+    }
   } else if (games.length < 1 || games.length > MAX_PRIVATE_GAMES) {
     throw Object.assign(new Error('Pick 1–5 games'), { status: 400 })
   }
@@ -1359,6 +1376,17 @@ export async function createTournament(
 
   const maxAttempts = Math.max(0, Math.min(99, Math.floor(input.maxAttempts)))
   const maxPlayers = Math.max(0, Math.min(99, Math.floor(input.maxPlayers)))
+  /*
+   * An unlimited roster (0) is bigger than any ceiling, so it counts as over
+   * the cap rather than under it.
+   */
+  if (maxPlayers === 0 || maxPlayers > limits.maxDraw) {
+    throw planDenied(
+      'maxDraw',
+      plan,
+      `Events of more than ${limits.maxDraw} players are a Plus feature`,
+    )
+  }
   if (kind === 'bracket') {
     if (!isBracketSize(maxPlayers)) {
       throw Object.assign(new Error('Bracket events need 2–64 players'), { status: 400 })
@@ -1380,8 +1408,14 @@ export async function createTournament(
       t.createdBy?.accountId === creator.accountId &&
       tournamentStatus(t, now) !== 'ended',
   )
-  if (activeCommunity.length >= MAX_PRIVATE_EVENTS_PER_ACCOUNT) {
-    throw Object.assign(new Error('You already have 5 active private events'), { status: 409 })
+  if (activeCommunity.length >= limits.activeEvents) {
+    throw planDenied(
+      'activeEvents',
+      plan,
+      limits.activeEvents === 1
+        ? 'You already have an event running. Plus lets you run five at once.'
+        : `You already have ${limits.activeEvents} active events`,
+    )
   }
 
   const inviteCode = generateInviteCode()

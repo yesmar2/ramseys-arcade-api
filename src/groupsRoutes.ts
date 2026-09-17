@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import { z } from 'zod'
 import { accountFromRequest } from './auth.js'
+import { planErrorFields } from './plans.js'
 import { assertCanUseName } from './names.js'
 import {
   createGroup,
@@ -55,6 +56,7 @@ function claimError(err: unknown, res: import('express').Response) {
   res.status(status).json({
     error: err instanceof Error ? err.message : 'Request failed',
     code,
+    ...planErrorFields(err),
   })
 }
 

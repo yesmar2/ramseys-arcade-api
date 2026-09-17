@@ -1,10 +1,15 @@
 import { and, eq } from 'drizzle-orm'
 import { db } from './db/client.js'
 import { groupMembers, groups } from './db/schema.js'
+import { getAccount } from './auth.js'
 import { cleanPlayerName, getClaim, namesOwnedByAccount, withAvatarIds } from './names.js'
+import { planDenied, planLimits, type AccountPlan } from './plans.js'
 
-const MAX_GROUPS_PER_ACCOUNT = 5
-const MAX_MEMBERS = 20
+/** A group's size follows whoever owns it, not whoever is joining. */
+async function ownerPlan(accountId: string): Promise<AccountPlan> {
+  const account = await getAccount(accountId)
+  return account?.plan === 'plus' ? 'plus' : 'free'
+}
 const INVITE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
 
 export type GroupMember = {
@@ -238,8 +243,16 @@ export async function createGroup(
     .select()
     .from(groups)
     .where(eq(groups.createdByAccountId, creator.accountId))
-  if (hosted.length >= MAX_GROUPS_PER_ACCOUNT) {
-    fail(`You already have ${MAX_GROUPS_PER_ACCOUNT} groups`, 409, 'GROUP_LIMIT')
+  const plan = await ownerPlan(creator.accountId)
+  const limits = planLimits(plan)
+  if (hosted.length >= limits.groups) {
+    throw planDenied(
+      'groups',
+      plan,
+      limits.groups === 1
+        ? 'You already have a group. Plus lets you run five.'
+        : `You already have ${limits.groups} groups`,
+    )
   }
 
   /*
@@ -301,7 +314,10 @@ export async function joinGroup(
   if (group.members.some((m) => m.name === name)) {
     return publicGroup(group, { playerName: name })
   }
-  if (group.members.length >= MAX_MEMBERS) fail('This group is full', 409, 'GROUP_FULL')
+  const limits = planLimits(await ownerPlan(group.createdBy.accountId))
+  if (group.members.length >= limits.groupMembers) {
+    fail('This group is full', 409, 'GROUP_FULL')
+  }
 
   invalidateGroupsCache()
   await db().insert(groupMembers).values({

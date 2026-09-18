@@ -2,7 +2,14 @@ import { and, eq, sql } from 'drizzle-orm'
 import { db } from './db/client.js'
 import { leaderboardScores, recordScores } from './db/schema.js'
 import { getRecordDef } from './records.js'
-import { boardDateKey, previousBoardDateKey } from './store.js'
+import {
+  boardDateKey,
+  getBoardPage,
+  inPeriod,
+  previousBoardDateKey,
+  type GameSlug,
+  type Period,
+} from './store.js'
 
 /**
  * A player's own numbers, over time.
@@ -108,7 +115,11 @@ function trendOf(rows: { at: number; score: number }[]): { at: number; score: nu
     .slice(-30)
 }
 
-export async function playerStats(rawName: string, now = Date.now()): Promise<PlayerStats> {
+export async function playerStats(
+  rawName: string,
+  period: Period = 'all',
+  now = Date.now(),
+): Promise<PlayerStats> {
   const name = rawName.trim().slice(0, 12).toUpperCase()
   const empty: PlayerStats = {
     headline: { runs: 0, days: 0, games: 0, firstPlayedAt: null },
@@ -118,7 +129,7 @@ export async function playerStats(rawName: string, now = Date.now()): Promise<Pl
   }
   if (!name) return empty
 
-  const mine = await db()
+  const all = await db()
     .select({
       game: leaderboardScores.game,
       score: leaderboardScores.score,
@@ -126,7 +137,15 @@ export async function playerStats(rawName: string, now = Date.now()): Promise<Pl
     })
     .from(leaderboardScores)
     .where(eq(leaderboardScores.name, name))
-  if (mine.length === 0) return empty
+  if (all.length === 0) return empty
+  // Same window the boards use, so "this week" means one thing in this app.
+  const mine = all.filter((row) => inPeriod(row.at, period, now))
+  // The streak outlives the window: a quiet Tuesday does not end a habit.
+  const lifetimeStreak = streakFrom(
+    all.map((r) => boardDateKey(r.at)),
+    now,
+  )
+  if (mine.length === 0) return { ...empty, streak: lifetimeStreak }
 
   const byGame = new Map<string, { score: number; at: number }[]>()
   for (const row of mine) {
@@ -144,24 +163,32 @@ export async function playerStats(rawName: string, now = Date.now()): Promise<Pl
     const best = Math.max(...rows.map((r) => r.score))
     const total = rows.reduce((sum, r) => sum + r.score, 0)
 
-    const [agg] = await db()
-      .select({
-        runs: sql<number>`count(*)::int`,
-        beaten: sql<number>`count(*) filter (where ${leaderboardScores.score} < ${best})::int`,
-        players: sql<number>`count(distinct ${leaderboardScores.name})::int`,
-        ahead: sql<number>`count(distinct ${leaderboardScores.name}) filter (where ${leaderboardScores.score} > ${best})::int`,
-      })
-      .from(leaderboardScores)
-      .where(eq(leaderboardScores.game, slug))
+    /*
+     * Measured against the same board the player would be looking at, which
+     * is the cached one — it already knows how to cut a period, and asking it
+     * beats a second set of SQL that has to agree with it.
+     */
+    const board = await getBoardPage(slug as GameSlug, period, {
+      limit: Number.MAX_SAFE_INTEGER,
+      now,
+    })
+    const names = new Set<string>()
+    let beaten = 0
+    const ahead = new Set<string>()
+    for (const entry of board.entries) {
+      names.add(entry.name)
+      if (entry.score < best) beaten += 1
+      if (entry.score > best) ahead.add(entry.name)
+    }
 
-    const boardRuns = agg?.runs ?? rows.length
+    const boardRuns = board.total || rows.length
     games.push({
       slug,
       runs: rows.length,
       best,
-      rank: (agg?.ahead ?? 0) + 1,
-      totalPlayers: agg?.players ?? 1,
-      percentile: boardRuns > 0 ? Math.round(((agg?.beaten ?? 0) / boardRuns) * 100) : 0,
+      rank: ahead.size + 1,
+      totalPlayers: names.size || 1,
+      percentile: boardRuns > 0 ? Math.round((beaten / boardRuns) * 100) : 0,
       average: Math.round(total / rows.length),
       lastPlayedAt: Math.max(...rows.map((r) => r.at)),
       trend: trendOf(rows),
@@ -176,10 +203,7 @@ export async function playerStats(rawName: string, now = Date.now()): Promise<Pl
       games: byGame.size,
       firstPlayedAt: Math.min(...mine.map((r) => r.at)),
     },
-    streak: streakFrom(
-      mine.map((r) => boardDateKey(r.at)),
-      now,
-    ),
+    streak: lifetimeStreak,
     games,
     nearRecords: await nearRecords(name),
   }

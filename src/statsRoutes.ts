@@ -3,6 +3,7 @@ import { accountFromRequest } from './auth.js'
 import { namesOwnedByAccount } from './names.js'
 import { isPlus } from './plans.js'
 import { playerStats } from './stats.js'
+import { isPeriod, type Period } from './store.js'
 
 export const statsRouter = Router()
 
@@ -31,13 +32,21 @@ statsRouter.get('/me', async (req, res) => {
     return
   }
 
+  const periodParam = req.query.period
+  if (periodParam != null && periodParam !== '' && !isPeriod(periodParam)) {
+    res.status(400).json({ error: 'Invalid period' })
+    return
+  }
+  const period: Period = isPeriod(periodParam) ? periodParam : 'all'
+
   try {
-    const stats = await playerStats(target)
+    const stats = await playerStats(target, period)
     const plus = isPlus(account.plan)
     res.json({
       plan: account.plan,
       tag: target,
       tags: owned,
+      period,
       stats: plus
         ? stats
         : // Free keeps what it can act on today, without the history.

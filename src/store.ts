@@ -298,6 +298,25 @@ function filterByNames<T extends { name: string }>(entries: T[], scope?: NameSco
   return entries.filter((e) => scope.has(e.name))
 }
 
+/**
+ * Does one timestamp fall inside a period?
+ *
+ * The same day-key maths the boards filter by, exposed for callers that hold
+ * rows of their own — a week has to mean the same week everywhere.
+ */
+export function inPeriod(at: number, period: Period, now = Date.now()): boolean {
+  if (period === 'all') return true
+  if (period === 'daily') return keyOf(at) === keyOf(now)
+  if (period === 'monthly') {
+    const here = ymdInTz(now)
+    const there = ymdInTz(at)
+    return there.y === here.y && there.m === here.m
+  }
+  const start = weekStartKey(now)
+  const key = keyOf(at)
+  return key >= start && key <= keyOf(now)
+}
+
 export function filterByPeriod(
   entries: LeaderboardEntry[],
   period: Period,

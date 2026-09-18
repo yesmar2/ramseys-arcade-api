@@ -168,14 +168,8 @@ export type StandingRow = {
 }
 
 /** Mario Kart–style place points (place → points). */
-export const PLACE_POINTS: Record<number, number> = {
-  1: 10,
-  2: 7,
-  3: 5,
-  4: 3,
-  5: 2,
-  6: 1,
-}
+/** What a win on one game is worth. Last place on that game's board takes 1. */
+export const TOP_PLACE_POINTS = 10
 
 export const FORMAT_LABELS: Record<TournamentFormat, string> = {
   open: 'Open · Best score',
@@ -188,9 +182,27 @@ export const FORMAT_LABELS: Record<TournamentFormat, string> = {
 const MAX_COMMUNITY_DURATION_HOURS = 168
 const MIN_COMMUNITY_DURATION_HOURS = 1
 
-function placePoints(place: number | null): number {
-  if (place == null) return 0
-  return PLACE_POINTS[place] ?? 0
+/**
+ * Place points for one game inside an event.
+ *
+ * This used to be a fixed table that stopped at sixth, which is fine for a
+ * family of five and wrong for everything else: in a field of thirty, the
+ * other twenty-four scored nothing at all, and nothing they could do that
+ * week would change it. It is a ramp now — the winner takes ten, whoever
+ * comes last on that game's board takes one, and every place between them is
+ * worth more than the one below.
+ *
+ * The field is the players who actually posted on that game, so a game half
+ * the roster skipped is not scored as if they had all lost it.
+ */
+function placePoints(place: number | null, fieldSize: number): number {
+  if (place == null || place < 1 || fieldSize < 1 || place > fieldSize) return 0
+  // Winning is worth the top on its own — a straight ramp let first and
+  // second tie on points once the field got big enough.
+  if (place === 1) return TOP_PLACE_POINTS
+  const below = Math.max(1, fieldSize - 2)
+  const fromLast = fieldSize - place
+  return Math.max(1, Math.round(1 + ((TOP_PLACE_POINTS - 2) * fromLast) / below))
 }
 
 type Store = { tournaments: Tournament[] }
@@ -1066,7 +1078,9 @@ export function computeStandings(t: Tournament): StandingRow[] {
         const info = byGamePlaces[game]?.get(p.id)
         const place = info?.place ?? null
         const score = info?.score ?? null
-        const points = resolveFormat(normalized) === 'place-points' ? placePoints(place) : 0
+        const field = byGamePlaces[game]?.size ?? 0
+        const points =
+          resolveFormat(normalized) === 'place-points' ? placePoints(place, field) : 0
         const attemptsUsed = playerAttempts(normalized, p.id, game)
         if (score != null) gamesPlayed += 1
         totalPoints += points
@@ -1230,7 +1244,8 @@ export async function getTournamentDetail(
     ...publicTournament(t, now),
     players: t.players.map((p) => ({ id: p.id, name: p.name, joinedAt: p.joinedAt })),
     standings: await withAvatarIds(computeStandings(t)),
-    placePoints: PLACE_POINTS,
+    // The curve's ends; the places between them are spread across the field.
+    placePoints: { top: TOP_PLACE_POINTS, last: 1 },
     bracket: publicBracket(t) ?? previewBracket(t),
     playerStatus,
     // Hide invite once every seat is filled — no more entries to recruit.

@@ -39,10 +39,19 @@ leaderboardsRouter.get('/bests', async (req, res) => {
   }
   const period: Period = isPeriod(periodParam) ? periodParam : 'all'
   const cleaned = name.slice(0, 12).toUpperCase()
+  // Same scope every other board honours: inside a group, your best is your
+  // best among that roster — and nothing at all if you are not on it.
+  let scope
+  try {
+    scope = (await boardAccess(req))?.names
+  } catch (err) {
+    scopeError(err, res)
+    return
+  }
   res.json({
     name: cleaned,
     period,
-    bests: await bestsForName(name, period),
+    bests: await bestsForName(name, period, Date.now(), scope),
     avatarId: (await withAvatarId({ name: cleaned })).avatarId,
   })
 })

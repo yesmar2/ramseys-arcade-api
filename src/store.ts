@@ -507,10 +507,12 @@ export async function bestForName(
 export async function bestsForName(
   name: string,
   period: Period = 'all',
+  now = Date.now(),
+  scope?: NameScope,
 ): Promise<Partial<Record<GameSlug, number>>> {
   const out: Partial<Record<GameSlug, number>> = {}
   for (const game of ALLOWED_GAMES) {
-    const row = await bestForName(game, name, period)
+    const row = await bestForName(game, name, period, now, scope)
     if (row) out[game] = row.score
   }
   return out

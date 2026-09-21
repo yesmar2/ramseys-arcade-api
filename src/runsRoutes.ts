@@ -43,19 +43,21 @@ runsRouter.post('/start', async (req, res) => {
     return
   }
 
+  /*
+   * No sign-in needed. Saving a score still requires an account, but starting
+   * a game never has, and a player who signs in at the save card would
+   * otherwise arrive there with no run to show for the game they just played.
+   */
   const account = await accountFromRequest(req)
-  if (!account) {
-    res.status(401).json({ error: 'Sign in to play a ranked run', code: 'AUTH_REQUIRED' })
-    return
+  if (account) {
+    const gate = takeToken(`run-start:account:${account.id}`, START_LIMIT)
+    if (!gate.ok) {
+      res.setHeader('Retry-After', Math.ceil(gate.retryAfterMs / 1000))
+      res.status(429).json({ error: 'Too many runs started', code: 'RATE_LIMITED' })
+      return
+    }
   }
 
-  const gate = takeToken(`run-start:account:${account.id}`, START_LIMIT)
-  if (!gate.ok) {
-    res.setHeader('Retry-After', Math.ceil(gate.retryAfterMs / 1000))
-    res.status(429).json({ error: 'Too many runs started', code: 'RATE_LIMITED' })
-    return
-  }
-
-  const ticket = await startRun(account.id, game)
+  const ticket = await startRun(account?.id ?? null, game)
   res.status(201).json({ game, runId: ticket.runId, startedAt: ticket.startedAt })
 })

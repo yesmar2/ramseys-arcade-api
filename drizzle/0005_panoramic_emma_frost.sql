@@ -1,0 +1,1 @@
+ALTER TABLE "game_runs" ALTER COLUMN "account_id" DROP NOT NULL;

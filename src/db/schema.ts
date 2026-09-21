@@ -95,9 +95,14 @@ export const gameRuns = pgTable(
   'game_runs',
   {
     id: text('id').primaryKey(),
-    accountId: text('account_id')
-      .notNull()
-      .references(() => accounts.id, { onDelete: 'cascade' }),
+    /*
+     * Null when the run was opened before signing in. A player is allowed to
+     * start playing, get a good score and only then make an account — the site
+     * has always worked that way — and a run that could not be opened until
+     * they signed in would quietly break that. Timing is what this row is for;
+     * the identity is a bonus when it happens to be known.
+     */
+    accountId: text('account_id').references(() => accounts.id, { onDelete: 'cascade' }),
     game: text('game').notNull(),
     startedAt: bigint('started_at', { mode: 'number' }).notNull(),
     /** Set when a score consumed this run; a second attempt is rejected. */

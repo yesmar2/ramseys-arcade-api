@@ -138,6 +138,26 @@ async function main() {
     `status ${legacy.status} ${legacy.body?.error ?? ''}`,
   )
 
+  // Play first, sign in at the save card: the run is opened by a browser with
+  // no session, and the account that appears later has to be able to spend it.
+  const signedOut = await req('/runs/start', { method: 'POST', body: { game: 'snake' } })
+  check('a signed-out browser can open a run', signedOut.status === 201, `status ${signedOut.status}`)
+  const afterSignIn = await submit(token, 'snake', name, 140, signedOut.body?.runId)
+  check(
+    'signing in afterwards can save that run',
+    afterSignIn.status === 201,
+    `status ${afterSignIn.status} ${afterSignIn.body?.error ?? ''}`,
+  )
+
+  const otherAccount = await signIn()
+  const mine = await startRun(token, 'snake')
+  const stolen = await submit(otherAccount, 'snake', `S${randomTag(7)}`, 140, mine.body?.runId)
+  check(
+    "one account cannot spend another's run",
+    stolen.status === 400 && stolen.body?.code === 'RUN_MISMATCH',
+    `status ${stolen.status} code ${stolen.body?.code}`,
+  )
+
   console.log('\ntime-scored games')
   const fast = await startRun(token, 'findbug')
   const impossibleTime = await submit(token, 'findbug', name, TIME_SCORE_BASE - 30_000, fast.body?.runId)

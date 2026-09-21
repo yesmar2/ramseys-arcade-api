@@ -24,7 +24,10 @@ const SWEEP_AFTER_MS = 24 * 60 * 60 * 1000
 export type RunTicket = { runId: string; startedAt: number }
 
 /** Open a run: the server writes down when it began, and hands back the id. */
-export async function startRun(accountId: string, game: GameSlug): Promise<RunTicket> {
+export async function startRun(
+  accountId: string | null,
+  game: GameSlug,
+): Promise<RunTicket> {
   const runId = newRunId()
   const startedAt = Date.now()
   await db().insert(gameRuns).values({ id: runId, accountId, game, startedAt, usedAt: null })
@@ -54,7 +57,11 @@ export async function peekRun(
   const now = Date.now()
   const [run] = await db().select().from(gameRuns).where(eq(gameRuns.id, runId)).limit(1)
   if (!run) return { ok: false, code: 'UNKNOWN' }
-  if (run.accountId !== accountId || run.game !== game) return { ok: false, code: 'MISMATCH' }
+  if (run.game !== game) return { ok: false, code: 'MISMATCH' }
+  // A run opened while signed out belongs to whoever signs in and saves it.
+  if (run.accountId != null && run.accountId !== accountId) {
+    return { ok: false, code: 'MISMATCH' }
+  }
   if (run.usedAt != null) return { ok: false, code: 'USED' }
   if (now - run.startedAt > RUN_TTL_MS) return { ok: false, code: 'EXPIRED' }
   return { ok: true, startedAt: run.startedAt, elapsedMs: now - run.startedAt }

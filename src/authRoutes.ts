@@ -9,6 +9,7 @@ import {
   signInWithGoogleIdToken,
   verifyMagicLink,
 } from './auth.js'
+import { dbTarget } from './env.js'
 import { linkNameToAccount, namesOwnedByAccount } from './names.js'
 import { planLimits } from './plans.js'
 import { renamePlayerAcrossRecords } from './records.js'
@@ -53,7 +54,35 @@ authRouter.get('/config', (_req, res) => {
   })
 })
 
+/**
+ * Is handing the magic-link token straight back to the caller allowed here?
+ *
+ * It is the whole sign-in. Returning it in the response means anyone who can
+ * post an email address gets a session for that address — any address, whether
+ * or not they have ever seen its inbox. Nothing here sends mail, so on a real
+ * deployment the endpoint is not a way in for the owner of the account, only
+ * for whoever asks first.
+ *
+ * It stays on for local work, where it is genuinely useful and the accounts
+ * are throwaway. `dbTarget().isProduction` is the project's existing fail-safe
+ * answer to "am I the real thing", and an unset NEON_BRANCH reads as
+ * production, so forgetting to configure something leaves this closed.
+ */
+function magicLinkAllowed(): boolean {
+  if (process.env.ALLOW_MAGIC_LINK === '1' || process.env.ALLOW_MAGIC_LINK === 'true') {
+    return true
+  }
+  return !dbTarget().isProduction
+}
+
 authRouter.post('/magic-link', async (req, res) => {
+  if (!magicLinkAllowed()) {
+    res.status(503).json({
+      error: 'Email sign-in is not available',
+      code: 'MAGIC_LINK_DISABLED',
+    })
+    return
+  }
   const parsed = emailSchema.safeParse(req.body)
   if (!parsed.success) {
     res.status(400).json({ error: 'Valid email required', code: 'EMAIL_INVALID' })
@@ -69,7 +98,7 @@ authRouter.post('/magic-link', async (req, res) => {
       ok: true,
       email: link.email,
       expiresAt: link.expiresAt,
-      // Dev convenience — omit in real email-only prod later
+      // Only ever reaches a caller on a non-production branch, per above.
       verifyUrl,
       verifyToken: link.token,
     })

@@ -155,6 +155,14 @@ const CRUMBTRAIL_CRUMB_STREAK: RecordDef = {
   unit: 'count',
 }
 
+const SNAKE_LONGEST: RecordDef = {
+  id: 'longest',
+  game: 'snake',
+  label: 'Longest snake',
+  direction: 'higher',
+  unit: 'count',
+}
+
 const CRUMBTRAIL_ROWS: RecordDef = {
   id: 'most-rows',
   game: 'crumbtrail',
@@ -228,6 +236,7 @@ const RECORD_DEFS: RecordDef[] = [
   PELLETS_CRUMB_STREAK,
   CRUMBTRAIL_ROWS,
   CRUMBTRAIL_CRUMB_STREAK,
+  SNAKE_LONGEST,
   ...buildAsteroidsWaveRecords(),
   ...buildSnakeFastestLengthRecords(),
   ...buildCrosswalkFastestRowRecords(),

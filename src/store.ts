@@ -741,11 +741,26 @@ export async function ranksForScore(
   return ranks
 }
 
+/**
+ * What the server observed about the run behind a score.
+ *
+ * Every field is optional and none of it is shown on a board: it exists so a
+ * suspect score can be looked into after the fact, which is the only tool that
+ * still works once a determined cheat gets past the plausibility check.
+ */
+export type ScoreAudit = {
+  runId?: string | null
+  durationMs?: number | null
+  ipHash?: string | null
+  userAgent?: string | null
+}
+
 export async function addScore(
   game: GameSlug,
   name: string,
   score: number,
   device: DeviceType = 'desktop',
+  audit: ScoreAudit = {},
 ): Promise<{
   board: LeaderboardEntry[]
   entry: LeaderboardEntry
@@ -784,6 +799,10 @@ export async function addScore(
     score: entry.score,
     at: entry.at,
     device: entry.device,
+    runId: audit.runId ?? null,
+    durationMs: audit.durationMs ?? null,
+    ipHash: audit.ipHash ?? null,
+    userAgent: audit.userAgent?.slice(0, 256) ?? null,
   })
 
   const next = await historyFor(game)

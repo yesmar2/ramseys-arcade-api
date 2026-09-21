@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url'
 import { authRouter } from './authRoutes.js'
 import { namesRouter } from './namesRoutes.js'
 import { leaderboardsRouter } from './routes.js'
+import { runsRouter } from './runsRoutes.js'
 import { recordsRouter } from './recordsRoutes.js'
 import { seedLeaderboards } from './seedBoards.js'
 import { seedRecords } from './seedRecords.js'
@@ -70,6 +71,14 @@ async function main() {
 
   const app = express()
 
+  /*
+   * Render terminates TLS one hop in front of this process, so without this
+   * every request reports the proxy's address and an address-keyed rate limit
+   * would throttle the whole site as one caller. One hop only — trusting the
+   * whole chain would let a client name its own address in X-Forwarded-For.
+   */
+  app.set('trust proxy', 1)
+
   app.use(
     cors({
       origin: CORS_ORIGIN
@@ -120,6 +129,7 @@ async function main() {
   app.use('/auth', authRouter)
   app.use('/names', namesRouter)
   app.use('/leaderboards', leaderboardsRouter)
+  app.use('/runs', runsRouter)
   app.use('/records', recordsRouter)
   app.use('/tournaments', tournamentsRouter)
   app.use('/groups', groupsRouter)

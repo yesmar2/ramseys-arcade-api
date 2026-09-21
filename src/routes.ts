@@ -1,8 +1,10 @@
-import { scoreCeiling } from './scoreLimits.js'
+import { checkScoreRate, scoreCeiling } from './scoreLimits.js'
 import { Router } from 'express'
 import { z } from 'zod'
 import { pageParams } from './paging.js'
 import { accountFromRequest } from './auth.js'
+import { clientIp, hashIp, takeToken } from './rateLimit.js'
+import { consumeRun } from './runs.js'
 import { resolveBoardScope } from './groups.js'
 import { assertCanUseName, withAvatarId, withAvatarIds } from './names.js'
 import { updateCrossRunStreakRecords } from './records.js'
@@ -127,7 +129,26 @@ const submitSchema = z.object({
   score: z.number().int().positive().max(1_000_000),
   token: z.string().min(1).max(128).optional(),
   device: z.enum(['phone', 'tablet', 'desktop']).optional(),
+  /** Optional until REQUIRE_RUN_TOKEN — older clients do not send one. */
+  runId: z.string().min(1).max(64).optional(),
 })
+
+/*
+ * Nobody finishes more than a handful of runs in ten minutes, so this only
+ * ever bites a script. It sits after the auth check so the key is an account
+ * rather than an address, which a phone on mobile data changes constantly.
+ */
+const SUBMIT_LIMIT = { limit: 40, windowMs: 10 * 60 * 1000 }
+
+const REQUIRE_RUN_TOKEN =
+  process.env.REQUIRE_RUN_TOKEN === '1' || process.env.REQUIRE_RUN_TOKEN === 'true'
+
+const RUN_ERRORS: Record<'UNKNOWN' | 'USED' | 'EXPIRED' | 'MISMATCH', string> = {
+  UNKNOWN: 'That run is not on record',
+  USED: 'That run already saved a score',
+  EXPIRED: 'That run is too old to save',
+  MISMATCH: 'That run belongs to a different game',
+}
 
 function parsePeriod(raw: unknown): Period {
   if (isPeriod(raw)) return raw
@@ -234,7 +255,7 @@ leaderboardsRouter.post('/:game', async (req, res) => {
     return
   }
 
-  const { name, score, token, device } = parsed.data
+  const { name, score, token, device, runId } = parsed.data
   if (score > scoreCeiling(game)) {
     res.status(400).json({ error: 'That score is not possible in this game', code: 'SCORE_OUT_OF_RANGE' })
     return
@@ -242,6 +263,43 @@ leaderboardsRouter.post('/:game', async (req, res) => {
   const account = await accountFromRequest(req)
   if (!account) {
     res.status(401).json({ error: 'Sign in to save a score', code: 'AUTH_REQUIRED' })
+    return
+  }
+
+  const gate = takeToken(`score:account:${account.id}`, SUBMIT_LIMIT)
+  if (!gate.ok) {
+    res.setHeader('Retry-After', Math.ceil(gate.retryAfterMs / 1000))
+    res.status(429).json({ error: 'Too many scores too quickly', code: 'RATE_LIMITED' })
+    return
+  }
+
+  /*
+   * The run is what makes the score checkable, but it cannot be demanded until
+   * every client sends one — a released build that posts without a runId must
+   * keep working through the deploy. REQUIRE_RUN_TOKEN closes that door once
+   * the site has caught up.
+   */
+  let durationMs: number | null = null
+  if (runId) {
+    const run = await consumeRun(runId, account.id, game)
+    if (!run.ok) {
+      res.status(400).json({ error: RUN_ERRORS[run.code], code: `RUN_${run.code}` })
+      return
+    }
+    durationMs = run.elapsedMs
+    const plausible = checkScoreRate(game, score, run.elapsedMs)
+    if (!plausible.ok) {
+      console.warn(
+        `[anticheat] rejected ${game} ${score} from account ${account.id} after ${run.elapsedMs}ms: ${plausible.reason}`,
+      )
+      res.status(400).json({
+        error: 'That score is not possible in the time the run took',
+        code: 'SCORE_IMPLAUSIBLE',
+      })
+      return
+    }
+  } else if (REQUIRE_RUN_TOKEN) {
+    res.status(400).json({ error: 'Start the run before saving a score', code: 'RUN_REQUIRED' })
     return
   }
 
@@ -261,7 +319,12 @@ leaderboardsRouter.post('/:game', async (req, res) => {
     return
   }
 
-  const result = await addScore(game, claim.name, score, device ?? 'desktop')
+  const result = await addScore(game, claim.name, score, device ?? 'desktop', {
+    runId: runId ?? null,
+    durationMs,
+    ipHash: hashIp(clientIp(req)),
+    userAgent: req.get('user-agent') ?? null,
+  })
   const streakRecords = await updateCrossRunStreakRecords(
     game,
     claim.name,

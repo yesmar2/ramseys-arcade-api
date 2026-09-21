@@ -62,11 +62,50 @@ export const leaderboardScores = pgTable(
     score: integer('score').notNull(),
     at: bigint('at', { mode: 'number' }).notNull(),
     device: text('device').notNull(),
+    /*
+     * Audit trail. All nullable: scores posted before run tokens existed have
+     * none of it, and a client that never opened a run still posts while
+     * REQUIRE_RUN_TOKEN is off. A null runId is not evidence of cheating — it
+     * is evidence of an older client.
+     */
+    runId: text('run_id'),
+    /** Server-measured wall time from run start to submission. */
+    durationMs: bigint('duration_ms', { mode: 'number' }),
+    /** Salted hash — enough to correlate runs, never the address itself. */
+    ipHash: text('ip_hash'),
+    userAgent: text('user_agent'),
   },
   (t) => [
     index('lb_game_score_at_idx').on(t.game, t.score, t.at),
     index('lb_game_at_idx').on(t.game, t.at),
     index('lb_name_idx').on(t.name),
+  ],
+)
+
+/**
+ * One row per game a player actually opened.
+ *
+ * The server cannot watch the game — it runs in the browser — but it can know
+ * when the run began, because it issued the id. That turns "is this score
+ * possible?" into a question with a real answer: the score is measured against
+ * the time that passed on the server's own clock. Single-use, so a captured id
+ * cannot be replayed.
+ */
+export const gameRuns = pgTable(
+  'game_runs',
+  {
+    id: text('id').primaryKey(),
+    accountId: text('account_id')
+      .notNull()
+      .references(() => accounts.id, { onDelete: 'cascade' }),
+    game: text('game').notNull(),
+    startedAt: bigint('started_at', { mode: 'number' }).notNull(),
+    /** Set when a score consumed this run; a second attempt is rejected. */
+    usedAt: bigint('used_at', { mode: 'number' }),
+  },
+  (t) => [
+    index('game_runs_account_idx').on(t.accountId, t.startedAt),
+    index('game_runs_started_idx').on(t.startedAt),
   ],
 )
 

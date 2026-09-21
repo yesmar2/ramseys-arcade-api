@@ -79,6 +79,19 @@ const SCORE_RULES: Record<GameSlug, ScoreRule> = {
  */
 const TIME_TOLERANCE = 0.9
 
+/**
+ * The most a points game could have scored in this much time.
+ *
+ * Null for the time-scored games, where the score is not accumulated and the
+ * question does not apply. Exposed so the flagging can ask how close to the
+ * edge a score sat, which is a different question from whether it was allowed.
+ */
+export function rateAllowance(game: GameSlug, elapsedMs: number): number | null {
+  const rule = SCORE_RULES[game]
+  if (!rule || rule.kind !== 'rate') return null
+  return rule.floor + rule.perSecond * (elapsedMs / 1000)
+}
+
 export type PlausibilityVerdict =
   | { ok: true }
   | { ok: false; reason: string }

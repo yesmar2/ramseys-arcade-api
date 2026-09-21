@@ -1,7 +1,7 @@
 import crypto from 'node:crypto'
-import { and, eq, isNull, lt, sql } from 'drizzle-orm'
+import { and, eq, lt, sql } from 'drizzle-orm'
 import { db } from './db/client.js'
-import { gameRuns } from './db/schema.js'
+import { gameRuns, runClaims } from './db/schema.js'
 import type { GameSlug } from './store.js'
 
 function newRunId() {
@@ -30,7 +30,7 @@ export async function startRun(
 ): Promise<RunTicket> {
   const runId = newRunId()
   const startedAt = Date.now()
-  await db().insert(gameRuns).values({ id: runId, accountId, game, startedAt, usedAt: null })
+  await db().insert(gameRuns).values({ id: runId, accountId, game, startedAt })
   if (Math.random() < SWEEP_ODDS) void sweepOldRuns()
   return { runId, startedAt }
 }
@@ -42,12 +42,12 @@ export type RunLookup =
   | { ok: false; code: RunCode }
 
 /**
- * Read a run without spending it, returning how long it has been open.
+ * Read a run, returning how long it has been open.
  *
- * Kept separate from spending it because a submission can still fail after
- * this — on a name someone else already owns, most often. Burning the run
- * there would leave the player unable to retry under a different name, having
- * done nothing wrong.
+ * Says nothing about whether the run has already paid out — one run feeds the
+ * board, the tournaments that include the game and the record books, so "has
+ * this been used" only means something once you say what for. That is
+ * {@link claimRun}.
  */
 export async function peekRun(
   runId: string,
@@ -62,31 +62,40 @@ export async function peekRun(
   if (run.accountId != null && run.accountId !== accountId) {
     return { ok: false, code: 'MISMATCH' }
   }
-  if (run.usedAt != null) return { ok: false, code: 'USED' }
   if (now - run.startedAt > RUN_TTL_MS) return { ok: false, code: 'EXPIRED' }
   return { ok: true, startedAt: run.startedAt, elapsedMs: now - run.startedAt }
 }
 
+export type RunSurface = 'leaderboard' | 'tournament'
+
 /**
- * Spend a run id. False means somebody already did.
+ * Cash a run in for one surface. False means it already has been.
  *
- * Conditional on the run still being unused, so two submissions racing the
- * same id cannot both win: whichever UPDATE matches the row takes it, and the
- * other sees no rows — which is the right answer, because it is a duplicate.
+ * The insert is the lock: the primary key on (run, surface, ref) means two
+ * submissions racing the same surface cannot both land, and the loser is
+ * simply a duplicate. Call it last, once everything that could reject the
+ * score has had its say, so a rejection never costs the player their run.
  */
-export async function markRunUsed(runId: string): Promise<boolean> {
+export async function claimRun(
+  runId: string,
+  surface: RunSurface,
+  ref = '',
+): Promise<boolean> {
   const claimed = await db()
-    .update(gameRuns)
-    .set({ usedAt: Date.now() })
-    .where(and(eq(gameRuns.id, runId), isNull(gameRuns.usedAt)))
-    .returning({ id: gameRuns.id })
+    .insert(runClaims)
+    .values({ runId, surface, ref, claimedAt: Date.now() })
+    .onConflictDoNothing()
+    .returning({ runId: runClaims.runId })
   return claimed.length > 0
 }
 
 /** Drop rows no submission can still reference. */
 export async function sweepOldRuns(): Promise<void> {
+  const cutoff = Date.now() - SWEEP_AFTER_MS
   try {
-    await db().delete(gameRuns).where(lt(gameRuns.startedAt, Date.now() - SWEEP_AFTER_MS))
+    await db().delete(gameRuns).where(lt(gameRuns.startedAt, cutoff))
+    // Claims outlive nothing useful once the run they name is gone.
+    await db().delete(runClaims).where(lt(runClaims.claimedAt, cutoff))
   } catch (err) {
     console.error('[runs] sweep failed', err)
   }

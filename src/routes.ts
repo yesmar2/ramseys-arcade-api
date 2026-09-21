@@ -5,7 +5,8 @@ import { pageParams } from './paging.js'
 import { accountFromRequest } from './auth.js'
 import { isBanned } from './bans.js'
 import { clientIp, hashIp, takeToken } from './rateLimit.js'
-import { markRunUsed, peekRun } from './runs.js'
+import { claimRun, peekRun } from './runs.js'
+import { flagIfSuspicious } from './scoreFlags.js'
 import { resolveBoardScope } from './groups.js'
 import { assertCanUseName, withAvatarId, withAvatarIds } from './names.js'
 import { updateCrossRunStreakRecords } from './records.js'
@@ -336,10 +337,13 @@ leaderboardsRouter.post('/:game', async (req, res) => {
 
   // Last thing before the write: everything that could reject this score has
   // already had its say, so spending the run here cannot strand a retry.
-  if (runId && !(await markRunUsed(runId))) {
+  if (runId && !(await claimRun(runId, 'leaderboard'))) {
     res.status(400).json({ error: RUN_ERRORS.USED, code: 'RUN_USED' })
     return
   }
+
+  // Read before the write, so "was this far past the rest?" has an answer.
+  const bestBefore = (await getBoard(game, 'all'))[0]?.score ?? 0
 
   const result = await addScore(game, claim.name, score, device ?? 'desktop', {
     runId: runId ?? null,
@@ -353,6 +357,20 @@ leaderboardsRouter.post('/:game', async (req, res) => {
     score,
     device ?? 'desktop',
   )
+
+  // After the save, never in its way: a suspicion is a note for a person.
+  await flagIfSuspicious(
+    {
+      scoreId: result.entry.id,
+      game,
+      name: claim.name,
+      score,
+      runId: runId ?? null,
+      durationMs,
+    },
+    bestBefore,
+  )
+
   res.status(201).json({
     game,
     entry: await withAvatarId(result.entry),

@@ -1,8 +1,12 @@
 import { Router } from 'express'
 import { z } from 'zod'
 import { accountFromRequest } from './auth.js'
+import { isBanned } from './bans.js'
 import { planErrorFields } from './plans.js'
 import { assertCanUseName } from './names.js'
+import { takeToken } from './rateLimit.js'
+import { claimRun, peekRun } from './runs.js'
+import { checkScoreRate } from './scoreLimits.js'
 import { resolveGameSlug, type GameSlug } from './store.js'
 import {
   activeTournamentsForGame,
@@ -32,7 +36,26 @@ const scoreSchema = z.object({
   score: z.number().int().positive().max(1_000_000),
   token: tokenSchema,
   invite: z.string().min(4).max(16).optional(),
+  /** Optional until REQUIRE_RUN_TOKEN — older clients do not send one. */
+  runId: z.string().min(1).max(64).optional(),
 })
+
+/*
+ * One run fans out to every joined tournament that includes the game, so this
+ * allows more than the single board score — but an event is where cheating
+ * actually costs somebody something, so it is not generous either.
+ */
+const TOURNAMENT_SUBMIT_LIMIT = { limit: 60, windowMs: 10 * 60 * 1000 }
+
+const REQUIRE_RUN_TOKEN =
+  process.env.REQUIRE_RUN_TOKEN === '1' || process.env.REQUIRE_RUN_TOKEN === 'true'
+
+const RUN_ERRORS: Record<'UNKNOWN' | 'USED' | 'EXPIRED' | 'MISMATCH', string> = {
+  UNKNOWN: 'That run is not on record',
+  USED: 'That run already scored in this event',
+  EXPIRED: 'That run is too old to submit',
+  MISMATCH: 'That run belongs to a different game',
+}
 const renameSchema = z.object({
   from: nameSchema,
   to: nameSchema,
@@ -236,10 +259,57 @@ tournamentsRouter.post('/:id/scores', async (req, res) => {
       res.status(401).json({ error: 'Sign in to submit a score', code: 'AUTH_REQUIRED' })
       return
     }
+    const gate = takeToken(`tournament:account:${account.id}`, TOURNAMENT_SUBMIT_LIMIT)
+    if (!gate.ok) {
+      res.setHeader('Retry-After', Math.ceil(gate.retryAfterMs / 1000))
+      res.status(429).json({ error: 'Too many scores too quickly', code: 'RATE_LIMITED' })
+      return
+    }
+
+    /*
+     * Same clock check the boards use. Claimed per tournament, so one run can
+     * score in every event it qualifies for but only once in each.
+     */
+    const game = resolveGameSlug(parsed.data.game)
+    const { runId, score } = parsed.data
+    if (runId && game) {
+      const run = await peekRun(runId, account.id, game)
+      if (!run.ok) {
+        res.status(400).json({ error: RUN_ERRORS[run.code], code: `RUN_${run.code}` })
+        return
+      }
+      const plausible = checkScoreRate(game, score, run.elapsedMs)
+      if (!plausible.ok) {
+        console.warn(
+          `[anticheat] rejected a ${game} tournament score of ${score} from account ${account.id} after ${run.elapsedMs}ms: ${plausible.reason}`,
+        )
+        res.status(400).json({
+          error: 'That score is not possible in the time the run took',
+          code: 'SCORE_IMPLAUSIBLE',
+        })
+        return
+      }
+    } else if (!runId && REQUIRE_RUN_TOKEN) {
+      res.status(400).json({ error: 'Start the run before submitting', code: 'RUN_REQUIRED' })
+      return
+    }
+
     const claim = await assertCanUseName(parsed.data.name, {
       claimToken: parsed.data.token,
       accountId: account.id,
     })
+
+    if (await isBanned(claim.name, account.id)) {
+      console.log(`[admin] refused a tournament score from banned ${claim.name}`)
+      res.status(403).json({ error: 'This tag cannot post scores', code: 'NAME_BANNED' })
+      return
+    }
+
+    if (runId && !(await claimRun(runId, 'tournament', req.params.id))) {
+      res.status(400).json({ error: RUN_ERRORS.USED, code: 'RUN_USED' })
+      return
+    }
+
     const result = await submitTournamentScore(
       req.params.id,
       claim.name,

@@ -2,7 +2,10 @@ import { pageParams } from './paging.js'
 import { Router } from 'express'
 import { z } from 'zod'
 import { accountFromRequest } from './auth.js'
+import { isBanned } from './bans.js'
 import { resolveBoardScope } from './groups.js'
+import { takeToken } from './rateLimit.js'
+import { peekRun } from './runs.js'
 import { assertCanUseName, withAvatarId, withAvatarIds } from './names.js'
 import {
   addRecord,
@@ -21,7 +24,40 @@ const submitSchema = z.object({
   score: z.number().int().nonnegative().max(3_600_000),
   token: z.string().min(1).max(128).optional(),
   device: z.enum(['phone', 'tablet', 'desktop']).optional(),
+  /** Optional until REQUIRE_RUN_TOKEN — older clients do not send one. */
+  runId: z.string().min(1).max(64).optional(),
 })
+
+/*
+ * Record books fill up during a run — a combo lands, a wave clears — so this
+ * allows far more than the one score a run posts at the end. It is still a
+ * bound: no single game produces hundreds of entries.
+ */
+const RECORD_SUBMIT_LIMIT = { limit: 120, windowMs: 10 * 60 * 1000 }
+
+const REQUIRE_RUN_TOKEN =
+  process.env.REQUIRE_RUN_TOKEN === '1' || process.env.REQUIRE_RUN_TOKEN === 'true'
+
+const RUN_ERRORS: Record<'UNKNOWN' | 'USED' | 'EXPIRED' | 'MISMATCH', string> = {
+  UNKNOWN: 'That run is not on record',
+  USED: 'That run already saved this record',
+  EXPIRED: 'That run is too old to save',
+  MISMATCH: 'That run belongs to a different game',
+}
+
+/**
+ * A stretch of a run cannot be longer than the run.
+ *
+ * The only plausibility check that holds for every record book without knowing
+ * the game: a time recorded inside a run has to fit inside the time the run has
+ * been open. Counts get no equivalent — how many combos a second can hold is a
+ * per-game question, and a wrong guess there would throw away real play, so
+ * they lean on the run, the rate limit and the ban list instead.
+ */
+function timeRecordFits(def: { unit: string }, score: number, elapsedMs: number): boolean {
+  if (def.unit !== 'ms') return true
+  return score <= elapsedMs * 1.1
+}
 
 function parsePeriod(raw: unknown): Period {
   if (isPeriod(raw)) return raw
@@ -126,10 +162,43 @@ recordsRouter.post('/:game/:recordId', async (req, res) => {
     return
   }
 
-  const { name, score, token, device } = parsed.data
+  const { name, score, token, device, runId } = parsed.data
   const account = await accountFromRequest(req)
   if (!account) {
     res.status(401).json({ error: 'Sign in to save a score', code: 'AUTH_REQUIRED' })
+    return
+  }
+
+  const gate = takeToken(`record:account:${account.id}`, RECORD_SUBMIT_LIMIT)
+  if (!gate.ok) {
+    res.setHeader('Retry-After', Math.ceil(gate.retryAfterMs / 1000))
+    res.status(429).json({ error: 'Too many records too quickly', code: 'RATE_LIMITED' })
+    return
+  }
+
+  /*
+   * The run is read but never claimed. One run fills several books — a combo,
+   * a wave time, a streak — so spending it on the first would refuse the rest
+   * of the same game.
+   */
+  if (runId) {
+    const run = await peekRun(runId, account.id, game)
+    if (!run.ok) {
+      res.status(400).json({ error: RUN_ERRORS[run.code], code: `RUN_${run.code}` })
+      return
+    }
+    if (!timeRecordFits(def, score, run.elapsedMs)) {
+      console.warn(
+        `[anticheat] rejected ${game}/${recordId} of ${score}ms from account ${account.id} after only ${run.elapsedMs}ms`,
+      )
+      res.status(400).json({
+        error: 'That time is longer than the run it came from',
+        code: 'RECORD_IMPLAUSIBLE',
+      })
+      return
+    }
+  } else if (REQUIRE_RUN_TOKEN) {
+    res.status(400).json({ error: 'Start the run before saving a record', code: 'RUN_REQUIRED' })
     return
   }
 
@@ -146,6 +215,12 @@ recordsRouter.post('/:game/:recordId', async (req, res) => {
       error: err instanceof Error ? err.message : 'Name claim failed',
       code,
     })
+    return
+  }
+
+  if (await isBanned(claim.name, account.id)) {
+    console.log(`[admin] refused a ${game}/${recordId} record from banned ${claim.name}`)
+    res.status(403).json({ error: 'This tag cannot post scores', code: 'NAME_BANNED' })
     return
   }
 

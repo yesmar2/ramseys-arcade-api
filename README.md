@@ -61,8 +61,18 @@ that id is then checked against the time the server itself measured. Caps are
 per game in `src/scoreLimits.ts`, set well above elite play — they exist to make
 an instant jackpot impossible, not to police a good run.
 
+All three score-writing surfaces go through it — the boards, the record books
+and tournaments. A run is not single-use, because one game legitimately pays out
+to several: it can be claimed once per surface (and once per tournament), while
+record books read it without claiming, since a single run fills more than one.
+
 Every score also keeps `run_id`, `duration_ms`, a salted `ip_hash` and a user
 agent, so a suspect one can be looked into afterwards.
+
+A score that is inside every cap and still obviously wrong gets **flagged**
+rather than rejected — far past the rest of its board, or sitting at the edge of
+what its run time allowed. Flagging never blocks a save; it writes the suspicion
+down (and shouts it into the logs) for a person to settle at `/admin/flags`.
 
 ```bash
 npm run smoke:anticheat          # 25 checks against a running dev API
@@ -80,9 +90,11 @@ under `/admin` answers `404` to anyone else, so the surface is not discoverable.
 
 | Route | Purpose |
 |-------|---------|
-| `GET /admin/whoami` | Confirm this session is an admin |
+| `GET /admin/whoami` | Confirm this session is an admin; includes the open flag count |
 | `GET /admin/scores?game=&name=&limit=` | Recent scores with their audit trail |
 | `POST /admin/scores/void` `{ids}` | Take scores off the boards |
+| `GET /admin/flags?all=1` | Scores that looked wrong on the way in |
+| `POST /admin/flags/:id/review` | Settle a flag, whichever way it went |
 | `GET /admin/bans` | Current bans |
 | `POST /admin/bans` `{name, reason?, purge?}` | Bar a tag; `purge` also wipes what it posted |
 | `DELETE /admin/bans/:name` | Lift a ban |

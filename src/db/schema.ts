@@ -105,12 +105,37 @@ export const gameRuns = pgTable(
     accountId: text('account_id').references(() => accounts.id, { onDelete: 'cascade' }),
     game: text('game').notNull(),
     startedAt: bigint('started_at', { mode: 'number' }).notNull(),
-    /** Set when a score consumed this run; a second attempt is rejected. */
-    usedAt: bigint('used_at', { mode: 'number' }),
   },
   (t) => [
     index('game_runs_account_idx').on(t.accountId, t.startedAt),
     index('game_runs_started_idx').on(t.startedAt),
+  ],
+)
+
+/**
+ * What a run has already been cashed in for.
+ *
+ * One run legitimately produces several writes: the board, every joined
+ * tournament that includes the game, and the record books along the way. So a
+ * plain "used" flag was wrong — it would have let the leaderboard save and then
+ * refused the tournaments that follow it in the same breath.
+ *
+ * The primary key is the lock. Claiming is an insert that either wins or
+ * conflicts, so two submissions racing the same surface cannot both through.
+ */
+export const runClaims = pgTable(
+  'run_claims',
+  {
+    runId: text('run_id').notNull(),
+    /** 'leaderboard' or 'tournament'. Record books validate but never claim. */
+    surface: text('surface').notNull(),
+    /** Tournament id where it narrows the claim; empty string otherwise. */
+    ref: text('ref').notNull().default(''),
+    claimedAt: bigint('claimed_at', { mode: 'number' }).notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.runId, t.surface, t.ref] }),
+    index('run_claims_run_idx').on(t.runId),
   ],
 )
 
@@ -282,6 +307,40 @@ export const nameBans = pgTable(
     bannedAt: bigint('banned_at', { mode: 'number' }).notNull(),
   },
   (t) => [index('name_bans_account_idx').on(t.accountId)],
+)
+
+/**
+ * Scores that looked wrong on the way in.
+ *
+ * A score can be within every cap and still be the most suspicious thing on
+ * the board — the caps are loose on purpose, and the rest is judgement. This
+ * is where the judgement is written down, because nothing else was ever going
+ * to tell anyone: a cheated score used to sit there until somebody happened to
+ * scroll past it.
+ *
+ * Flagging never rejects. The score saves, and a person decides later.
+ */
+export const scoreFlags = pgTable(
+  'score_flags',
+  {
+    id: text('id').primaryKey(),
+    scoreId: text('score_id').notNull(),
+    game: text('game').notNull(),
+    name: text('name').notNull(),
+    score: integer('score').notNull(),
+    /** 'outlier' (far past the board) or 'near-cap' (at the edge of possible). */
+    kind: text('kind').notNull(),
+    detail: text('detail').notNull(),
+    runId: text('run_id'),
+    durationMs: bigint('duration_ms', { mode: 'number' }),
+    createdAt: bigint('created_at', { mode: 'number' }).notNull(),
+    /** Set once somebody has looked and decided. */
+    reviewedAt: bigint('reviewed_at', { mode: 'number' }),
+  },
+  (t) => [
+    index('score_flags_unreviewed_idx').on(t.reviewedAt, t.createdAt),
+    index('score_flags_name_idx').on(t.name),
+  ],
 )
 
 export const appMeta = pgTable('app_meta', {

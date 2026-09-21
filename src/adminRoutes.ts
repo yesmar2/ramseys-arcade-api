@@ -2,6 +2,7 @@ import { Router } from 'express'
 import { z } from 'zod'
 import { requireAdmin } from './admin.js'
 import { banName, listBans, purgeName, recentScores, unbanName, voidScores } from './bans.js'
+import { listFlags, reviewFlag, unreviewedCount } from './scoreFlags.js'
 import { resolveGameSlug } from './store.js'
 
 export const adminRouter = Router()
@@ -16,7 +17,35 @@ function refuse(err: unknown, res: import('express').Response) {
 adminRouter.get('/whoami', async (req, res) => {
   try {
     const account = await requireAdmin(req)
-    res.json({ admin: true, email: account.email })
+    res.json({ admin: true, email: account.email, unreviewedFlags: await unreviewedCount() })
+  } catch (err) {
+    refuse(err, res)
+  }
+})
+
+/** Scores that looked wrong on the way in and nobody has settled yet. */
+adminRouter.get('/flags', async (req, res) => {
+  try {
+    await requireAdmin(req)
+    const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 50))
+    const includeReviewed = req.query.all === '1' || req.query.all === 'true'
+    res.json({ flags: await listFlags({ limit, includeReviewed }) })
+  } catch (err) {
+    refuse(err, res)
+  }
+})
+
+/** Settle a flag, whichever way it went — the score itself is voided separately. */
+adminRouter.post('/flags/:id/review', async (req, res) => {
+  try {
+    const account = await requireAdmin(req)
+    const done = await reviewFlag(req.params.id)
+    if (!done) {
+      res.status(404).json({ error: 'No such open flag', code: 'NOT_FOUND' })
+      return
+    }
+    console.log(`[admin] ${account.email} reviewed flag ${req.params.id}`)
+    res.json({ reviewed: true })
   } catch (err) {
     refuse(err, res)
   }

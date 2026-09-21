@@ -176,6 +176,52 @@ async function main() {
     `status ${realTime.status} ${realTime.body?.error ?? ''}`,
   )
 
+  console.log('\nother ways onto the boards')
+  // One run pays out to the board and to every joined tournament, and fills
+  // record books on the way, so it must survive its own leaderboard score.
+  const shared = await startRun(token, 'snake')
+  const boardScore = await submit(token, 'snake', name, 160, shared.body?.runId)
+  check('a run saves its board score', boardScore.status === 201, `status ${boardScore.status}`)
+  const sameRunAgain = await submit(token, 'snake', name, 170, shared.body?.runId)
+  check(
+    'but only one board score per run',
+    sameRunAgain.status === 400 && sameRunAgain.body?.code === 'RUN_USED',
+    `status ${sameRunAgain.status} code ${sameRunAgain.body?.code}`,
+  )
+
+  const recordRun = await startRun(token, 'asteroids')
+  await sleep(600)
+  const rec = await req('/records/asteroids/wave-time-1', {
+    method: 'POST',
+    body: { name, score: 400, runId: recordRun.body?.runId },
+    token,
+  })
+  check(
+    'a record can be saved against a run',
+    rec.status === 201 || rec.status === 200,
+    `status ${rec.status} ${rec.body?.error ?? ''}`,
+  )
+  const secondRec = await req('/records/asteroids/highest-combo', {
+    method: 'POST',
+    body: { name, score: 7, runId: recordRun.body?.runId },
+    token,
+  })
+  check(
+    'the same run can fill a second book',
+    secondRec.status === 201 || secondRec.status === 200,
+    `status ${secondRec.status} ${secondRec.body?.error ?? ''}`,
+  )
+  const impossibleRec = await req('/records/asteroids/wave-time-1', {
+    method: 'POST',
+    body: { name, score: 600_000, runId: recordRun.body?.runId },
+    token,
+  })
+  check(
+    'a wave time longer than the run is rejected',
+    impossibleRec.status === 400 && impossibleRec.body?.code === 'RECORD_IMPLAUSIBLE',
+    `status ${impossibleRec.status} code ${impossibleRec.body?.code}`,
+  )
+
   console.log('\nadmin tools')
   const notAdmin = await req('/admin/whoami', { token })
   check(
@@ -196,6 +242,66 @@ async function main() {
       'the admin account is recognised',
       whoami.status === 200 && whoami.body?.admin === true,
       `status ${whoami.status}`,
+    )
+
+    // Far past the rest of the board: allowed, because no run bounds it, but
+    // exactly the kind of thing nobody was being told about. Measured against
+    // whatever the board holds right now, and voided afterwards, so running
+    // this twice does not leave the second run with nothing to beat.
+    const board = await req('/leaderboards/snake?period=all&limit=1')
+    const boardTop = board.body?.entries?.[0]?.score ?? 100
+    const loudToken = await signIn()
+    const loudName = `F${randomTag(7)}`
+    const loud = await submit(loudToken, 'snake', loudName, boardTop * 3, undefined)
+    check('an outlier still saves', loud.status === 201, `status ${loud.status}`)
+
+    const flags = await req('/admin/flags', { token: adminToken })
+    const raised = flags.body?.flags?.find((f) => f.name === loudName)
+    check(
+      'and it is flagged for review',
+      Boolean(raised) && raised?.kind === 'outlier',
+      `kind ${raised?.kind ?? 'none'}`,
+    )
+
+    if (raised) {
+      const reviewed = await req(`/admin/flags/${raised.id}/review`, {
+        method: 'POST',
+        token: adminToken,
+      })
+      check('a flag can be settled', reviewed.status === 200, `status ${reviewed.status}`)
+      const stillOpen = await req('/admin/flags', { token: adminToken })
+      check(
+        'a settled flag drops off the open list',
+        !stillOpen.body?.flags?.some((f) => f.id === raised.id),
+      )
+    }
+
+    // Put the board back, so the next run of this script has the same ground.
+    if (loud.body?.entry?.id) {
+      await req('/admin/scores/void', {
+        method: 'POST',
+        body: { ids: [loud.body.entry.id] },
+        token: adminToken,
+      })
+    }
+
+    // The other half: within the cap, but only just. Snake allows 200 plus 25
+    // a second, so a couple of seconds and 240 points sits right on the edge.
+    const edgeToken = await signIn()
+    const edgeName = `E${randomTag(7)}`
+    const edgeRun = await req('/runs/start', {
+      method: 'POST',
+      body: { game: 'snake' },
+      token: edgeToken,
+    })
+    await sleep(2000)
+    const edge = await submit(edgeToken, 'snake', edgeName, 240, edgeRun.body?.runId)
+    check('a score at the edge of possible still saves', edge.status === 201, `status ${edge.status}`)
+    const edgeFlags = await req('/admin/flags', { token: adminToken })
+    check(
+      'and is flagged as near-cap',
+      edgeFlags.body?.flags?.some((f) => f.name === edgeName && f.kind === 'near-cap'),
+      `kinds ${JSON.stringify(edgeFlags.body?.flags?.filter((f) => f.name === edgeName).map((f) => f.kind))}`,
     )
 
     // A separate player, so banning it cannot disturb the run above.

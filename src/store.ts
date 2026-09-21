@@ -546,6 +546,8 @@ export function placePoints(place: number, fieldSize: number): number {
 export type GlobalGamePlace = {
   place: number
   points: number
+  /** How many players were on that board for the period: the field the place is out of. */
+  total: number
 }
 
 export type GlobalRankEntry = {
@@ -606,7 +608,7 @@ async function aggregateGlobalRanks(
       const row = byName.get(name) ?? { score: 0, games: 0, byGame: {} }
       row.score += points
       row.games += 1
-      row.byGame[game] = { place, points }
+      row.byGame[game] = { place, points, total: fieldSize }
       byName.set(name, row)
     }
   }

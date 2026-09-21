@@ -59,7 +59,10 @@ const SCORE_RULES: Record<GameSlug, ScoreRule> = {
   asteroids: { kind: 'rate', floor: 2_000, perSecond: 200 },
   patriot: { kind: 'rate', floor: 3_000, perSecond: 300 },
   snake: { kind: 'rate', floor: 200, perSecond: 25 },
-  crosswalk: { kind: 'rate', floor: 50, perSecond: 12 },
+  // Crosswalk scores points now, not rows. Hops cap at one per 0.17s and a row
+  // pays at most 40 at the top multiplier, so 235/s is the engine's hard
+  // ceiling; this sits just above it and rejects only the impossible.
+  crosswalk: { kind: 'rate', floor: 500, perSecond: 250 },
   stacker: { kind: 'rate', floor: 30, perSecond: 4 },
   centroid: { kind: 'rate', floor: 1_000, perSecond: 150 },
   pop: { kind: 'rate', floor: 200, perSecond: 60 },

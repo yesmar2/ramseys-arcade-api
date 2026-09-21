@@ -123,6 +123,19 @@ const CROSSWALK_MOST_COINS: RecordDef = {
   unit: 'count',
 }
 
+/**
+ * Rows broken without pausing. Distance stays the score — the marker painted on
+ * the road ahead is a row number, so score and row have to remain the same
+ * thing — and this is where playing it fast rather than safe gets counted.
+ */
+const CROSSWALK_LONGEST_CHAIN: RecordDef = {
+  id: 'longest-chain',
+  game: 'crosswalk',
+  label: 'Longest chain',
+  direction: 'higher',
+  unit: 'count',
+}
+
 const POP_CENTER_STREAK: RecordDef = {
   id: 'center-streak',
   game: 'pop',
@@ -231,6 +244,7 @@ const RECORD_DEFS: RecordDef[] = [
   ASTEROIDS_HIGHEST_COMBO,
   PATRIOT_DIRECT_STREAK,
   CROSSWALK_MOST_COINS,
+  CROSSWALK_LONGEST_CHAIN,
   POP_CENTER_STREAK,
   STACKER_PERFECT_STREAK,
   PELLETS_CRUMB_STREAK,

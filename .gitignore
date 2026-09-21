@@ -10,3 +10,6 @@ data/*.json
 *.log
 .DS_Store
 .neon
+# Rows lifted out of a live table by scripts/prune-impossible-records.mjs —
+# the only copy of what was deleted, and player data besides. Keep it local.
+pruned-records-*.json

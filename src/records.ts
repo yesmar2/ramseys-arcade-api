@@ -184,7 +184,7 @@ const MIN_CROSS_RUN_STREAK = 2
 export const SCORE_STREAK_THRESHOLDS: Record<GameSlug, number> = {
   asteroids: 1000,
   patriot: 1000,
-  snake: 300,
+  snake: 500,
   crosswalk: 200,
   stacker: 15,
   centroid: 6000,

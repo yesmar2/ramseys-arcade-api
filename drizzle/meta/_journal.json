@@ -43,6 +43,13 @@
       "when": 1790002816081,
       "tag": "0005_panoramic_emma_frost",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1790005015954,
+      "tag": "0006_supreme_ma_gnuci",
+      "breakpoints": true
     }
   ]
 }

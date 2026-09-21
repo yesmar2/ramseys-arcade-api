@@ -9,6 +9,7 @@ import { authRouter } from './authRoutes.js'
 import { namesRouter } from './namesRoutes.js'
 import { leaderboardsRouter } from './routes.js'
 import { runsRouter } from './runsRoutes.js'
+import { adminRouter } from './adminRoutes.js'
 import { recordsRouter } from './recordsRoutes.js'
 import { seedLeaderboards } from './seedBoards.js'
 import { seedRecords } from './seedRecords.js'
@@ -130,6 +131,7 @@ async function main() {
   app.use('/names', namesRouter)
   app.use('/leaderboards', leaderboardsRouter)
   app.use('/runs', runsRouter)
+  app.use('/admin', adminRouter)
   app.use('/records', recordsRouter)
   app.use('/tournaments', tournamentsRouter)
   app.use('/groups', groupsRouter)

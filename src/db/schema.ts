@@ -264,6 +264,26 @@ export const trophyCursor = pgTable('trophy_cursor', {
   monthlyInitialized: boolean('monthly_initialized').notNull().default(false),
 })
 
+/**
+ * Tags barred from the boards.
+ *
+ * Keyed by tag, but the account that held it is kept too, because banning only
+ * the tag means claiming a new one and carrying on. Neither column has a
+ * foreign key: a ban has to outlive the row it was written about.
+ */
+export const nameBans = pgTable(
+  'name_bans',
+  {
+    name: text('name').primaryKey(),
+    accountId: text('account_id'),
+    reason: text('reason'),
+    /** Admin email, so the record says who decided. */
+    bannedBy: text('banned_by').notNull(),
+    bannedAt: bigint('banned_at', { mode: 'number' }).notNull(),
+  },
+  (t) => [index('name_bans_account_idx').on(t.accountId)],
+)
+
 export const appMeta = pgTable('app_meta', {
   key: text('key').primaryKey(),
   value: text('value').notNull(),

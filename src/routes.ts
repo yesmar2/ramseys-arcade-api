@@ -3,6 +3,7 @@ import { Router } from 'express'
 import { z } from 'zod'
 import { pageParams } from './paging.js'
 import { accountFromRequest } from './auth.js'
+import { isBanned } from './bans.js'
 import { clientIp, hashIp, takeToken } from './rateLimit.js'
 import { markRunUsed, peekRun } from './runs.js'
 import { resolveBoardScope } from './groups.js'
@@ -315,6 +316,20 @@ leaderboardsRouter.post('/:game', async (req, res) => {
     res.status(status).json({
       error: err instanceof Error ? err.message : 'Name claim failed',
       code,
+    })
+    return
+  }
+
+  /*
+   * Checked on the resolved claim rather than the submitted name, so a banned
+   * player cannot get past it by letting the server tidy their tag for them,
+   * and on the account too, so a fresh tag is not a way back on.
+   */
+  if (await isBanned(claim.name, account.id)) {
+    console.log(`[admin] refused a ${game} score from banned ${claim.name}`)
+    res.status(403).json({
+      error: 'This tag cannot post scores',
+      code: 'NAME_BANNED',
     })
     return
   }

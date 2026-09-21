@@ -51,8 +51,8 @@ function randomTag(len) {
   return out
 }
 
-async function signIn() {
-  const email = `smoke-${randomTag(8).toLowerCase()}@example.com`
+async function signIn(fixedEmail) {
+  const email = fixedEmail ?? `smoke-${randomTag(8).toLowerCase()}@example.com`
   const link = await req('/auth/magic-link', { method: 'POST', body: { email } })
   if (!link.body?.verifyToken) {
     throw new Error(`no verifyToken from /auth/magic-link (status ${link.status})`)
@@ -175,6 +175,80 @@ async function main() {
     realTime.status === 201,
     `status ${realTime.status} ${realTime.body?.error ?? ''}`,
   )
+
+  console.log('\nadmin tools')
+  const notAdmin = await req('/admin/whoami', { token })
+  check(
+    'an ordinary account cannot see the admin tools',
+    notAdmin.status === 404,
+    `status ${notAdmin.status}`,
+  )
+  const noSession = await req('/admin/scores')
+  check('a stranger cannot see the admin tools', noSession.status === 404, `status ${noSession.status}`)
+
+  const adminEmail = process.env.SMOKE_ADMIN_EMAIL
+  if (!adminEmail) {
+    console.log('  --   set SMOKE_ADMIN_EMAIL (and ADMIN_EMAILS to match) for the rest')
+  } else {
+    const adminToken = await signIn(adminEmail)
+    const whoami = await req('/admin/whoami', { token: adminToken })
+    check(
+      'the admin account is recognised',
+      whoami.status === 200 && whoami.body?.admin === true,
+      `status ${whoami.status}`,
+    )
+
+    // A separate player, so banning it cannot disturb the run above.
+    const cheatToken = await signIn()
+    const cheatName = `C${randomTag(7)}`
+    await submit(cheatToken, 'snake', cheatName, 300, undefined)
+
+    const listed = await req(`/admin/scores?name=${cheatName}`, { token: adminToken })
+    const victim = listed.body?.scores?.[0]
+    check('a score can be looked up with its audit trail', Boolean(victim?.id), `status ${listed.status}`)
+
+    const voided = await req('/admin/scores/void', {
+      method: 'POST',
+      body: { ids: [victim?.id] },
+      token: adminToken,
+    })
+    check('a score can be voided', voided.body?.voided === 1, `voided ${voided.body?.voided}`)
+
+    const afterVoid = await req(`/admin/scores?name=${cheatName}`, { token: adminToken })
+    check('the voided score is off the board', afterVoid.body?.scores?.length === 0)
+
+    await submit(cheatToken, 'snake', cheatName, 310, undefined)
+    const banned = await req('/admin/bans', {
+      method: 'POST',
+      body: { name: cheatName, reason: 'smoke test', purge: true },
+      token: adminToken,
+    })
+    check(
+      'a tag can be banned and its scores purged',
+      banned.status === 201 && banned.body?.purged?.leaderboard >= 1,
+      `status ${banned.status} purged ${JSON.stringify(banned.body?.purged)}`,
+    )
+
+    const blocked = await submit(cheatToken, 'snake', cheatName, 320, undefined)
+    check(
+      'a banned tag cannot post',
+      blocked.status === 403 && blocked.body?.code === 'NAME_BANNED',
+      `status ${blocked.status} code ${blocked.body?.code}`,
+    )
+
+    // The point of recording the account: a new tag must not be a way back on.
+    const freshTag = await submit(cheatToken, 'snake', `D${randomTag(7)}`, 330, undefined)
+    check(
+      'a banned account cannot post under a new tag',
+      freshTag.status === 403 && freshTag.body?.code === 'NAME_BANNED',
+      `status ${freshTag.status} code ${freshTag.body?.code}`,
+    )
+
+    const lifted = await req(`/admin/bans/${cheatName}`, { method: 'DELETE', token: adminToken })
+    check('a ban can be lifted', lifted.status === 200, `status ${lifted.status}`)
+    const restored = await submit(cheatToken, 'snake', cheatName, 340, undefined)
+    check('posting works again after a ban is lifted', restored.status === 201, `status ${restored.status}`)
+  }
 
   console.log('\nrate limiting')
   let limited = null

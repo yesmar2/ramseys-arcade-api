@@ -14,6 +14,7 @@
  * so the app has something to show from their point of view.
  */
 
+import { seedScoreCap } from './scoreLimits.js'
 import { eq, inArray, like, or, sql } from 'drizzle-orm'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -205,7 +206,7 @@ function runScore(game: GameSlug, skill: number, form: number) {
   const band = BANDS[game]
   const shaped = Math.min(1, Math.pow(skill, 1.3) * (0.7 + form * 0.5))
   const raw = band.min + (band.max - band.min) * shaped
-  return roundTo(raw * (0.92 + rand() * 0.16), band.step ?? 1)
+  return roundTo(Math.min(seedScoreCap(game), raw * (0.92 + rand() * 0.16)), band.step ?? 1)
 }
 
 function makePlayers(existing: Set<string>): Player[] {

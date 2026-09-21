@@ -1,3 +1,4 @@
+import { seedScoreCap } from './scoreLimits.js'
 import {
   loadStore,
   replaceAllBoards,
@@ -74,7 +75,7 @@ function scoreFor(game: GameSlug, skill: number, rand: () => number) {
   const shaped = Math.pow(skill, 1.35) * (0.82 + rand() * 0.36)
   const raw = lerp(band.min, band.max, Math.min(1, shaped))
   const jitter = 1 + (rand() - 0.5) * 0.14
-  return roundTo(raw * jitter, band.step ?? 1)
+  return roundTo(Math.min(seedScoreCap(game), raw * jitter), band.step ?? 1)
 }
 
 /** Timestamps relative to now so daily / weekly / monthly boards always look populated. */

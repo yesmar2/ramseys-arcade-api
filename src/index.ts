@@ -1,3 +1,4 @@
+import { applyDataRepairs } from './repairs.js'
 import cors from 'cors'
 import { logDbTarget } from './env.js'
 import express from 'express'
@@ -142,6 +143,12 @@ async function main() {
     if (await seedRecords(false)) {
       console.log('Seeded record books with sample times')
     }
+  }
+
+  try {
+    await applyDataRepairs()
+  } catch (err) {
+    console.error('[repair] failed', err)
   }
 
   app.use((_req, res) => {

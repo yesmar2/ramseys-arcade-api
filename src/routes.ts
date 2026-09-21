@@ -1,3 +1,4 @@
+import { scoreCeiling } from './scoreLimits.js'
 import { Router } from 'express'
 import { z } from 'zod'
 import { pageParams } from './paging.js'
@@ -234,6 +235,10 @@ leaderboardsRouter.post('/:game', async (req, res) => {
   }
 
   const { name, score, token, device } = parsed.data
+  if (score > scoreCeiling(game)) {
+    res.status(400).json({ error: 'That score is not possible in this game', code: 'SCORE_OUT_OF_RANGE' })
+    return
+  }
   const account = await accountFromRequest(req)
   if (!account) {
     res.status(401).json({ error: 'Sign in to save a score', code: 'AUTH_REQUIRED' })

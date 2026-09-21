@@ -321,7 +321,17 @@ async function main() {
     check('a score can be voided', voided.body?.voided === 1, `voided ${voided.body?.voided}`)
 
     const afterVoid = await req(`/admin/scores?name=${cheatName}`, { token: adminToken })
-    check('the voided score is off the board', afterVoid.body?.scores?.length === 0)
+    check('the voided score is gone from the table', afterVoid.body?.scores?.length === 0)
+
+    // Asked of the public board, not the table: boards are served from a cache
+    // that only writes invalidate, so a delete straight from the table used to
+    // leave the score on the site after the row had gone.
+    const publicBoard = await req('/leaderboards/snake?period=all&limit=500')
+    check(
+      'and off the board the players actually see',
+      !publicBoard.body?.entries?.some((e) => e.name === cheatName),
+      'still listed on the public board',
+    )
 
     await submit(cheatToken, 'snake', cheatName, 310, undefined)
     const banned = await req('/admin/bans', {

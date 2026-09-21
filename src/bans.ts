@@ -1,6 +1,7 @@
 import { desc, eq, inArray, or, sql } from 'drizzle-orm'
 import { db } from './db/client.js'
 import { leaderboardScores, nameBans, nameClaims, recordScores } from './db/schema.js'
+import { invalidateHistoryCache } from './store.js'
 
 export type BanRow = {
   name: string
@@ -109,6 +110,8 @@ export async function purgeName(name: string): Promise<{
     .delete(recordScores)
     .where(eq(recordScores.name, cleaned))
     .returning({ id: recordScores.id })
+  // Boards are served from a cache; without this the purged scores stay up.
+  invalidateHistoryCache()
   return { leaderboard: boards.length, records: books.length }
 }
 
@@ -119,6 +122,12 @@ export async function voidScores(ids: string[]): Promise<number> {
     .delete(leaderboardScores)
     .where(inArray(leaderboardScores.id, ids))
     .returning({ id: leaderboardScores.id })
+  /*
+   * The board is read through a cache that only writes invalidate. Deleting
+   * straight from the table left the voided score sitting on the leaderboard
+   * until the cache aged out — the row was gone and the site still showed it.
+   */
+  invalidateHistoryCache()
   return removed.length
 }
 

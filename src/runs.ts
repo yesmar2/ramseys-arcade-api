@@ -32,37 +32,48 @@ export async function startRun(accountId: string, game: GameSlug): Promise<RunTi
   return { runId, startedAt }
 }
 
-export type RunConsumed =
+export type RunCode = 'UNKNOWN' | 'USED' | 'EXPIRED' | 'MISMATCH'
+
+export type RunLookup =
   | { ok: true; startedAt: number; elapsedMs: number }
-  | { ok: false; code: 'UNKNOWN' | 'USED' | 'EXPIRED' | 'MISMATCH' }
+  | { ok: false; code: RunCode }
 
 /**
- * Spend a run id, returning how long it was open.
+ * Read a run without spending it, returning how long it has been open.
  *
- * The update is conditional on the run still being unused, so two submissions
- * racing the same id cannot both win: whichever UPDATE matches a row first
- * takes it, and the other sees no rows and is told USED.
+ * Kept separate from spending it because a submission can still fail after
+ * this — on a name someone else already owns, most often. Burning the run
+ * there would leave the player unable to retry under a different name, having
+ * done nothing wrong.
  */
-export async function consumeRun(
+export async function peekRun(
   runId: string,
   accountId: string,
   game: GameSlug,
-): Promise<RunConsumed> {
+): Promise<RunLookup> {
   const now = Date.now()
   const [run] = await db().select().from(gameRuns).where(eq(gameRuns.id, runId)).limit(1)
   if (!run) return { ok: false, code: 'UNKNOWN' }
   if (run.accountId !== accountId || run.game !== game) return { ok: false, code: 'MISMATCH' }
   if (run.usedAt != null) return { ok: false, code: 'USED' }
   if (now - run.startedAt > RUN_TTL_MS) return { ok: false, code: 'EXPIRED' }
+  return { ok: true, startedAt: run.startedAt, elapsedMs: now - run.startedAt }
+}
 
+/**
+ * Spend a run id. False means somebody already did.
+ *
+ * Conditional on the run still being unused, so two submissions racing the
+ * same id cannot both win: whichever UPDATE matches the row takes it, and the
+ * other sees no rows — which is the right answer, because it is a duplicate.
+ */
+export async function markRunUsed(runId: string): Promise<boolean> {
   const claimed = await db()
     .update(gameRuns)
-    .set({ usedAt: now })
+    .set({ usedAt: Date.now() })
     .where(and(eq(gameRuns.id, runId), isNull(gameRuns.usedAt)))
     .returning({ id: gameRuns.id })
-  if (claimed.length === 0) return { ok: false, code: 'USED' }
-
-  return { ok: true, startedAt: run.startedAt, elapsedMs: now - run.startedAt }
+  return claimed.length > 0
 }
 
 /** Drop rows no submission can still reference. */

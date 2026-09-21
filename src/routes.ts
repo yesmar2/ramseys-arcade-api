@@ -4,7 +4,7 @@ import { z } from 'zod'
 import { pageParams } from './paging.js'
 import { accountFromRequest } from './auth.js'
 import { clientIp, hashIp, takeToken } from './rateLimit.js'
-import { consumeRun } from './runs.js'
+import { markRunUsed, peekRun } from './runs.js'
 import { resolveBoardScope } from './groups.js'
 import { assertCanUseName, withAvatarId, withAvatarIds } from './names.js'
 import { updateCrossRunStreakRecords } from './records.js'
@@ -281,7 +281,7 @@ leaderboardsRouter.post('/:game', async (req, res) => {
    */
   let durationMs: number | null = null
   if (runId) {
-    const run = await consumeRun(runId, account.id, game)
+    const run = await peekRun(runId, account.id, game)
     if (!run.ok) {
       res.status(400).json({ error: RUN_ERRORS[run.code], code: `RUN_${run.code}` })
       return
@@ -316,6 +316,13 @@ leaderboardsRouter.post('/:game', async (req, res) => {
       error: err instanceof Error ? err.message : 'Name claim failed',
       code,
     })
+    return
+  }
+
+  // Last thing before the write: everything that could reject this score has
+  // already had its say, so spending the run here cannot strand a retry.
+  if (runId && !(await markRunUsed(runId))) {
+    res.status(400).json({ error: RUN_ERRORS.USED, code: 'RUN_USED' })
     return
   }
 

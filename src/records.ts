@@ -132,19 +132,6 @@ const CROSSWALK_LONGEST_CHAIN: RecordDef = {
   unit: 'count',
 }
 
-/**
- * How far you got. This was the score until the chain started paying points:
- * distance measured patience more than skill, so it moved here, the same way
- * Snake keeps points as the score and puts length in a book of its own.
- */
-const CROSSWALK_FURTHEST: RecordDef = {
-  id: 'furthest-run',
-  game: 'crosswalk',
-  label: 'Furthest run',
-  direction: 'higher',
-  unit: 'count',
-}
-
 const POP_CENTER_STREAK: RecordDef = {
   id: 'center-streak',
   game: 'pop',
@@ -207,7 +194,7 @@ export const SCORE_STREAK_THRESHOLDS: Record<GameSlug, number> = {
   asteroids: 1000,
   patriot: 1000,
   snake: 500,
-  crosswalk: 2000,
+  crosswalk: 200,
   stacker: 15,
   centroid: 6000,
   pop: 300,
@@ -254,7 +241,6 @@ const RECORD_DEFS: RecordDef[] = [
   PATRIOT_DIRECT_STREAK,
   CROSSWALK_MOST_COINS,
   CROSSWALK_LONGEST_CHAIN,
-  CROSSWALK_FURTHEST,
   POP_CENTER_STREAK,
   STACKER_PERFECT_STREAK,
   PELLETS_CRUMB_STREAK,

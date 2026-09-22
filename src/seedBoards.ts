@@ -52,7 +52,7 @@ const GAME_BANDS: Record<GameSlug, ScoreProfile> = {
   centroid: { min: 420, max: 7420, step: 10 },
   asteroids: { min: 280, max: 14200, step: 10 },
   simon: { min: 2, max: 26 },
-  crosswalk: { min: 120, max: 4200, step: 10 },
+  crosswalk: { min: 12, max: 420, step: 1 },
   spotter: { min: 940_000, max: 999_500, step: 1000 },
   pellets: { min: 120, max: 18600, step: 10 },
   findbug: { min: 850_000, max: 975_000, step: 500 },

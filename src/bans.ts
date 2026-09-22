@@ -1,6 +1,7 @@
 import { desc, eq, inArray, or, sql } from 'drizzle-orm'
 import { db } from './db/client.js'
 import { leaderboardScores, nameBans, nameClaims, recordScores } from './db/schema.js'
+import { invalidateSiteRecords } from './siteRecords.js'
 import { invalidateHistoryCache } from './store.js'
 
 export type BanRow = {
@@ -112,6 +113,7 @@ export async function purgeName(name: string): Promise<{
     .returning({ id: recordScores.id })
   // Boards are served from a cache; without this the purged scores stay up.
   invalidateHistoryCache()
+  invalidateSiteRecords()
   return { leaderboard: boards.length, records: books.length }
 }
 
@@ -128,6 +130,7 @@ export async function voidScores(ids: string[]): Promise<number> {
    * until the cache aged out — the row was gone and the site still showed it.
    */
   invalidateHistoryCache()
+  invalidateSiteRecords()
   return removed.length
 }
 

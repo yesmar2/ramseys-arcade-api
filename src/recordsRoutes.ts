@@ -15,6 +15,7 @@ import {
   getRecordDef,
   listGameRecords,
 } from './records.js'
+import { siteRecords, siteRecordStandingFor } from './siteRecords.js'
 import { isPeriod, resolveGameSlug, type Period } from './store.js'
 
 export const recordsRouter = Router()
@@ -80,6 +81,23 @@ function scopeError(err: unknown, res: import('express').Response) {
     code,
   })
 }
+
+/*
+ * Ahead of '/:game' deliberately: Express takes the first match, and this path
+ * would otherwise be read as a request for a game called "site".
+ */
+recordsRouter.get('/site', async (req, res) => {
+  try {
+    const scope = await boardAccess(req)
+    const name = typeof req.query.name === 'string' ? req.query.name : ''
+    res.json({
+      boards: await siteRecords(scope),
+      you: name ? await siteRecordStandingFor(name, scope) : null,
+    })
+  } catch (err) {
+    scopeError(err, res)
+  }
+})
 
 recordsRouter.get('/:game', async (req, res) => {
   const game = resolveGameSlug(req.params.game)

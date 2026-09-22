@@ -24,9 +24,9 @@ const ASTEROIDS_WAVE_MAX = 20
 const SNAKE_LENGTH_MILESTONE_MIN = 20
 const SNAKE_LENGTH_MILESTONE_MAX = 100
 const SNAKE_LENGTH_MILESTONE_STEP = 10
-const CROSSWALK_ROW_MILESTONE_MIN = 100
+const CROSSWALK_ROW_MILESTONE_MIN = 25
 const CROSSWALK_ROW_MILESTONE_MAX = 200
-const CROSSWALK_ROW_MILESTONE_STEP = 50
+const CROSSWALK_ROW_MILESTONE_STEP = 25
 
 export type RecordDirection = 'lower' | 'higher'
 
@@ -194,7 +194,7 @@ export const SCORE_STREAK_THRESHOLDS: Record<GameSlug, number> = {
   asteroids: 1000,
   patriot: 1000,
   snake: 500,
-  crosswalk: 200,
+  crosswalk: 75,
   stacker: 15,
   centroid: 6000,
   pop: 300,

@@ -132,6 +132,19 @@ const CROSSWALK_LONGEST_CHAIN: RecordDef = {
   unit: 'count',
 }
 
+/**
+ * Cars squeezed past in flight. Only ones taken mid-hop count — standing beside
+ * a slow lane re-triggers a near miss every cooldown, so the alternative would
+ * be a board that rewards parking next to traffic.
+ */
+const CROSSWALK_NEAR_MISSES: RecordDef = {
+  id: 'near-misses',
+  game: 'crosswalk',
+  label: 'Closest calls in a run',
+  direction: 'higher',
+  unit: 'count',
+}
+
 const POP_CENTER_STREAK: RecordDef = {
   id: 'center-streak',
   game: 'pop',
@@ -241,6 +254,7 @@ const RECORD_DEFS: RecordDef[] = [
   PATRIOT_DIRECT_STREAK,
   CROSSWALK_MOST_COINS,
   CROSSWALK_LONGEST_CHAIN,
+  CROSSWALK_NEAR_MISSES,
   POP_CENTER_STREAK,
   STACKER_PERFECT_STREAK,
   PELLETS_CRUMB_STREAK,

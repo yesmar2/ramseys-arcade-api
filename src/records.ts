@@ -185,6 +185,19 @@ const SNAKE_LONGEST: RecordDef = {
   unit: 'count',
 }
 
+/**
+ * Blue chasers eaten. Only the frightened ones: a surge bounces a chaser away
+ * rather than eating it, and the two pay on different ladders, so counting both
+ * here would make the label mean something it does not say.
+ */
+const CRUMBTRAIL_GHOSTS: RecordDef = {
+  id: 'chasers-eaten',
+  game: 'crumbtrail',
+  label: 'Chasers eaten in a run',
+  direction: 'higher',
+  unit: 'count',
+}
+
 const CRUMBTRAIL_ROWS: RecordDef = {
   id: 'most-rows',
   game: 'crumbtrail',
@@ -260,6 +273,7 @@ const RECORD_DEFS: RecordDef[] = [
   PELLETS_CRUMB_STREAK,
   CRUMBTRAIL_ROWS,
   CRUMBTRAIL_CRUMB_STREAK,
+  CRUMBTRAIL_GHOSTS,
   SNAKE_LONGEST,
   ...buildAsteroidsWaveRecords(),
   ...buildSnakeFastestLengthRecords(),

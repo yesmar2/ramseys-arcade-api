@@ -228,7 +228,7 @@ export const SCORE_STREAK_THRESHOLDS: Record<GameSlug, number> = {
   spotter: 955_000, // ≈ under 45s
   pellets: 2000,
   findbug: 940_000, // ≈ a full five-scene run under 60s
-  crumbtrail: 2000,
+  crumbtrail: 10_000,
   bop: 25,
   putt: 2000,
 }

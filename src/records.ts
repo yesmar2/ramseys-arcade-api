@@ -217,6 +217,8 @@ const MIN_CROSS_RUN_STREAK = 2
  * Spotter uses inverted time (higher board score = faster clear).
  */
 export const SCORE_STREAK_THRESHOLDS: Record<GameSlug, number> = {
+  barrage: 4000,
+  frenzy: 3000,
   asteroids: 1000,
   patriot: 1000,
   snake: 500,

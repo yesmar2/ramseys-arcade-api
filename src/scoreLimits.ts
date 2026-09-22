@@ -52,6 +52,16 @@ export function seedScoreCap(game: GameSlug): number {
 type ScoreRule =
   /** Points accrue over time: score <= floor + perSecond * seconds elapsed. */
   | { kind: 'rate'; floor: number; perSecond: number }
+  /**
+   * Points compound, so the allowance has to bend with them.
+   *
+   * A game where what you earn depends on what you have already earned does
+   * not score at a rate — Frenzy pays by the level you grew to, so a minute in
+   * is worth many times the first. A straight line fitted to the end of such a
+   * run is wildly generous at the start of one, which is exactly where a
+   * forged score arrives.
+   */
+  | { kind: 'curve'; floor: number; perSecond: number; perSecondSquared: number }
   /** Score encodes TIME_SCORE_BASE - milliseconds; the clock must agree. */
   | { kind: 'time' }
 
@@ -68,6 +78,13 @@ const SCORE_RULES: Record<GameSlug, ScoreRule> = {
   crumbtrail: { kind: 'rate', floor: 2_000, perSecond: 250 },
   bop: { kind: 'rate', floor: 20, perSecond: 4 },
   putt: { kind: 'rate', floor: 500, perSecond: 80 },
+  barrage: { kind: 'rate', floor: 500, perSecond: 400 },
+  /*
+   * Measured, not guessed: a bot that plays Frenzy badly reaches 24,000 in
+   * ninety-seven seconds, and almost nothing in the first ten. These leave
+   * roughly four times the bot's best at every point on that curve.
+   */
+  frenzy: { kind: 'curve', floor: 300, perSecond: 100, perSecondSquared: 10 },
   findbug: { kind: 'time' },
   spotter: { kind: 'time' },
 }
@@ -88,8 +105,13 @@ const TIME_TOLERANCE = 0.9
  */
 export function rateAllowance(game: GameSlug, elapsedMs: number): number | null {
   const rule = SCORE_RULES[game]
-  if (!rule || rule.kind !== 'rate') return null
-  return rule.floor + rule.perSecond * (elapsedMs / 1000)
+  if (!rule) return null
+  const seconds = elapsedMs / 1000
+  if (rule.kind === 'rate') return rule.floor + rule.perSecond * seconds
+  if (rule.kind === 'curve') {
+    return rule.floor + rule.perSecond * seconds + rule.perSecondSquared * seconds * seconds
+  }
+  return null
 }
 
 export type PlausibilityVerdict =
@@ -122,8 +144,8 @@ export function checkScoreRate(
     return { ok: true }
   }
 
-  const allowed = rule.floor + rule.perSecond * (elapsedMs / 1000)
-  if (score > allowed) {
+  const allowed = rateAllowance(game, elapsedMs)
+  if (allowed != null && score > allowed) {
     return {
       ok: false,
       reason: `${score} points in ${(elapsedMs / 1000).toFixed(1)}s is past this game's fastest possible scoring`,

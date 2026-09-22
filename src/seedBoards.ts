@@ -59,6 +59,8 @@ const GAME_BANDS: Record<GameSlug, ScoreProfile> = {
   crumbtrail: { min: 150, max: 21400, step: 10 },
   bop: { min: 3, max: 74 },
   putt: { min: 300, max: 3200, step: 100 },
+  barrage: { min: 300, max: 24_000, step: 5 },
+  frenzy: { min: 200, max: 26_000, step: 1 },
 }
 
 function lerp(a: number, b: number, t: number) {
@@ -157,6 +159,8 @@ export function buildSeed(seed = 20260904) {
     crumbtrail: [],
     bop: [],
     putt: [],
+    barrage: [],
+    frenzy: [],
   }
 
   NAMES.forEach((name, i) => {

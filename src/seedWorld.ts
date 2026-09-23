@@ -845,16 +845,22 @@ function recordBooks(players: Player[]): RecordRow[] {
 
 /* ---------- writing ---------- */
 
-async function insertRows<T extends object>(table: Parameters<ReturnType<typeof db>['insert']>[0], rows: T[]) {
+/**
+ * The database, or one transaction on it. The world is written in a single
+ * transaction, so the site sees the old one or the new one and never half of
+ * either, and a run that fails part way leaves nothing behind.
+ */
+type Db = Pick<ReturnType<typeof db>, 'select' | 'insert' | 'update' | 'delete'>
+
+async function insertRows<T extends object>(d: Db, table: Parameters<Db['insert']>[0], rows: T[]) {
   const chunk = 250
   for (let i = 0; i < rows.length; i += chunk) {
-    await db().insert(table).values(rows.slice(i, i + chunk) as never)
+    await d.insert(table).values(rows.slice(i, i + chunk) as never)
   }
 }
 
 /** Remove what this script added before, and nothing else. */
-async function clearSeed() {
-  const d = db()
+async function clearSeed(d: Db) {
   await d.delete(leaderboardScores).where(like(leaderboardScores.id, 'seed-%'))
   await d.delete(recordScores).where(like(recordScores.id, 'seed-%'))
   await d.delete(tournamentsTable).where(like(tournamentsTable.id, 'seed-%'))
@@ -930,39 +936,39 @@ async function backUp(): Promise<string> {
  * everyone. Accounts, sign-ins, tags, bans and push subscriptions stay, so
  * nobody is signed out and every tag keeps its owner.
  */
-async function wipeGameData() {
-  await db().transaction(async (tx) => {
-    for (const table of [
-      runClaims,
-      gameRuns,
-      scoreFlags,
-      leaderboardScores,
-      recordScores,
-      tournamentsTable,
-      groupMembers,
-      groups,
-      directedInvites,
-      friendRequests,
-      friendships,
-      trophyAwards,
-      notifications,
-      pushLedger,
-    ]) {
-      await tx.delete(table)
-    }
-    await tx
-      .insert(trophyCursor)
-      .values({ id: 'default', weeklyInitialized: false, monthlyInitialized: false })
-      .onConflictDoUpdate({ target: trophyCursor.id, set: { weeklyInitialized: false, monthlyInitialized: false } })
-  })
+async function wipeGameData(d: Db) {
+  for (const table of [
+    runClaims,
+    gameRuns,
+    scoreFlags,
+    leaderboardScores,
+    recordScores,
+    tournamentsTable,
+    groupMembers,
+    groups,
+    directedInvites,
+    friendRequests,
+    friendships,
+    trophyAwards,
+    notifications,
+    pushLedger,
+  ]) {
+    await d.delete(table)
+  }
+  await d
+    .insert(trophyCursor)
+    .values({ id: 'default', weeklyInitialized: false, monthlyInitialized: false })
+    .onConflictDoUpdate({ target: trophyCursor.id, set: { weeklyInitialized: false, monthlyInitialized: false } })
 }
 
-async function seedAccounts(players: Player[]) {
+async function seedAccounts(d: Db, players: Player[]) {
   await insertRows(
+    d,
     accounts,
     players.map((p) => ({ id: p.accountId, email: p.email, createdAt: Math.round(p.joinedAt), plan: 'free', googleSub: null })),
   )
   await insertRows(
+    d,
     nameClaims,
     players.map((p) => ({
       name: p.tag,
@@ -976,7 +982,7 @@ async function seedAccounts(players: Player[]) {
 
 /* ---------- friends and groups ---------- */
 
-async function seedSocial(players: Player[]) {
+async function seedSocial(d: Db, players: Player[]) {
   const pairs = new Set<string>()
   const rows: (typeof friendships.$inferInsert)[] = []
   const link = (a: Player, b: Player) => {
@@ -995,7 +1001,7 @@ async function seedSocial(players: Player[]) {
     for (const q of shuffle(alike).slice(0, Math.ceil(n * 0.7))) link(p, q)
     for (const q of shuffle(players).slice(0, Math.floor(n * 0.3))) link(p, q)
   }
-  await insertRows(friendships, rows)
+  await insertRows(d, friendships, rows)
 
   const circles: { name: string; members: Player[] }[] = [
     { name: 'Thursday Crew', members: shuffle(players.filter((p) => p.activity > 0.4)).slice(0, 12) },
@@ -1009,9 +1015,10 @@ async function seedSocial(players: Player[]) {
     if (c.members.length < 3) continue
     const id = sid('group')
     const owner = c.members[0]!
-    await db().insert(groups).values({ id, name: c.name, inviteCode: inviteCode(), createdByAccountId: owner.accountId })
+    await d.insert(groups).values({ id, name: c.name, inviteCode: inviteCode(), createdByAccountId: owner.accountId })
     const opened = owner.joinedAt + between(0, Math.max(0, NOW - owner.joinedAt) * 0.4)
     await insertRows(
+      d,
       groupMembers,
       c.members.map((m) => ({
         groupId: id,
@@ -1092,17 +1099,36 @@ async function main() {
     console.log('Backing up every table…')
     const file = await backUp()
     console.log(`  written to ${file}`)
-    console.log('Wiping game data…')
-    await wipeGameData()
   }
-  console.log('Clearing the previous seed…')
-  await clearSeed()
-  if (clearOnly) {
+  const events = await db().transaction(async (tx) => {
+    if (fresh) {
+      console.log('Wiping game data…')
+      await wipeGameData(tx)
+    }
+    console.log('Clearing the previous seed…')
+    await clearSeed(tx)
+    if (clearOnly) return null
+    return buildWorld(tx)
+  })
+  if (!events) {
     console.log('Seed data removed.')
     return
   }
 
-  const existing = new Set((await db().select({ name: nameClaims.name }).from(nameClaims)).map((r) => r.name))
+  // After the commit, from the boards as everyone now sees them.
+  console.log('Handing out trophies…')
+  const trophies = await seedTrophies(events)
+  console.log(`  ${trophies.periods} weekly and monthly podiums, ${trophies.wins} event wins`)
+
+  const wk = weekStartKey(NOW)
+  const top = (await globalRanksForClosedPeriod('weekly', wk)).slice(0, 3)
+  console.log(`This week so far (${wk}, month ${monthKey(NOW)}): ${top.map((r) => `${r.name} ${r.score}`).join(', ') || 'no scores'}`)
+  console.log('Done.')
+}
+
+/** Play the world and write it: players, runs, record books, events, friends and groups. */
+async function buildWorld(d: Db): Promise<Tournament[]> {
+  const existing = new Set((await d.select({ name: nameClaims.name }).from(nameClaims)).map((r) => r.name))
   const players = makePlayers(existing)
   const official = officialEvents()
   const hosted = hostedScoreEvents(players)
@@ -1150,7 +1176,7 @@ async function main() {
   }
   for (const t of official) fillOfficial(t, players, meant.get(t.id))
   // The arcade's own events may already hold real players; they keep their seats.
-  const standing = await db()
+  const standing = await d
     .select()
     .from(tournamentsTable)
     .where(inArray(tournamentsTable.id, official.map((t) => t.id)))
@@ -1162,7 +1188,7 @@ async function main() {
   }
 
   console.log('Creating accounts and tags…')
-  await seedAccounts(players)
+  await seedAccounts(d, players)
 
   console.log('Posting runs…')
   const scoreRows = players.flatMap((p) =>
@@ -1176,12 +1202,12 @@ async function main() {
       durationMs: r.durationMs,
     })),
   )
-  await insertRows(leaderboardScores, scoreRows)
+  await insertRows(d, leaderboardScores, scoreRows)
   console.log(`  ${scoreRows.length} runs across ${SEEDED_GAMES.length} games`)
 
   console.log('Filling record books…')
   const records = recordBooks(players).map((r) => ({ ...r, at: Math.round(r.at) }))
-  await insertRows(recordScores, records)
+  await insertRows(d, recordScores, records)
   console.log(`  ${records.length} record entries`)
 
   console.log('Running events…')
@@ -1197,7 +1223,7 @@ async function main() {
       visibility: t.visibility ?? (t.official ? 'public' : 'private'),
       inviteCode: t.inviteCode ?? null,
     }
-    await db()
+    await d
       .insert(tournamentsTable)
       .values(row)
       .onConflictDoUpdate({ target: tournamentsTable.id, set: { ...row, id: undefined } })
@@ -1205,18 +1231,10 @@ async function main() {
   for (const t of official) console.log(`  ${t.title} (${t.id}): ${t.players.length} players, ${t.scores.length} scores`)
   console.log(`  ${hosted.length} hosted events and ${draws.length} brackets`)
 
-  console.log('Handing out trophies…')
-  const trophies = await seedTrophies(events)
-  console.log(`  ${trophies.periods} weekly and monthly podiums, ${trophies.wins} event wins`)
-
   console.log('Making friends…')
-  const social = await seedSocial(players)
+  const social = await seedSocial(d, players)
   console.log(`  ${social.friendships} friendships, ${social.groups} groups`)
-
-  const wk = weekStartKey(NOW)
-  const top = (await globalRanksForClosedPeriod('weekly', wk)).slice(0, 3)
-  console.log(`This week so far (${wk}, month ${monthKey(NOW)}): ${top.map((r) => `${r.name} ${r.score}`).join(', ') || 'no scores'}`)
-  console.log('Done.')
+  return events
 }
 
 main()

@@ -5,6 +5,7 @@ import { notify } from './notifications.js'
 import { nameClaims, trophyAwards, trophyCursor } from './db/schema.js'
 import {
   globalRanksForClosedPeriod,
+  invalidateHistoryCache,
   monthKey,
   weekStartKey,
 } from './store.js'
@@ -187,6 +188,10 @@ export async function ensurePeriodTrophies(now = Date.now()) {
   // a second on their profile for it.
   if (ensuring) return lastEnsuredAt ? undefined : ensuring
   ensuring = (async () => {
+    // Rank from the tables as they stand. The board cache can be minutes
+    // behind a script that rewrote them (a prune, a wipe, a reseed), and an
+    // award made from a stale board stays on someone's shelf for good.
+    invalidateHistoryCache()
     const cursor = await getCursor()
     const weekCount = cursor.weeklyInitialized ? 1 : 8
     const monthCount = cursor.monthlyInitialized ? 1 : 6

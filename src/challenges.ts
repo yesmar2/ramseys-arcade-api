@@ -232,11 +232,13 @@ async function tellChallenger(
   }
   // A try that fell short is worth a line, once for each time they get closer.
   if (!what.improved) return
+  // A clock is "off" by its gap, as the site's record book says it.
+  const short = isTime(game) ? 'off' : 'short of'
   await notify({
     accountId: challenge.accountId,
     kind: 'challenge-taken',
     title: `${run.name} took your challenge on ${gameLabel(game)}`,
-    body: `${scoreFigure(game, run.score)}, ${gapWords(game, challenge.score - run.score)} short of your ${set}.`,
+    body: `${scoreFigure(game, run.score)}, ${gapWords(game, challenge.score - run.score)} ${short} your ${set}.`,
     href: `/games/${game}`,
     digestKey: `challenge-taken:${challenge.id}:${run.name}`,
     now,

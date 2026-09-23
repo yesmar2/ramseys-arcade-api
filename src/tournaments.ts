@@ -512,7 +512,7 @@ function defaultCommunityBlurb(games: GameSlug[], maxAttempts: number) {
   return `${maxAttempts} attempts per game: ${labels}. Best score counts.`
 }
 
-function buildDailyEvent(now = Date.now()): Tournament {
+export function buildDailyEvent(now = Date.now()): Tournament {
   const { y, m, d } = ymdInTz(now)
   const key = dateKey(y, m, d)
   const next = addCalendarDays(y, m, d, 1)
@@ -536,7 +536,7 @@ function buildDailyEvent(now = Date.now()): Tournament {
   }
 }
 
-function buildWeeklyEvent(now = Date.now()): Tournament {
+export function buildWeeklyEvent(now = Date.now()): Tournament {
   const week = weekStartYmd(now)
   const end = addCalendarDays(week.y, week.m, week.d, 7)
   const games = pickGames(week.key * 17 + 3, 3)

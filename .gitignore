@@ -13,3 +13,6 @@ data/*.json
 # Rows lifted out of a live table by scripts/prune-impossible-records.mjs —
 # the only copy of what was deleted, and player data besides. Keep it local.
 pruned-records-*.json
+# Whole-database copies written by `npm run seed:world -- --fresh` before it
+# wipes anything. Every table, player data included. Keep it local.
+backups/

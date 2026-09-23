@@ -1,77 +1,108 @@
 /*
- * Seed a believable arcade: ~150 players with accounts and tags, months of
- * scores shaped by skill and habit, record-book entries, weekly and monthly
- * trophies computed from those scores, events with real standings and
- * finished brackets, friends, requests, and groups.
+ * Seed a believable arcade.
  *
- *   npm run seed:world            add it all (idempotent: clears its own rows first)
- *   npm run seed:world -- --clear remove everything this script added
+ * About 150 players, each with a skill, favourite games, a time of day they
+ * tend to play and a habit of coming back, play the site day by day from the
+ * day they joined. Every run is one of the game's own shapes (seedGames.ts),
+ * and everything else is only what those runs would have made:
+ *
+ *   - the boards are the runs;
+ *   - the record books are what each run posted, kept the way the API keeps
+ *     them (only a value that beat the player's own best for the day, the
+ *     week, the month or all time), and the streak books are counted from
+ *     the runs themselves;
+ *   - the daily and weekly events hold the runs of the players who joined
+ *     them, and the hosted events and brackets were played by their rosters;
+ *   - weekly and monthly trophies are ranked from the boards, and event wins
+ *     from the events.
+ *
+ * Nobody real is touched. Every player is seeded, and no real tag is put in an
+ * event, a group or a friendship.
+ *
+ *   npm run seed:world                  replace the seeded world
+ *   npm run seed:world -- --clear       remove everything this script added
+ *   npm run seed:world -- --fresh       back up every table to backups/, wipe
+ *                                       all game data, real players' too, and
+ *                                       seed
+ *
+ * --fresh keeps accounts, sign-ins, tags, bans and push subscriptions, and
+ * empties the boards, record books, events, trophies, groups, friends and
+ * notifications for everyone.
  *
  * Everything it writes is marked: ids start with `seed-`, accounts use the
- * `@seed.skermix.dev` domain, and trophies belong to seeded tags or seeded
- * events. Real players' rows are never touched, except that the signed-in
- * player named in --you (default DAD) is placed into events and friendships
- * so the app has something to show from their point of view.
+ * `@seed.skermix.dev` domain, and trophies belong to seeded tags. The daily and
+ * weekly events are the arcade's own, so their seeded seats carry `seed-` ids.
  */
 
-import { seedScoreCap } from './scoreLimits.js'
 import { eq, inArray, like, or, sql } from 'drizzle-orm'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { randomAvatarId } from './avatars.js'
 import {
+  armMatchClocks,
+  bracketGamesForRound,
   bracketHasChampion,
-  findOpenMatch,
   lockBracket,
+  maybeEndWhenBracketFinished,
   resolveReadyMatches,
 } from './bracket.js'
 import { closeDb, db } from './db/client.js'
 import { runMigrations } from './db/migrate.js'
 import {
   accounts,
+  appMeta,
   directedInvites,
   friendRequests,
   friendships,
+  gameRuns,
   groupMembers,
   groups,
   leaderboardScores,
+  magicLinks,
+  nameBans,
   nameClaims,
+  notifications,
+  pushLedger,
+  pushSubscriptions,
   recordScores,
+  runClaims,
+  scoreFlags,
+  sessions,
   tournaments as tournamentsTable,
   trophyAwards,
   trophyCursor,
 } from './db/schema.js'
-import { randomAvatarId } from './avatars.js'
-import { getClaim } from './names.js'
+import { assertNotProduction, dbTarget } from './env.js'
 import {
-  ASTEROIDS_WAVE_MAX,
-  CROSSWALK_ROW_MILESTONE_MAX,
-  CROSSWALK_ROW_MILESTONE_MIN,
-  CROSSWALK_ROW_MILESTONE_STEP,
-  listRecordDefs,
+  computePlayDaysStreak,
+  getRecordDef,
   PLAY_DAYS_STREAK_ID,
-  SNAKE_LENGTH_MILESTONE_MAX,
-  SNAKE_LENGTH_MILESTONE_MIN,
-  SNAKE_LENGTH_MILESTONE_STEP,
+  SCORE_STREAK_THRESHOLDS,
   THRESHOLD_STREAK_ID,
 } from './records.js'
+import { playRun, SEEDED_GAMES, type RunRecord } from './seedGames.js'
 import {
-  ALLOWED_GAMES,
+  BOARD_TZ,
+  boardDateKey,
+  filterByPeriod,
   globalRanksForClosedPeriod,
   monthKey,
   weekStartKey,
   type DeviceType,
   type GameSlug,
+  type LeaderboardEntry,
+  type Period,
 } from './store.js'
 import {
+  buildDailyEvent,
+  buildWeeklyEvent,
   computeStandings,
   tournamentWinner,
   type Tournament,
   type TournamentPlayer,
-  type TournamentScore,
 } from './tournaments.js'
 import { awardEventWin, ensurePeriodTrophies } from './trophies.js'
-import { assertNotProduction } from './env.js'
 
 /* ---------- env ---------- */
 
@@ -117,11 +148,17 @@ function mulberry32(seed: number) {
   }
 }
 
-const rand = mulberry32(20260915)
+const rand = mulberry32(20260923)
 const pick = <T>(list: readonly T[]): T => list[Math.floor(rand() * list.length)]!
 const between = (lo: number, hi: number) => lo + rand() * (hi - lo)
 const chance = (p: number) => rand() < p
-function shuffle<T>(list: T[]): T[] {
+const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v))
+function gauss() {
+  let u = 0
+  while (u === 0) u = rand()
+  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * rand())
+}
+function shuffle<T>(list: readonly T[]): T[] {
   const out = [...list]
   for (let i = out.length - 1; i > 0; i--) {
     const j = Math.floor(rand() * (i + 1))
@@ -131,11 +168,39 @@ function shuffle<T>(list: T[]): T[] {
 }
 
 let idCounter = 0
-const sid = (kind: string) => `seed-${kind}-${(++idCounter).toString(36).padStart(4, '0')}`
+const sid = (kind: string) => `seed-${kind}-${(++idCounter).toString(36).padStart(5, '0')}`
 
-const DAY = 86_400_000
+const MINUTE = 60_000
 const HOUR = 3_600_000
+const DAY = 86_400_000
 const NOW = Date.now()
+
+/* ---------- the board's calendar ---------- */
+
+const ZONE_HOUR = new Intl.DateTimeFormat('en-US', { timeZone: BOARD_TZ, hour: 'numeric', hourCycle: 'h23' })
+
+/** Midnight in the board's zone on board day `key` (YYYYMMDD). */
+function dayStart(key: number): number {
+  const y = Math.floor(key / 10_000)
+  const m = Math.floor((key % 10_000) / 100)
+  const d = key % 100
+  for (const offset of [4, 5]) {
+    const at = Date.UTC(y, m - 1, d, offset)
+    if (boardDateKey(at) === key && Number(ZONE_HOUR.format(at)) === 0) return at
+  }
+  return Date.UTC(y, m - 1, d, 5)
+}
+
+const nextDay = (key: number) => boardDateKey(dayStart(key) + 30 * HOUR)
+const addDays = (key: number, days: number) => boardDateKey(dayStart(key) + days * DAY + 12 * HOUR)
+/** 0 Sunday … 6 Saturday. */
+function weekday(key: number) {
+  return new Date(Date.UTC(Math.floor(key / 10_000), Math.floor((key % 10_000) / 100) - 1, key % 100)).getUTCDay()
+}
+/** Hours since midnight in the board's zone. */
+const hourOf = (at: number) => (at - dayStart(boardDateKey(at))) / HOUR
+
+const TODAY = boardDateKey(NOW)
 
 /* ---------- who ---------- */
 
@@ -165,63 +230,83 @@ const TAGS = [
 
 const DEVICES: DeviceType[] = ['phone', 'phone', 'phone', 'tablet', 'desktop', 'desktop']
 
+type Run = {
+  game: GameSlug
+  score: number
+  startAt: number
+  /** When the score landed: the board's `at`. */
+  at: number
+  durationMs: number
+  device: DeviceType
+  records: RunRecord[]
+  /** Played from a bracket's match card, which posts nothing to the record books. */
+  inMatch?: boolean
+}
+
 type Player = {
   tag: string
   accountId: string
   email: string
   avatarId: string
-  /** 0 casual … 1 elite. */
+  /** 0 casual … 1 the best on the site. */
   skill: number
   /** 0 rare … 1 daily. */
   activity: number
   device: DeviceType
+  /** Most loved first. */
   favorites: GameSlug[]
+  /** Skill in each game: better at some than others, and at the ones they like. */
+  aptitude: Record<string, number>
   joinedAt: number
+  /** When they stopped coming back, or never. */
+  quitAt: number
+  /** The hour they usually play, in the board's zone. */
+  hour: number
+  practice: Record<string, number>
+  runs: Run[]
 }
 
-/** Real score bands per game, casual → elite. Same shape the games produce. */
-const BANDS: Record<GameSlug, { min: number; max: number; step?: number }> = {
-  stacker: { min: 6, max: 118 },
-  patriot: { min: 480, max: 28_600, step: 5 },
-  snake: { min: 30, max: 1180, step: 10 },
-  pop: { min: 70, max: 920, step: 5 },
-  centroid: { min: 420, max: 7420, step: 10 },
-  asteroids: { min: 280, max: 14_200, step: 10 },
-  simon: { min: 2, max: 26 },
-  crosswalk: { min: 12, max: 420 },
-  spotter: { min: 940_000, max: 999_500, step: 1000 },
-  pellets: { min: 120, max: 18_600, step: 10 },
-  findbug: { min: 850_000, max: 975_000, step: 500 },
-  crumbtrail: { min: 150, max: 21_400, step: 10 },
-  bop: { min: 3, max: 74 },
-  putt: { min: 300, max: 3200, step: 100 },
-  barrage: { min: 300, max: 24_000, step: 5 },
-  frenzy: { min: 200, max: 26_000, step: 1 },
-  fireflies: { min: 6, max: 140 },
-}
-
-function roundTo(value: number, step = 1) {
-  return Math.max(0, Math.round(value / step) * step)
-}
-
-/** A run's score for a player: skill sets the band, the day sets the mood. */
-function runScore(game: GameSlug, skill: number, form: number) {
-  const band = BANDS[game]
-  const shaped = Math.min(1, Math.pow(skill, 1.3) * (0.7 + form * 0.5))
-  const raw = band.min + (band.max - band.min) * shaped
-  return roundTo(Math.min(seedScoreCap(game), raw * (0.92 + rand() * 0.16)), band.step ?? 1)
+/** A time to play, on a day, a little before `NOW` if the day is today. */
+function timeOnDay(key: number, hour: number, notBefore = 0): number | null {
+  let at = Math.max(dayStart(key) + hour * HOUR, notBefore)
+  if (key === TODAY) {
+    const latest = NOW - 25 * MINUTE
+    if (at > latest) {
+      const earliest = Math.max(dayStart(key) + 7 * HOUR, notBefore)
+      if (earliest >= latest) return null
+      at = between(earliest, latest)
+    }
+  }
+  return at
 }
 
 function makePlayers(existing: Set<string>): Player[] {
   const tags = TAGS.filter((t) => !existing.has(t))
   return tags.map((tag, i) => {
-    // Skill: most people are middling, a handful are very good.
+    // A few are very good, a fifth are strong, half are regulars, the rest casual.
     const u = rand()
-    const skill = Math.min(1, Math.max(0.05, Math.pow(u, 1.6) * 0.9 + rand() * 0.15))
-    const activity = Math.min(1, Math.max(0.08, Math.pow(rand(), 1.2)))
-    const favCount = 2 + Math.floor(rand() * 5)
-    const favorites = shuffle([...ALLOWED_GAMES]).slice(0, favCount)
-    const joinedAt = NOW - Math.floor(between(7, 95)) * DAY
+    const skill =
+      u < 0.05 ? between(0.86, 0.98) : u < 0.25 ? between(0.64, 0.86) : u < 0.75 ? between(0.36, 0.64) : between(0.1, 0.36)
+    // The keen ones tend to be the good ones.
+    const activity = clamp(0.25 + 0.55 * Math.pow(rand(), 1.3) + (skill - 0.5) * 0.3 + gauss() * 0.08, 0.06, 1)
+    const favorites = shuffle(SEEDED_GAMES).slice(0, 2 + Math.floor(rand() * 5))
+    // Nobody is equally good at everything, and everyone is best at their own game.
+    const aptitude: Record<string, number> = {}
+    for (const g of SEEDED_GAMES) {
+      const fav = favorites.indexOf(g)
+      aptitude[g] = clamp(skill + gauss() * 0.14 + (fav === 0 ? 0.07 : fav > 0 ? 0.03 : 0), 0.03, 1)
+    }
+    const r = rand()
+    const hour = r < 0.7 ? between(18.5, 22.5) : r < 0.85 ? between(11.8, 13.5) : between(7.5, 17)
+    // More joined lately than long ago.
+    let joinDay = boardDateKey(NOW - Math.floor(1 + 100 * Math.pow(rand(), 1.25)) * DAY)
+    let joinedAt = timeOnDay(joinDay, hour)
+    if (joinedAt == null) {
+      joinDay = addDays(TODAY, -1)
+      joinedAt = timeOnDay(joinDay, hour)!
+    }
+    joinedAt -= between(3, 25) * MINUTE
+    const quitAt = chance(0.24) ? joinedAt + (NOW - joinedAt) * between(0.25, 0.85) : Number.POSITIVE_INFINITY
     return {
       tag,
       accountId: `seed-acct-${(i + 1).toString().padStart(3, '0')}`,
@@ -231,292 +316,151 @@ function makePlayers(existing: Set<string>): Player[] {
       activity,
       device: pick(DEVICES),
       favorites,
+      aptitude,
       joinedAt,
+      quitAt,
+      hour,
+      practice: {},
+      runs: [],
     }
   })
 }
 
-/* ---------- clear ---------- */
+/* ---------- playing ---------- */
 
-async function clearSeed() {
-  const d = db()
-  const seedTags = [...TAGS]
-  await d.delete(leaderboardScores).where(like(leaderboardScores.id, 'seed-%'))
-  await d.delete(recordScores).where(like(recordScores.id, 'seed-%'))
-  await d.delete(tournamentsTable).where(like(tournamentsTable.id, 'seed-%'))
-  await d
-    .delete(trophyAwards)
-    .where(or(inArray(trophyAwards.name, seedTags), like(trophyAwards.eventId, 'seed-%')))
-  await d.delete(friendships).where(like(friendships.id, 'seed-%'))
-  await d.delete(friendRequests).where(like(friendRequests.id, 'seed-%'))
-  await d.delete(groupMembers).where(like(groupMembers.groupId, 'seed-%'))
-  await d.delete(groups).where(like(groups.id, 'seed-%'))
-  await d.delete(directedInvites).where(like(directedInvites.id, 'seed-%'))
-  await d.delete(nameClaims).where(like(nameClaims.accountId, 'seed-acct-%'))
-  await d.delete(accounts).where(like(accounts.email, '%@seed.skermix.dev'))
+/** Where a player is in a game: their aptitude, less while they are still learning it. */
+function ability(p: Player, game: GameSlug) {
+  const practice = p.practice[game] ?? 0
+  return (p.aptitude[game] ?? p.skill) * (0.7 + 0.3 * (1 - Math.exp(-practice / 18)))
 }
 
-/* ---------- accounts + tags ---------- */
+/** How many goes in a sitting: one, often two or three, now and then a long one. */
+function goesInSitting(p: Player) {
+  let n = 1
+  while (n < 9 && chance(0.38 + 0.26 * p.activity)) n++
+  return n
+}
 
-async function seedAccounts(players: Player[]) {
-  const d = db()
-  const chunk = 100
-  for (let i = 0; i < players.length; i += chunk) {
-    const slice = players.slice(i, i + chunk)
-    await d.insert(accounts).values(
-      slice.map((p) => ({
-        id: p.accountId,
-        email: p.email,
-        createdAt: p.joinedAt,
-        plan: 'free',
-        googleSub: null,
-      })),
-    )
-    await d.insert(nameClaims).values(
-      slice.map((p) => ({
-        name: p.tag,
-        token: `seed-${p.tag.toLowerCase()}-${Math.random().toString(36).slice(2, 10)}`,
-        claimedAt: p.joinedAt,
-        accountId: p.accountId,
-        avatarId: p.avatarId,
-      })),
-    )
+function overlaps(p: Player, from: number, to: number) {
+  return p.runs.find((r) => r.startAt < to && r.at > from)
+}
+
+/** Play one run from `startAt`, or nothing if it would end in the future. */
+function playOne(p: Player, game: GameSlug, startAt: number, form: number, inMatch = false): Run | null {
+  const r = playRun(game, ability(p, game) * form, rand)
+  const at = startAt + r.durationMs
+  if (at > NOW - 2 * MINUTE) return null
+  const run: Run = {
+    game,
+    score: r.score,
+    startAt,
+    at,
+    durationMs: r.durationMs,
+    device: chance(0.9) ? p.device : pick(DEVICES),
+    records: r.records,
+    ...(inMatch ? { inMatch } : {}),
   }
+  p.runs.push(run)
+  p.practice[game] = (p.practice[game] ?? 0) + 1
+  return run
 }
 
-/* ---------- scores ---------- */
+type Sitting = { at: number; games: GameSlug[]; goes?: number }
 
-type ScoreRow = typeof leaderboardScores.$inferInsert
-
-/** Timestamps a person's runs across their tenure, weighted toward lately. */
-function sessionTimes(p: Player, count: number): number[] {
-  const span = NOW - p.joinedAt
-  const times: number[] = []
-  for (let i = 0; i < count; i++) {
-    // Square the draw so more sessions land recently — people who are still
-    // playing keep playing, and the weekly board needs to look alive.
-    const back = Math.pow(rand(), 1.8) * span
-    const at = NOW - back
-    // Evenings mostly.
-    const hour = chance(0.65) ? between(18, 23) : between(8, 18)
-    const day = new Date(at)
-    day.setHours(Math.floor(hour), Math.floor(rand() * 60), Math.floor(rand() * 60), 0)
-    times.push(Math.min(NOW - 60_000, day.getTime()))
-  }
-  return times.sort((a, b) => a - b)
-}
-
-function seedScoresFor(players: Player[]): ScoreRow[] {
-  const rows: ScoreRow[] = []
-  for (const p of players) {
-    for (const game of p.favorites) {
-      const sessions = Math.max(1, Math.round(p.activity * 9 + rand() * 3))
-      const times = sessionTimes(p, sessions)
-      times.forEach((at, i) => {
-        // Slight improvement over time, with off days.
-        const progress = times.length > 1 ? i / (times.length - 1) : 1
-        const form = 0.45 + progress * 0.35 + (rand() - 0.5) * 0.4
-        rows.push({
-          id: sid('lb'),
-          game,
-          name: p.tag,
-          score: runScore(game, p.skill, Math.max(0.1, form)),
-          at,
-          device: chance(0.85) ? p.device : pick(DEVICES),
-        })
-      })
+/** A sitting: a few goes at each game, one after another. */
+function playSitting(p: Player, s: Sitting, notBefore: number): number {
+  let t = Math.max(s.at, notBefore)
+  const form = between(0.94, 1.05)
+  for (const game of s.games) {
+    const goes = s.goes ?? goesInSitting(p)
+    for (let i = 0; i < goes; i++) {
+      const run = playOne(p, game, t, form)
+      if (!run) return t
+      t = run.at + between(6, 50) * 1000
     }
-    // Everyone has tried one game outside their favourites once.
-    if (chance(0.6)) {
-      const game = pick(ALLOWED_GAMES.filter((g) => !p.favorites.includes(g)))
-      rows.push({
-        id: sid('lb'),
-        game,
-        name: p.tag,
-        score: runScore(game, p.skill * 0.6, 0.4),
-        at: sessionTimes(p, 1)[0]!,
-        device: p.device,
-      })
-    }
+    t += between(1, 12) * MINUTE
   }
-  // History keeps the top 500 per game; stay under that so nothing seeded
-  // is trimmed by the next real score.
-  const byGame = new Map<string, ScoreRow[]>()
-  for (const row of rows) byGame.set(row.game, [...(byGame.get(row.game) ?? []), row])
-  const kept: ScoreRow[] = []
-  for (const list of byGame.values()) {
-    list.sort((a, b) => b.score - a.score || a.at - b.at)
-    kept.push(...list.slice(0, 440))
-  }
-  return kept
+  return t
 }
 
-async function insertRows<T extends object>(table: Parameters<ReturnType<typeof db>['insert']>[0], rows: T[]) {
-  const chunk = 200
-  for (let i = 0; i < rows.length; i += chunk) {
-    await db().insert(table).values(rows.slice(i, i + chunk) as never)
+/** The days someone plays: habits run in streaks, and weekends pull people back. */
+function playDays(p: Player): number[] {
+  const out: number[] = []
+  const stay = 0.2 + 0.75 * Math.pow(p.activity, 0.8)
+  const start = 0.03 + 0.4 * Math.pow(p.activity, 1.4)
+  let played = true
+  for (let key = boardDateKey(p.joinedAt); key <= TODAY; key = nextDay(key)) {
+    if (dayStart(key) > p.quitAt) break
+    if (played) out.push(key)
+    const weekend = [0, 6].includes(weekday(nextDay(key)))
+    played = chance(Math.min(0.97, (played ? stay : start) + (weekend ? 0.06 : 0)))
   }
+  return out
 }
 
-/* ---------- records ---------- */
-
-type RecordRow = typeof recordScores.$inferInsert
-
-function recordRow(game: GameSlug, recordId: string, p: Player, score: number, at: number): RecordRow {
-  return { id: sid('rec'), game, recordId, name: p.tag, score, at, device: p.device }
-}
-
-function seedRecordsFor(players: Player[]): RecordRow[] {
-  const rows: RecordRow[] = []
-  const playersOf = (game: GameSlug) => players.filter((p) => p.favorites.includes(game))
-  const daysAgo = (max: number) => NOW - Math.floor(rand() * max) * DAY - Math.floor(rand() * 12) * HOUR
-
-  for (const game of ALLOWED_GAMES) {
-    const pool = playersOf(game)
-    for (const def of listRecordDefs(game)) {
-      let entrants: Player[]
-      let value: (p: Player) => number
-      if (def.id === PLAY_DAYS_STREAK_ID) {
-        entrants = pool.filter((p) => p.activity > 0.35)
-        value = (p) => Math.max(2, Math.round(2 + p.activity * 14 + rand() * 4))
-      } else if (def.id === THRESHOLD_STREAK_ID) {
-        entrants = pool.filter((p) => p.skill > 0.35)
-        value = (p) => Math.max(2, Math.round(1 + p.skill * 9 + rand() * 3))
-      } else if (def.id.startsWith('wave-time-')) {
-        const wave = Number(def.id.slice('wave-time-'.length))
-        entrants = pool.filter((p) => p.skill >= (wave / ASTEROIDS_WAVE_MAX) * 0.7 - 0.1)
-        value = (p) => {
-          const baseSec = 28 + wave * 9 + wave * wave * 0.55
-          return Math.round(baseSec * 1000 * (1.02 + (1 - p.skill) * 0.38 + rand() * 0.18))
-        }
-      } else if (def.id.startsWith('fastest-length-')) {
-        const length = Number(def.id.slice('fastest-length-'.length))
-        entrants = pool.filter((p) => p.skill >= (length / SNAKE_LENGTH_MILESTONE_MAX) * 0.7)
-        value = (p) =>
-          Math.max(6_500, Math.round(Math.max(1, length - 3) * (1.85 - p.skill * 0.65 + rand() * 0.45) * 1000))
-      } else if (def.id.startsWith('fastest-row-')) {
-        const rowsN = Number(def.id.slice('fastest-row-'.length))
-        entrants = pool.filter((p) => p.skill >= (rowsN / CROSSWALK_ROW_MILESTONE_MAX) * 0.65)
-        value = (p) => Math.max(8_000, Math.round(rowsN * (0.95 - p.skill * 0.35 + rand() * 0.28) * 1000))
-      } else if (def.id === 'highest-combo' || def.id === 'direct-streak' || def.id === 'perfect-streak') {
-        entrants = pool.filter((p) => p.skill > 0.2)
-        value = (p) => Math.max(2, Math.min(18, Math.round(2 + p.skill * 9 + rand() * 4)))
-      } else if (def.id === 'center-streak' || def.id === 'crumb-streak') {
-        entrants = pool.filter((p) => p.skill > 0.2)
-        value = (p) => Math.max(2, Math.min(24, Math.round(2 + p.skill * 12 + rand() * 5)))
-      } else if (def.id === 'most-coins') {
-        entrants = pool.filter((p) => p.skill > 0.15)
-        value = (p) => Math.max(2, Math.min(48, Math.round(3 + p.skill * 30 + rand() * 10)))
-      } else if (def.id === 'most-rows') {
-        entrants = pool.filter((p) => p.skill > 0.15)
-        value = (p) => Math.max(10, Math.round(10 + p.skill * 160 + rand() * 30))
-      } else {
-        continue
-      }
-      for (const p of shuffle(entrants).slice(0, 6 + Math.floor(rand() * 16))) {
-        rows.push(recordRow(game, def.id, p, value(p), daysAgo(45)))
+/**
+ * Which games tonight. The keen have a game they play every time they sit
+ * down; after that it is mostly favourites, and the day's events pull a
+ * little. The daily is on the front page, so a good share of people play it.
+ */
+function chooseGames(p: Player, key: number, events: Tournament[]): GameSlug[] {
+  const pull = eventPull(events, key)
+  const count = 1 + (chance(0.38) ? 1 : 0) + (chance(0.12) ? 1 : 0)
+  const weights = SEEDED_GAMES.map((g) => {
+    const fav = p.favorites.indexOf(g)
+    const base = fav >= 0 ? ([6, 4, 3, 2.4, 2, 1.6][fav] ?? 1.5) : 0.25
+    return base * (pull.get(g) ?? 1)
+  })
+  const out: GameSlug[] = []
+  if (chance(0.3 + 0.4 * p.activity)) out.push(p.favorites[0]!)
+  while (out.length < count) {
+    const total = weights.reduce((sum, w, i) => sum + (out.includes(SEEDED_GAMES[i]!) ? 0 : w), 0)
+    let roll = rand() * total
+    for (let i = 0; i < SEEDED_GAMES.length; i++) {
+      const g = SEEDED_GAMES[i]!
+      if (out.includes(g)) continue
+      roll -= weights[i]!
+      if (roll <= 0) {
+        out.push(g)
+        break
       }
     }
   }
-  return rows
+  const noon = dayStart(key) + 12 * HOUR
+  const daily = events.find((t) => t.cadence === 'daily' && noon >= t.startsAt && noon < t.endsAt)
+  const featured = daily?.games[0]
+  if (featured && !out.includes(featured) && chance(0.4 + 0.3 * p.activity)) out.push(featured)
+  return out
 }
 
 /* ---------- events ---------- */
 
-const EVENT_GAMES = ALLOWED_GAMES.filter((g) => g !== 'crosswalk' && g !== 'spotter')
-
-function playerSeat(p: Player, joinedAt: number): TournamentPlayer {
-  return { id: sid('seat'), name: p.tag, joinedAt, accountId: p.accountId }
+/** The arcade's own events still on the list: today's daily and the two before, this week's and last. */
+function officialEvents(): Tournament[] {
+  const out: Tournament[] = []
+  for (let back = 2; back >= 0; back--) out.push(buildDailyEvent(dayStart(addDays(TODAY, -back)) + 12 * HOUR))
+  const thisWeek = weekStartKey(NOW)
+  out.push(buildWeeklyEvent(dayStart(addDays(thisWeek, -7)) + 36 * HOUR))
+  out.push(buildWeeklyEvent(dayStart(thisWeek) + 36 * HOUR))
+  return out
 }
 
-function youSeat(you: { tag: string; accountId: string | null }, joinedAt: number): TournamentPlayer {
-  return { id: sid('seat'), name: you.tag, joinedAt, ...(you.accountId ? { accountId: you.accountId } : {}) }
-}
-
-/** Score a scores-event roster: each player plays some of the games, some attempts each. */
-function playScoresEvent(
-  t: Tournament,
-  skillOf: (name: string) => number,
-  startedAt: number,
-  endedAt: number,
-  maxAttempts: number,
-) {
-  for (const seat of t.players) {
-    const skill = skillOf(seat.name)
-    for (const game of t.games) {
-      if (chance(0.22)) continue // skipped this one
-      const tries = Math.max(1, Math.min(maxAttempts || 3, 1 + Math.floor(rand() * 3)))
-      for (let a = 1; a <= tries; a++) {
-        const score: TournamentScore = {
-          playerId: seat.id,
-          game,
-          score: runScore(game, skill, 0.5 + rand() * 0.4),
-          at: Math.floor(between(startedAt, endedAt)),
-          attempt: a,
-        }
-        t.scores.push(score)
-      }
-    }
+/** How much an event pulls its games into a player's evening on `key`. */
+function eventPull(events: Tournament[], key: number): Map<GameSlug, number> {
+  const pull = new Map<GameSlug, number>()
+  const noon = dayStart(key) + 12 * HOUR
+  for (const t of events) {
+    if (noon < t.startsAt || noon >= t.endsAt) continue
+    for (const g of t.games) pull.set(g, (pull.get(g) ?? 1) * (t.cadence === 'daily' ? 2.5 : 1.6))
   }
+  return pull
 }
 
-/** Play a locked bracket forward, one round of matches at a time. */
-function playBracket(
-  t: Tournament,
-  skillOf: (name: string) => number,
-  from: number,
-  opts: { stopBeforeChampion?: boolean; leaveOpenFor?: string | null } = {},
-) {
-  let clock = from
-  for (let guard = 0; guard < 12 && !bracketHasChampion(t); guard++) {
-    const open = (t.bracket?.matches ?? []).filter(
-      (m) => !m.winnerId && m.playerIds[0] && m.playerIds[1],
-    )
-    if (!open.length) break
-    // Leave the named player's match open, and stop short of the crown if asked.
-    const leaveId = opts.leaveOpenFor
-      ? findOpenMatch(t, t.players.find((p) => p.name === opts.leaveOpenFor)?.id ?? '')?.id
-      : null
-    const playable = open.filter((m) => m.id !== leaveId)
-    if (!playable.length) break
-    if (opts.stopBeforeChampion && open.length === 1 && !leaveId) break
-    clock += HOUR * between(2, 9)
-    for (const m of playable) {
-      for (const pid of m.playerIds) {
-        if (!pid) continue
-        const name = t.players.find((p) => p.id === pid)?.name ?? ''
-        t.scores.push({
-          playerId: pid,
-          game: t.games[0]!,
-          score: runScore(t.games[0]!, skillOf(name), 0.4 + rand() * 0.5),
-          at: clock + Math.floor(rand() * HOUR),
-          attempt: 1,
-          matchId: m.id,
-        })
-      }
-    }
-    resolveReadyMatches(t, 1)
-    if (leaveId) {
-      // Give the opponent their run so the open match has something to beat.
-      const m = t.bracket!.matches.find((x) => x.id === leaveId)!
-      const you = t.players.find((p) => p.name === opts.leaveOpenFor)?.id
-      const opp = m.playerIds.find((id) => id && id !== you)
-      if (opp && !t.scores.some((s) => s.matchId === m.id && s.playerId === opp)) {
-        const name = t.players.find((p) => p.name === opp)?.name ?? ''
-        t.scores.push({
-          playerId: opp,
-          game: t.games[0]!,
-          score: runScore(t.games[0]!, skillOf(name), 0.6),
-          at: clock,
-          attempt: 1,
-          matchId: m.id,
-        })
-      }
-      // Only ever play up to the round that holds their match.
-      if (!m.winnerId) break
-    }
-  }
-  return clock
+type HostedPlan = {
+  t: Tournament
+  roster: Player[]
+  /** Goes per game per sitting; unlimited ladders play what they like. */
+  goes: number | null
 }
 
 function inviteCode() {
@@ -526,398 +470,752 @@ function inviteCode() {
   return code
 }
 
-type You = { tag: string; accountId: string | null }
+/** The most recent `weekdayWanted` at least `minDaysAgo` back. */
+function lastWeekday(weekdayWanted: number, minDaysAgo: number) {
+  let key = addDays(TODAY, -minDaysAgo)
+  while (weekday(key) !== weekdayWanted) key = addDays(key, -1)
+  return key
+}
 
-function buildEvents(players: Player[], you: You): Tournament[] {
-  const skillOf = (name: string) => players.find((p) => p.tag === name)?.skill ?? 0.55
-  const host = (p: Player) => ({ accountId: p.accountId, email: p.email })
-  const regulars = shuffle(players.filter((p) => p.activity > 0.3))
-  const events: Tournament[] = []
-
-  const roster = (n: number, startedAt: number, includeYou: boolean) => {
-    const seats = regulars.slice(0, n - (includeYou ? 1 : 0)).map((p) =>
-      playerSeat(p, startedAt + Math.floor(rand() * 6 * HOUR)),
-    )
-    if (includeYou) seats.push(youSeat(you, startedAt + Math.floor(rand() * 4 * HOUR)))
-    regulars.push(...regulars.splice(0, n))
-    return shuffle(seats)
-  }
-
-  // Three finished score events over the last month.
-  const finished: { title: string; games: GameSlug[]; daysAgo: number; hours: number; n: number; tries: number }[] = [
-    { title: 'Friday Night Triple', games: ['stacker', 'pop', 'fireflies'], daysAgo: 24, hours: 48, n: 14, tries: 3 },
-    { title: 'Office League · Week 2', games: ['asteroids', 'pellets'], daysAgo: 12, hours: 96, n: 11, tries: 2 },
-    { title: 'Snake Sunday', games: ['snake'], daysAgo: 5, hours: 24, n: 9, tries: 5 },
+/**
+ * Private events hosted by players: three finished, two running. Each roster
+ * is players who were around for the whole of it, and each member sits down
+ * to play it once or twice while it runs.
+ */
+function hostedScoreEvents(players: Player[]): HostedPlan[] {
+  const defs: {
+    title: string
+    games: GameSlug[]
+    startsAt: number
+    hours: number
+    size: number
+    tries: number
+  }[] = [
+    {
+      title: 'Friday Night Triple',
+      games: ['stacker', 'pop', 'fireflies'],
+      startsAt: dayStart(lastWeekday(5, 15)) + 19 * HOUR,
+      hours: 48,
+      size: 14,
+      tries: 3,
+    },
+    {
+      title: 'Office League · Week 2',
+      games: ['asteroids', 'pellets'],
+      startsAt: dayStart(lastWeekday(1, 7)) + 9 * HOUR,
+      hours: 96,
+      size: 11,
+      tries: 2,
+    },
+    {
+      title: 'Snake Sunday',
+      games: ['snake'],
+      startsAt: dayStart(lastWeekday(0, 2)) + 10 * HOUR,
+      hours: 24,
+      size: 9,
+      tries: 5,
+    },
+    {
+      title: 'Lunch Break Ladder',
+      games: ['pop', 'centroid', 'fireflies'],
+      startsAt: dayStart(addDays(TODAY, -1)) + 11.5 * HOUR,
+      hours: 72,
+      size: 12,
+      tries: 0,
+    },
+    {
+      title: 'Patriot Standoff',
+      games: ['patriot'],
+      startsAt: Math.min(dayStart(TODAY) + 9 * HOUR, NOW - 3 * HOUR),
+      hours: 24,
+      size: 7,
+      tries: 3,
+    },
   ]
-  for (const f of finished) {
-    const startsAt = NOW - f.daysAgo * DAY
-    const endsAt = startsAt + f.hours * HOUR
+  const used = new Set<string>()
+  const plans: HostedPlan[] = []
+  for (const d of defs) {
+    const endsAt = d.startsAt + d.hours * HOUR
+    const pool = shuffle(
+      players.filter(
+        (p) => p.joinedAt < d.startsAt - DAY && p.quitAt > Math.min(endsAt, NOW) && p.activity > 0.3,
+      ),
+    ).sort((a, b) => Number(used.has(a.tag)) - Number(used.has(b.tag)))
+    const roster = pool.slice(0, d.size)
+    for (const p of roster) used.add(p.tag)
+    const host = roster[0]!
+    const multi = d.games.length > 1
     const t: Tournament = {
       id: sid('ev'),
-      title: f.title,
-      blurb:
-        f.games.length > 1
-          ? 'Place points across games — highest total wins.'
-          : `${f.tries} tries. Best score wins.`,
-      games: f.games,
-      startsAt,
+      title: d.title,
+      blurb: multi
+        ? 'Place points across games — highest total wins.'
+        : d.tries
+          ? `${d.tries} tries. Best score wins.`
+          : 'Best score wins.',
+      games: d.games,
+      startsAt: d.startsAt,
       endsAt,
       official: false,
       cadence: null,
-      format: f.games.length > 1 ? 'place-points' : 'attempt-limited',
+      format: multi ? 'place-points' : d.tries ? 'attempt-limited' : 'open',
       kind: 'scores',
-      rules: { maxAttempts: f.tries, maxPlayers: 0, scoring: 'best' },
-      createdBy: host(regulars[0]!),
+      rules: { maxAttempts: d.tries, maxPlayers: 0, scoring: 'best' },
+      createdBy: { accountId: host.accountId, email: host.email },
       visibility: 'private',
       inviteCode: inviteCode(),
-      players: roster(f.n, startsAt, true),
+      players: [],
       scores: [],
     }
-    playScoresEvent(t, skillOf, startsAt, endsAt, f.tries)
-    events.push(t)
+    plans.push({ t, roster, goes: d.tries ? null : 0 })
   }
-
-  // Two running score events you are in, one ending soon and one long.
-  const running: { title: string; games: GameSlug[]; hoursAgo: number; hours: number; n: number; tries: number }[] = [
-    { title: 'Lunch Break Ladder', games: ['pop', 'centroid', 'fireflies'], hoursAgo: 30, hours: 72, n: 12, tries: 0 },
-    { title: 'Patriot Standoff', games: ['patriot'], hoursAgo: 5, hours: 24, n: 7, tries: 3 },
-  ]
-  for (const r of running) {
-    const startsAt = NOW - r.hoursAgo * HOUR
-    const endsAt = startsAt + r.hours * HOUR
-    const t: Tournament = {
-      id: sid('ev'),
-      title: r.title,
-      blurb: r.games.length > 1 ? 'Place points across games — highest total wins.' : 'Best score wins.',
-      games: r.games,
-      startsAt,
-      endsAt,
-      official: false,
-      cadence: null,
-      format: r.games.length > 1 ? 'place-points' : r.tries ? 'attempt-limited' : 'open',
-      kind: 'scores',
-      rules: { maxAttempts: r.tries, maxPlayers: 0, scoring: 'best' },
-      createdBy: host(regulars[1]!),
-      visibility: 'private',
-      inviteCode: inviteCode(),
-      players: roster(r.n, startsAt, true),
-      scores: [],
-    }
-    playScoresEvent(t, skillOf, startsAt, NOW - 10 * 60_000, r.tries || 3)
-    // Not everyone has played every game yet in a running event.
-    t.scores = t.scores.filter(() => chance(0.7))
-    events.push(t)
-  }
-
-  // A finished 16-player double-elim you were in, won by a strong player.
-  {
-    const startsAt = NOW - 9 * DAY
-    const t: Tournament = {
-      id: sid('ev'),
-      title: 'Stacker Sixteen',
-      blurb: 'Double-elim bracket — higher score wins each match. Stacker.',
-      games: ['stacker'],
-      startsAt,
-      endsAt: startsAt,
-      official: false,
-      cadence: null,
-      format: 'single-run',
-      kind: 'bracket',
-      rules: { maxAttempts: 1, maxPlayers: 16, scoring: 'best', unlimitedDuration: true, roundPlayHours: 12, elimination: 'double' },
-      createdBy: host(regulars[2]!),
-      visibility: 'private',
-      inviteCode: inviteCode(),
-      players: roster(16, startsAt, true),
-      scores: [],
-    }
-    lockBracket(t, startsAt + 6 * HOUR)
-    playBracket(t, skillOf, startsAt + 6 * HOUR)
-    events.push(t)
-  }
-
-  // A live 8-player single-elim with your match open right now.
-  {
-    const startsAt = NOW - 26 * HOUR
-    const t: Tournament = {
-      id: sid('ev'),
-      title: 'Asteroids Cup',
-      blurb: 'Single-elim bracket — higher score wins each match. Asteroids.',
-      games: ['asteroids'],
-      startsAt,
-      endsAt: startsAt,
-      official: false,
-      cadence: null,
-      format: 'single-run',
-      kind: 'bracket',
-      rules: { maxAttempts: 2, maxPlayers: 8, scoring: 'best', unlimitedDuration: true, roundPlayHours: 24, elimination: 'single' },
-      createdBy: host(regulars[3]!),
-      visibility: 'private',
-      inviteCode: inviteCode(),
-      players: roster(8, startsAt, true),
-      scores: [],
-    }
-    lockBracket(t, startsAt + 3 * HOUR)
-    playBracket(t, skillOf, startsAt + 3 * HOUR, { leaveOpenFor: you.tag, stopBeforeChampion: true })
-    // Re-arm the open match clock so it ends in the future.
-    for (const m of t.bracket?.matches ?? []) {
-      if (!m.winnerId && m.playerIds[0] && m.playerIds[1]) m.playEndsAt = NOW + between(6, 20) * HOUR
-    }
-    events.push(t)
-  }
-
-  // A bracket still filling: 6 of 8 seats, you in it.
-  {
-    const startsAt = NOW - 2 * DAY
-    const t: Tournament = {
-      id: sid('ev'),
-      title: 'Pellets Eight',
-      blurb: 'Single-elim bracket — higher score wins each match. Pellets.',
-      games: ['pellets'],
-      startsAt,
-      endsAt: startsAt,
-      official: false,
-      cadence: null,
-      format: 'single-run',
-      kind: 'bracket',
-      rules: { maxAttempts: 1, maxPlayers: 8, scoring: 'best', unlimitedDuration: true, roundPlayHours: 24, elimination: 'single' },
-      createdBy: host(regulars[4]!),
-      visibility: 'private',
-      inviteCode: inviteCode(),
-      players: roster(6, startsAt, true),
-      scores: [],
-    }
-    events.push(t)
-  }
-
-  return events
+  return plans
 }
 
-/** Fill the current daily and weekly, and the last few, with seeded players. */
-async function joinOfficialEvents(players: Player[]) {
-  const d = db()
-  const rows = await d.select().from(tournamentsTable)
-  const skillOf = (name: string) => players.find((p) => p.tag === name)?.skill ?? 0.55
-  const regulars = shuffle(players.filter((p) => p.activity > 0.25))
-  let cursor = 0
-  for (const row of rows) {
-    const t = row.data as Tournament
-    if (!t.official || !t.cadence) continue
-    if (!t.games.every((g) => (EVENT_GAMES as readonly string[]).includes(g))) continue
-    const ended = t.endsAt <= NOW
-    const already = new Set(t.players.map((p) => p.name))
-    const n = t.cadence === 'weekly' ? 28 + Math.floor(rand() * 18) : 14 + Math.floor(rand() * 16)
-    const joiners = regulars.slice(cursor, cursor + n).filter((p) => !already.has(p.tag))
-    cursor = (cursor + n) % Math.max(1, regulars.length - n)
-    const untilAt = ended ? t.endsAt : NOW - 5 * 60_000
-    const seats = joiners.map((p) =>
-      playerSeat(p, Math.floor(between(t.startsAt, Math.min(untilAt, t.startsAt + 20 * HOUR)))),
+/** When each roster member sits down to play a hosted event, split across one or two sittings. */
+function hostedSittings(plan: HostedPlan): Map<string, Sitting[]> {
+  const { t, roster } = plan
+  const out = new Map<string, Sitting[]>()
+  const until = Math.min(t.endsAt, NOW - 30 * MINUTE)
+  const tries = t.rules?.maxAttempts ?? 0
+  for (const p of roster) {
+    // A few never get round to it.
+    if (chance(0.12)) continue
+    const sittings = chance(0.4) ? 2 : 1
+    const list: Sitting[] = []
+    let left = tries
+    for (let i = 0; i < sittings; i++) {
+      const lo = t.startsAt + 20 * MINUTE + ((until - t.startsAt) * i) / sittings
+      const hi = t.startsAt + ((until - t.startsAt) * (i + 1)) / sittings - 20 * MINUTE
+      if (hi <= lo) continue
+      // Near their usual hour when the window allows it.
+      let at = between(lo, hi)
+      for (let k = 0; k < 6; k++) {
+        const guess = between(lo, hi)
+        if (Math.abs(hourOf(guess) - p.hour) < Math.abs(hourOf(at) - p.hour)) at = guess
+      }
+      const goes = tries ? (i === sittings - 1 ? left : Math.ceil(left / 2)) : 1 + Math.floor(rand() * 4)
+      left -= tries ? goes : 0
+      if (goes > 0) list.push({ at, games: shuffle(t.games), goes })
+    }
+    out.set(p.tag, list)
+  }
+  return out
+}
+
+/** Seat everyone who played, and file their runs the way the API would have. */
+function fileRuns(t: Tournament, entrants: { p: Player; joinedAt: number }[]) {
+  const maxAttempts = t.rules?.maxAttempts ?? 0
+  const limited = t.format !== 'open' && maxAttempts > 0
+  for (const { p, joinedAt } of entrants) {
+    const seat: TournamentPlayer = { id: sid('seat'), name: p.tag, joinedAt, accountId: p.accountId }
+    t.players.push(seat)
+    const runs = p.runs.filter(
+      (r) => !r.inMatch && t.games.includes(r.game) && r.startAt >= joinedAt && r.at < t.endsAt,
     )
-    // Score only the seeded seats; real players' entries are carried as-is.
-    const seededOnly: Tournament = { ...t, players: seats, scores: [] }
-    playScoresEvent(seededOnly, skillOf, t.startsAt, untilAt, 3)
-    const fresh: Tournament = {
-      ...t,
-      players: [...t.players, ...seats],
-      scores: [...t.scores, ...seededOnly.scores],
-    }
-    await d
-      .update(tournamentsTable)
-      .set({ data: fresh as unknown as Record<string, unknown> })
-      .where(eq(tournamentsTable.id, t.id))
-  }
-}
-
-/* ---------- social ---------- */
-
-async function seedSocial(players: Player[], you: You) {
-  const d = db()
-  const now = NOW
-  const friendshipRows: (typeof friendships.$inferInsert)[] = []
-  const pairs = new Set<string>()
-  const link = (a: string, b: string, at: number) => {
-    const [x, y] = a < b ? [a, b] : [b, a]
-    const key = `${x}|${y}`
-    if (pairs.has(key)) return
-    pairs.add(key)
-    friendshipRows.push({ id: sid('fr'), accountIdA: x, accountIdB: y, createdAt: at })
-  }
-  // Everyone has a few friends; the active have more.
-  for (const p of players) {
-    const n = Math.round(1 + p.activity * 7)
-    for (const q of shuffle(players).slice(0, n)) {
-      if (q.accountId !== p.accountId) link(p.accountId, q.accountId, now - Math.floor(rand() * 60) * DAY)
-    }
-  }
-  const requests: (typeof friendRequests.$inferInsert)[] = []
-  if (you.accountId) {
-    const circle = shuffle(players.filter((p) => p.activity > 0.4))
-    for (const p of circle.slice(0, 9)) link(you.accountId, p.accountId, now - Math.floor(rand() * 40) * DAY)
-    for (const p of circle.slice(9, 11)) {
-      requests.push({
-        id: sid('frq'),
-        fromAccountId: p.accountId,
-        fromName: p.tag,
-        toAccountId: you.accountId,
-        toName: you.tag,
-        status: 'pending',
-        createdAt: now - Math.floor(rand() * 3) * DAY,
-        expiresAt: now + 27 * DAY,
+    for (const game of t.games) {
+      const mine = runs.filter((r) => r.game === game).sort((a, b) => a.at - b.at)
+      if (t.format === 'open') {
+        // An open event keeps each player's best, and nothing else.
+        const best = mine.reduce<Run | null>((b, r) => (!b || r.score > b.score ? r : b), null)
+        if (best && best.score > 0) t.scores.push({ playerId: seat.id, game, score: best.score, at: best.at })
+        continue
+      }
+      const counted = limited ? mine.slice(0, maxAttempts) : mine
+      counted.forEach((r, i) => {
+        if (r.score > 0) t.scores.push({ playerId: seat.id, game, score: r.score, at: r.at, attempt: i + 1 })
       })
     }
-    requests.push({
-      id: sid('frq'),
-      fromAccountId: you.accountId,
-      fromName: you.tag,
-      toAccountId: circle[11]!.accountId,
-      toName: circle[11]!.tag,
-      status: 'pending',
-      createdAt: now - DAY,
-      expiresAt: now + 29 * DAY,
-    })
-  }
-  await insertRows(friendships, friendshipRows)
-  if (requests.length) await insertRows(friendRequests, requests)
-
-  // Groups: two circles of players, you in one of them.
-  const groupDefs = [
-    { name: 'Thursday Crew', size: 12, withYou: true },
-    { name: 'Office League', size: 18, withYou: false },
-    { name: 'Cousins', size: 7, withYou: true },
-  ]
-  for (const g of groupDefs) {
-    const members = shuffle(players).slice(0, g.size)
-    const owner = members[0]!
-    const id = sid('group')
-    await d.insert(groups).values({ id, name: g.name, inviteCode: inviteCode(), createdByAccountId: owner.accountId })
-    const memberRows = members.map((m) => ({ groupId: id, name: m.tag, joinedAt: now - Math.floor(rand() * 50) * DAY }))
-    if (g.withYou) memberRows.push({ groupId: id, name: you.tag, joinedAt: now - 20 * DAY })
-    await insertRows(groupMembers, memberRows)
   }
 }
 
-async function seedInvite(events: Tournament[], players: Player[], you: You) {
-  // One pending event invite for you, so the header badge has something to count.
-  const target = events.find((t) => t.kind !== 'bracket' && t.endsAt > NOW && !t.players.some((p) => p.name === you.tag))
-  const from = players.find((p) => p.accountId === target?.createdBy?.accountId)
-  if (!target || !from || !target.inviteCode) return
-  await db().insert(directedInvites).values({
-    id: sid('inv'),
-    kind: 'tournament',
-    targetId: target.id,
-    targetName: target.title,
-    fromAccountId: from.accountId,
-    fromName: from.tag,
-    toName: you.tag,
-    inviteCode: target.inviteCode,
-    status: 'pending',
-    createdAt: NOW - 3 * HOUR,
-    expiresAt: NOW + 13 * DAY,
+/**
+ * A weekly Triple is won by placing on all three games, so the people who
+ * mean to play it sit down to each of them some time in the week. This week's
+ * is still running, so some of them have a game still to go.
+ */
+function weeklySittings(t: Tournament, players: Player[]): { entrants: Set<string>; sittings: Map<string, Sitting[]> } {
+  const entrants = new Set<string>()
+  const sittings = new Map<string, Sitting[]>()
+  const until = Math.min(t.endsAt, NOW - 30 * MINUTE)
+  const running = t.endsAt > NOW
+  for (const p of players) {
+    const from = Math.max(t.startsAt, p.joinedAt)
+    const to = Math.min(until, p.quitAt)
+    if (p.activity < 0.2 || to - from < DAY || !chance(0.3 + 0.35 * p.activity)) continue
+    entrants.add(p.tag)
+    const list: Sitting[] = []
+    for (const game of t.games) {
+      if (running && chance(0.3)) continue
+      const key = boardDateKey(between(from, to))
+      const at = timeOnDay(key, clamp(p.hour + gauss(), 7, 23.6), from)
+      if (at != null && at < to) list.push({ at, games: [game] })
+    }
+    sittings.set(p.tag, list)
+  }
+  return { entrants, sittings }
+}
+
+/** The arcade's events: whoever played its games while it ran, and chose to join. */
+function fillOfficial(t: Tournament, players: Player[], meant: Set<string> = new Set()) {
+  const rate = t.cadence === 'weekly' ? 0.25 : 0.75
+  const entrants: { p: Player; joinedAt: number }[] = []
+  for (const p of players) {
+    const first = p.runs
+      .filter((r) => !r.inMatch && t.games.includes(r.game) && r.startAt >= t.startsAt && r.at < t.endsAt)
+      .sort((a, b) => a.startAt - b.startAt)[0]
+    if (!first || !chance(meant.has(p.tag) ? 0.95 : rate)) continue
+    entrants.push({ p, joinedAt: Math.max(t.startsAt + MINUTE, first.startAt - between(1, 25) * MINUTE) })
+  }
+  fileRuns(t, entrants)
+}
+
+/** Brackets: one finished, one halfway through, one still filling. */
+function brackets(players: Player[]): Tournament[] {
+  const out: Tournament[] = []
+  const regulars = (from: number) =>
+    shuffle(players.filter((p) => p.joinedAt < from - DAY && p.quitAt > NOW && p.activity > 0.35))
+
+  const make = (
+    title: string,
+    game: GameSlug,
+    startsAt: number,
+    size: number,
+    rules: NonNullable<Tournament['rules']>,
+    seated: Player[],
+  ): Tournament => ({
+    id: sid('ev'),
+    title,
+    blurb: `${rules.elimination === 'double' ? 'Double' : 'Single'}-elim bracket — higher score wins each match. ${
+      title.split(' ')[0]
+    }.`,
+    games: [game],
+    startsAt,
+    endsAt: startsAt,
+    official: false,
+    cadence: null,
+    format: 'single-run',
+    kind: 'bracket',
+    rules: { ...rules, maxPlayers: size, scoring: 'best', unlimitedDuration: true },
+    createdBy: { accountId: seated[0]!.accountId, email: seated[0]!.email },
+    visibility: 'private',
+    inviteCode: inviteCode(),
+    players: seated.map((p) => ({
+      id: sid('seat'),
+      name: p.tag,
+      joinedAt: startsAt + Math.floor(rand() * 5 * HOUR),
+      accountId: p.accountId,
+    })),
+    scores: [],
   })
+
+  // Finished: sixteen, double elimination, a round every twelve hours.
+  {
+    const startsAt = dayStart(addDays(TODAY, -9)) + 17 * HOUR
+    const t = make('Stacker Sixteen', 'stacker', startsAt, 16, { maxAttempts: 1, roundPlayHours: 12, elimination: 'double' }, regulars(startsAt).slice(0, 16))
+    lockBracket(t, startsAt + 6 * HOUR)
+    playBracket(t, players, NOW, null)
+    maybeEndWhenBracketFinished(t, Math.max(...t.scores.map((s) => s.at)) + 5 * MINUTE)
+    out.push(t)
+  }
+
+  // Running: eight, single elimination, the semi-finals being played now.
+  {
+    const startsAt = NOW - 40 * HOUR
+    const t = make('Asteroids Cup', 'asteroids', startsAt, 8, { maxAttempts: 2, roundPlayHours: 24, elimination: 'single' }, regulars(startsAt).slice(0, 8))
+    lockBracket(t, startsAt + 2 * HOUR)
+    playBracket(t, players, NOW - 20 * MINUTE, 2)
+    for (const m of t.bracket?.matches ?? []) {
+      if (!m.winnerId && m.playerIds[0] && m.playerIds[1] && (m.playEndsAt ?? 0) <= NOW + HOUR) {
+        m.playEndsAt = NOW + between(3, 9) * HOUR
+      }
+    }
+    out.push(t)
+  }
+
+  // Filling: six of eight seats taken, no draw yet.
+  {
+    const startsAt = NOW - 2 * DAY
+    const t = make('Pellets Eight', 'pellets', startsAt, 8, { maxAttempts: 1, roundPlayHours: 24, elimination: 'single' }, regulars(startsAt).slice(0, 6))
+    for (const seat of t.players) seat.joinedAt = Math.min(seat.joinedAt, NOW - HOUR)
+    out.push(t)
+  }
+  return out
+}
+
+/**
+ * Play a locked bracket forward a round at a time. Each seated player plays
+ * their match's attempts inside its clock, then the bracket decides what it
+ * can and starts the next clocks from the last run. With `lastRound`, the
+ * matches of that round are left part-played, each with a go still owed on
+ * both sides or with one side not in yet, so none of them can be called.
+ */
+function playBracket(t: Tournament, players: Player[], until: number, lastRound: number | null) {
+  const byName = new Map(players.map((p) => [p.tag, p]))
+  const maxAttempts = t.rules?.maxAttempts ?? 1
+  const windowMs = (t.rules?.roundPlayHours ?? 24) * HOUR
+  for (let guard = 0; guard < 40 && !bracketHasChampion(t); guard++) {
+    const open = (t.bracket?.matches ?? []).filter(
+      (m) => !m.winnerId && !m.void && m.playerIds[0] && m.playerIds[1] && m.playEndsAt != null,
+    )
+    if (!open.length) break
+    let latest = 0
+    let stop = false
+    for (const [index, m] of open.entries()) {
+      const partial = lastRound != null && m.round >= lastRound
+      if (partial) stop = true
+      const armedAt = m.playEndsAt! - windowMs
+      const game = (bracketGamesForRound(t, m.round)[0] ?? t.games[0]!) as GameSlug
+      m.playerIds.forEach((pid, side) => {
+        const attempts = partial ? (index === 0 || side === 0 ? maxAttempts - 1 : 0) : maxAttempts
+        const seat = t.players.find((s) => s.id === pid)
+        const p = seat ? byName.get(seat.name) : null
+        if (!seat || !p || attempts < 1) return
+        let at = armedAt + between(0.3, 0.7) * windowMs * (partial ? 0.5 : 1)
+        for (let a = 1; a <= attempts; a++) {
+          if (at >= until) break
+          const clash = overlaps(p, at, at + 6 * MINUTE)
+          if (clash) at = clash.at + between(2, 10) * MINUTE
+          const run = playOne(p, game, at, between(0.96, 1.06), true)
+          if (!run || run.at > Math.min(until, m.playEndsAt!)) {
+            if (run) p.runs.pop()
+            break
+          }
+          t.scores.push({ playerId: pid!, game, score: run.score, at: run.at, attempt: a, matchId: m.id })
+          latest = Math.max(latest, run.at)
+          at = run.at + between(1, 20) * MINUTE
+        }
+      })
+    }
+    if (stop) break
+    resolveReadyMatches(t, maxAttempts)
+    armMatchClocks(t, latest + between(1, 15) * MINUTE)
+  }
+}
+
+/* ---------- record books ---------- */
+
+type RecordRow = typeof recordScores.$inferInsert
+
+/**
+ * Everything the runs posted to the record books, kept the way the API keeps
+ * it: a value is stored only when it beats the player's own best for the day,
+ * the week, the month or all time, as of the moment it was posted.
+ */
+function recordBooks(players: Player[]): RecordRow[] {
+  const rows: RecordRow[] = []
+  const periods: Period[] = ['all', 'daily', 'weekly', 'monthly']
+  for (const p of players) {
+    const books = new Map<string, LeaderboardEntry[]>()
+    const post = (game: GameSlug, recordId: string, value: number, at: number, device: DeviceType) => {
+      const def = getRecordDef(game, recordId)
+      if (!def) return
+      const key = `${game}::${recordId}`
+      const mine = books.get(key) ?? []
+      const better = (a: number, b: number) => (def.direction === 'lower' ? a < b : a > b)
+      const improves = (period: Period) => {
+        const pool = filterByPeriod(mine, period, at)
+        return !pool.length || pool.every((e) => better(value, e.score))
+      }
+      if (!periods.some(improves)) return
+      const entry: LeaderboardEntry = { id: sid('rec'), name: p.tag, score: value, at, device }
+      mine.push(entry)
+      books.set(key, mine)
+      rows.push({ ...entry, game, recordId })
+    }
+    const days = new Map<GameSlug, number[]>()
+    const streak = new Map<GameSlug, number>()
+    for (const run of p.runs) {
+      if (!run.inMatch) {
+        for (const r of run.records) post(run.game, r.recordId, r.value, run.startAt + r.atMs, run.device)
+      }
+      // After the board has the run: the streak books, counted as the API counts them.
+      const history = days.get(run.game) ?? []
+      history.push(run.at)
+      days.set(run.game, history)
+      const inARow = computePlayDaysStreak(history, run.at)
+      if (inARow >= 2) post(run.game, PLAY_DAYS_STREAK_ID, inARow, run.at, run.device)
+      const over = run.score >= SCORE_STREAK_THRESHOLDS[run.game] ? (streak.get(run.game) ?? 0) + 1 : 0
+      streak.set(run.game, over)
+      if (over >= 2) post(run.game, THRESHOLD_STREAK_ID, over, run.at, run.device)
+    }
+  }
+  return rows
+}
+
+/* ---------- writing ---------- */
+
+async function insertRows<T extends object>(table: Parameters<ReturnType<typeof db>['insert']>[0], rows: T[]) {
+  const chunk = 250
+  for (let i = 0; i < rows.length; i += chunk) {
+    await db().insert(table).values(rows.slice(i, i + chunk) as never)
+  }
+}
+
+/** Remove what this script added before, and nothing else. */
+async function clearSeed() {
+  const d = db()
+  await d.delete(leaderboardScores).where(like(leaderboardScores.id, 'seed-%'))
+  await d.delete(recordScores).where(like(recordScores.id, 'seed-%'))
+  await d.delete(tournamentsTable).where(like(tournamentsTable.id, 'seed-%'))
+  await d
+    .delete(trophyAwards)
+    .where(or(inArray(trophyAwards.name, [...TAGS]), like(trophyAwards.eventId, 'seed-%')))
+  await d.delete(friendships).where(like(friendships.id, 'seed-%'))
+  await d.delete(friendRequests).where(like(friendRequests.id, 'seed-%'))
+  await d.delete(groupMembers).where(like(groupMembers.groupId, 'seed-%'))
+  await d.delete(groups).where(like(groups.id, 'seed-%'))
+  await d.delete(directedInvites).where(like(directedInvites.id, 'seed-%'))
+  await d.delete(nameClaims).where(like(nameClaims.accountId, 'seed-acct-%'))
+  await d.delete(accounts).where(like(accounts.email, '%@seed.skermix.dev'))
+  // The arcade's own events keep their real seats and lose the seeded ones.
+  for (const row of await d.select().from(tournamentsTable).where(eq(tournamentsTable.official, true))) {
+    const t = row.data as Tournament
+    const seeded = new Set(t.players.filter((s) => s.id.startsWith('seed-')).map((s) => s.id))
+    if (!seeded.size) continue
+    const next = {
+      ...t,
+      players: t.players.filter((s) => !seeded.has(s.id)),
+      scores: t.scores.filter((s) => !seeded.has(s.playerId)),
+    }
+    await d.update(tournamentsTable).set({ data: next as never }).where(eq(tournamentsTable.id, t.id))
+  }
+}
+
+const EVERY_TABLE = {
+  accounts,
+  sessions,
+  magic_links: magicLinks,
+  name_claims: nameClaims,
+  leaderboard_scores: leaderboardScores,
+  game_runs: gameRuns,
+  run_claims: runClaims,
+  record_scores: recordScores,
+  tournaments: tournamentsTable,
+  groups,
+  group_members: groupMembers,
+  directed_invites: directedInvites,
+  friend_requests: friendRequests,
+  friendships,
+  trophy_awards: trophyAwards,
+  trophy_cursor: trophyCursor,
+  name_bans: nameBans,
+  score_flags: scoreFlags,
+  app_meta: appMeta,
+  notifications,
+  push_subscriptions: pushSubscriptions,
+  push_ledger: pushLedger,
+}
+
+/** Every row of every table, to a file, before anything is removed. */
+async function backUp(): Promise<string> {
+  const dir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../backups')
+  fs.mkdirSync(dir, { recursive: true })
+  const out: Record<string, unknown[]> = {}
+  for (const [name, table] of Object.entries(EVERY_TABLE)) {
+    out[name] = await db().select().from(table as never)
+  }
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+  const file = path.join(dir, `world-${dbTarget().branch}-${stamp}.json`)
+  fs.writeFileSync(file, JSON.stringify(out))
+  const counts = Object.entries(out)
+    .map(([name, rows]) => `${name} ${rows.length}`)
+    .join(', ')
+  console.log(`  ${counts}`)
+  return file
+}
+
+/**
+ * Every score, record, event, trophy, group, friend and notification, for
+ * everyone. Accounts, sign-ins, tags, bans and push subscriptions stay, so
+ * nobody is signed out and every tag keeps its owner.
+ */
+async function wipeGameData() {
+  await db().transaction(async (tx) => {
+    for (const table of [
+      runClaims,
+      gameRuns,
+      scoreFlags,
+      leaderboardScores,
+      recordScores,
+      tournamentsTable,
+      groupMembers,
+      groups,
+      directedInvites,
+      friendRequests,
+      friendships,
+      trophyAwards,
+      notifications,
+      pushLedger,
+    ]) {
+      await tx.delete(table)
+    }
+    await tx
+      .insert(trophyCursor)
+      .values({ id: 'default', weeklyInitialized: false, monthlyInitialized: false })
+      .onConflictDoUpdate({ target: trophyCursor.id, set: { weeklyInitialized: false, monthlyInitialized: false } })
+  })
+}
+
+async function seedAccounts(players: Player[]) {
+  await insertRows(
+    accounts,
+    players.map((p) => ({ id: p.accountId, email: p.email, createdAt: Math.round(p.joinedAt), plan: 'free', googleSub: null })),
+  )
+  await insertRows(
+    nameClaims,
+    players.map((p) => ({
+      name: p.tag,
+      token: `seed-${p.tag.toLowerCase()}-${Math.floor(rand() * 36 ** 8).toString(36)}`,
+      claimedAt: Math.round(p.joinedAt),
+      accountId: p.accountId,
+      avatarId: p.avatarId,
+    })),
+  )
+}
+
+/* ---------- friends and groups ---------- */
+
+async function seedSocial(players: Player[]) {
+  const pairs = new Set<string>()
+  const rows: (typeof friendships.$inferInsert)[] = []
+  const link = (a: Player, b: Player) => {
+    if (a === b) return
+    const [x, y] = a.accountId < b.accountId ? [a, b] : [b, a]
+    const key = `${x.accountId}|${y.accountId}`
+    if (pairs.has(key)) return
+    pairs.add(key)
+    const since = Math.max(x.joinedAt, y.joinedAt)
+    rows.push({ id: sid('fr'), accountIdA: x.accountId, accountIdB: y.accountId, createdAt: Math.round(between(since, NOW - HOUR)) })
+  }
+  // Everyone has a few friends, the keen ones more, and people who play the same games find each other.
+  for (const p of players) {
+    const n = Math.round(1 + p.activity * 6)
+    const alike = players.filter((q) => q !== p && q.favorites.some((g) => p.favorites.includes(g)))
+    for (const q of shuffle(alike).slice(0, Math.ceil(n * 0.7))) link(p, q)
+    for (const q of shuffle(players).slice(0, Math.floor(n * 0.3))) link(p, q)
+  }
+  await insertRows(friendships, rows)
+
+  const circles: { name: string; members: Player[] }[] = [
+    { name: 'Thursday Crew', members: shuffle(players.filter((p) => p.activity > 0.4)).slice(0, 12) },
+    { name: 'Office League', members: shuffle(players.filter((p) => p.hour < 18)).slice(0, 16) },
+    { name: 'Night Owls', members: shuffle(players.filter((p) => p.hour >= 21)).slice(0, 10) },
+    { name: 'Cousins', members: shuffle(players).slice(0, 7) },
+    { name: 'Lunch Club', members: shuffle(players.filter((p) => p.hour >= 11.5 && p.hour < 14)).slice(0, 9) },
+  ]
+  let groupCount = 0
+  for (const c of circles) {
+    if (c.members.length < 3) continue
+    const id = sid('group')
+    const owner = c.members[0]!
+    await db().insert(groups).values({ id, name: c.name, inviteCode: inviteCode(), createdByAccountId: owner.accountId })
+    const opened = owner.joinedAt + between(0, Math.max(0, NOW - owner.joinedAt) * 0.4)
+    await insertRows(
+      groupMembers,
+      c.members.map((m) => ({
+        groupId: id,
+        name: m.tag,
+        joinedAt: Math.round(between(Math.max(opened, m.joinedAt), NOW - HOUR)),
+      })),
+    )
+    groupCount += 1
+  }
+  return { friendships: rows.length, groups: groupCount }
 }
 
 /* ---------- trophies ---------- */
 
+/** The moment a closed period's trophies would have gone out: just after it closed. */
+function closedAt(period: string, key: number): number {
+  if (period === 'weekly') return dayStart(addDays(key, 7)) + 7 * MINUTE
+  const y = Math.floor(key / 100)
+  const m = key % 100
+  const next = m === 12 ? (y + 1) * 10_000 + 101 : y * 10_000 + (m + 1) * 100 + 1
+  return dayStart(next) + 7 * MINUTE
+}
+
 async function seedTrophies(events: Tournament[]) {
-  // Board trophies: recompute the last 8 weeks / 6 months from the boards as
-  // they now stand. Awards that already exist are left alone.
+  // Weekly and monthly: ranked from the boards as they now stand, the last
+  // eight weeks and six months, stamped with when each period closed.
   await db()
     .insert(trophyCursor)
     .values({ id: 'default', weeklyInitialized: false, monthlyInitialized: false })
-    .onConflictDoUpdate({
-      target: trophyCursor.id,
-      set: { weeklyInitialized: false, monthlyInitialized: false },
-    })
+    .onConflictDoUpdate({ target: trophyCursor.id, set: { weeklyInitialized: false, monthlyInitialized: false } })
   await ensurePeriodTrophies(NOW)
+  const awarded = await db()
+    .select({ period: trophyAwards.period, periodKey: trophyAwards.periodKey })
+    .from(trophyAwards)
+    .where(inArray(trophyAwards.name, [...TAGS]))
+  const keys = new Set(awarded.filter((a) => a.period !== 'event').map((a) => `${a.period}:${a.periodKey}`))
+  for (const key of keys) {
+    const [period, periodKey] = key.split(':') as [string, string]
+    await db()
+      .update(trophyAwards)
+      .set({ awardedAt: Math.min(NOW, closedAt(period, Number(periodKey))) })
+      .where(sql`${trophyAwards.period} = ${period} and ${trophyAwards.periodKey} = ${Number(periodKey)}`)
+  }
 
-  // Event wins for the finished seeded events.
+  // Event wins: every event that is over.
+  let wins = 0
   for (const t of events) {
     const winner = tournamentWinner(t, NOW)
     if (!winner) continue
-    const key = Number(new Date(t.startsAt).toISOString().slice(0, 10).replace(/-/g, ''))
     const top = computeStandings(t).find((row) => row.name === winner)
-    await awardEventWin({
+    const ok = await awardEventWin({
       eventId: t.id,
       eventTitle: t.title,
-      periodKey: key,
+      periodKey: boardDateKey(t.startsAt),
       name: winner,
       score: top?.totalPoints ?? 0,
       games: t.games.length,
-      awardedAt: Math.min(NOW, t.endsAt + HOUR),
+      awardedAt: Math.round(Math.min(NOW - MINUTE, t.endsAt + between(5, 90) * MINUTE)),
     })
+    if (ok) wins += 1
   }
+  return { periods: keys.size, wins }
 }
 
 /* ---------- main ---------- */
 
 async function main() {
   loadDotEnv()
-  // After the .env is read, so the branch it names is the one we check.
-  assertNotProduction('rebuild the world')
-  await runMigrations()
+  const fresh = process.argv.includes('--fresh')
   const clearOnly = process.argv.includes('--clear')
-  const youArg = process.argv.find((a) => a.startsWith('--you='))
-  const youTag = (youArg ? youArg.slice(6) : 'DAD').trim().toUpperCase().slice(0, 12)
+  // After the .env is read, so the branch it names is the one we check.
+  assertNotProduction(fresh ? 'wipe every board and rebuild the world' : 'rebuild the world')
+  await runMigrations()
+  const target = dbTarget()
+  console.log(`Database: ${target.isProduction ? 'PRODUCTION' : target.branch} (${target.host})`)
 
-  console.log('Clearing previous seed…')
+  if (fresh) {
+    console.log('Backing up every table…')
+    const file = await backUp()
+    console.log(`  written to ${file}`)
+    console.log('Wiping game data…')
+    await wipeGameData()
+  }
+  console.log('Clearing the previous seed…')
   await clearSeed()
   if (clearOnly) {
     console.log('Seed data removed.')
     return
   }
 
-  const existing = new Set(
-    (await db().select({ name: nameClaims.name }).from(nameClaims)).map((r) => r.name),
-  )
+  const existing = new Set((await db().select({ name: nameClaims.name }).from(nameClaims)).map((r) => r.name))
   const players = makePlayers(existing)
-  const youClaim = await getClaim(youTag)
-  const you: You = { tag: youTag, accountId: youClaim?.accountId ?? null }
-  if (!you.accountId) {
-    console.log(`No account owns ${youTag}; friends and requests for them will be skipped.`)
+  const official = officialEvents()
+  const hosted = hostedScoreEvents(players)
+  const sittingsFor = new Map<string, Sitting[]>()
+  const addSittings = (from: Map<string, Sitting[]>) => {
+    for (const [tag, list] of from) sittingsFor.set(tag, [...(sittingsFor.get(tag) ?? []), ...list])
+  }
+  for (const plan of hosted) addSittings(hostedSittings(plan))
+  const meant = new Map<string, Set<string>>()
+  for (const t of official.filter((e) => e.cadence === 'weekly')) {
+    const { entrants, sittings } = weeklySittings(t, players)
+    meant.set(t.id, entrants)
+    addSittings(sittings)
   }
 
-  console.log(`Creating ${players.length} players…`)
+  console.log(`Playing ${players.length} players' days…`)
+  for (const p of players) {
+    const plan: Sitting[] = [...(sittingsFor.get(p.tag) ?? [])]
+    for (const key of playDays(p)) {
+      const at = timeOnDay(key, clamp(p.hour + gauss() * 1.2, 7, 23.6), p.joinedAt + between(1, 6) * MINUTE)
+      if (at != null) plan.push({ at, games: chooseGames(p, key, official) })
+      // The keenest come back later the same day now and then.
+      if (at != null && p.activity > 0.7 && chance(0.2)) {
+        const later = timeOnDay(key, Math.min(23.5, hourOf(at) + between(2, 5)), at + 2 * HOUR)
+        if (later != null) plan.push({ at: later, games: chooseGames(p, key, official) })
+      }
+    }
+    plan.sort((a, b) => a.at - b.at)
+    let free = 0
+    for (const s of plan) free = playSitting(p, s, free) + between(5, 30) * MINUTE
+  }
+  const draws = brackets(players)
+  for (const p of players) p.runs.sort((a, b) => a.at - b.at)
+
+  for (const plan of hosted) {
+    // Everyone on the roster joined early; the ones who never got round to it just never played.
+    const entrants = plan.roster.map((p) => {
+      const first = p.runs.find(
+        (r) => plan.t.games.includes(r.game) && r.startAt >= plan.t.startsAt && r.at < plan.t.endsAt,
+      )
+      const joined = first ? first.startAt - between(2, 40) * MINUTE : plan.t.startsAt + between(0.2, 6) * HOUR
+      return { p, joinedAt: Math.round(clamp(joined, plan.t.startsAt + MINUTE, NOW - MINUTE)) }
+    })
+    fileRuns(plan.t, entrants)
+  }
+  for (const t of official) fillOfficial(t, players, meant.get(t.id))
+  // The arcade's own events may already hold real players; they keep their seats.
+  const standing = await db()
+    .select()
+    .from(tournamentsTable)
+    .where(inArray(tournamentsTable.id, official.map((t) => t.id)))
+  for (const row of standing) {
+    const real = row.data as Tournament
+    const t = official.find((e) => e.id === row.id)!
+    t.players = [...real.players, ...t.players]
+    t.scores = [...real.scores, ...t.scores]
+  }
+
+  console.log('Creating accounts and tags…')
   await seedAccounts(players)
 
-  console.log('Posting scores…')
-  const scores = seedScoresFor(players)
-  await insertRows(leaderboardScores, scores)
-  console.log(`  ${scores.length} runs across ${ALLOWED_GAMES.length} games`)
+  console.log('Posting runs…')
+  const scoreRows = players.flatMap((p) =>
+    p.runs.map((r) => ({
+      id: sid('lb'),
+      game: r.game,
+      name: p.tag,
+      score: r.score,
+      at: Math.round(r.at),
+      device: r.device,
+      durationMs: r.durationMs,
+    })),
+  )
+  await insertRows(leaderboardScores, scoreRows)
+  console.log(`  ${scoreRows.length} runs across ${SEEDED_GAMES.length} games`)
 
   console.log('Filling record books…')
-  const records = seedRecordsFor(players)
+  const records = recordBooks(players).map((r) => ({ ...r, at: Math.round(r.at) }))
   await insertRows(recordScores, records)
   console.log(`  ${records.length} record entries`)
 
   console.log('Running events…')
-  const events = buildEvents(players, you)
+  const events = [...official, ...hosted.map((h) => h.t), ...draws]
   for (const t of events) {
+    const row = {
+      id: t.id,
+      data: t as unknown as Record<string, unknown>,
+      official: Boolean(t.official),
+      cadence: t.cadence ?? null,
+      startsAt: t.startsAt,
+      endsAt: t.endsAt,
+      visibility: t.visibility ?? (t.official ? 'public' : 'private'),
+      inviteCode: t.inviteCode ?? null,
+    }
     await db()
       .insert(tournamentsTable)
-      .values({
-        id: t.id,
-        data: t as unknown as Record<string, unknown>,
-        official: false,
-        cadence: null,
-        startsAt: t.startsAt,
-        endsAt: t.endsAt,
-        visibility: 'private',
-        inviteCode: t.inviteCode ?? null,
-      })
+      .values(row)
+      .onConflictDoUpdate({ target: tournamentsTable.id, set: { ...row, id: undefined } })
   }
-  await joinOfficialEvents(players)
-  console.log(`  ${events.length} hosted events, plus the official daily and weekly`)
+  for (const t of official) console.log(`  ${t.title} (${t.id}): ${t.players.length} players, ${t.scores.length} scores`)
+  console.log(`  ${hosted.length} hosted events and ${draws.length} brackets`)
 
   console.log('Handing out trophies…')
-  await seedTrophies(events)
+  const trophies = await seedTrophies(events)
+  console.log(`  ${trophies.periods} weekly and monthly podiums, ${trophies.wins} event wins`)
 
   console.log('Making friends…')
-  await seedSocial(players, you)
-  await seedInvite(events, players, you)
+  const social = await seedSocial(players)
+  console.log(`  ${social.friendships} friendships, ${social.groups} groups`)
 
   const wk = weekStartKey(NOW)
-  const mk = monthKey(NOW)
   const top = (await globalRanksForClosedPeriod('weekly', wk)).slice(0, 3)
-  console.log(`This week so far (${wk}, month ${mk}): ${top.map((r) => `${r.name} ${r.score}`).join(', ') || 'no scores'}`)
+  console.log(`This week so far (${wk}, month ${monthKey(NOW)}): ${top.map((r) => `${r.name} ${r.score}`).join(', ') || 'no scores'}`)
   console.log('Done.')
 }
 

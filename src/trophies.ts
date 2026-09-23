@@ -200,7 +200,8 @@ export async function ensurePeriodTrophies(now = Date.now()) {
     }
 
     await setCursor({ weeklyInitialized: true, monthlyInitialized: true })
-    await ensureShowcaseTrophies()
+    // Showcase trophies are sample data for `npm run seed`, not something every
+    // rollover should put back: they name weeks nobody played.
     lastEnsuredAt = Date.now()
   })().finally(() => {
     ensuring = null

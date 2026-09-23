@@ -26,8 +26,8 @@
  *                                       seed
  *
  * --fresh keeps accounts, sign-ins, tags, bans and push subscriptions, and
- * empties the boards, record books, events, trophies, groups, friends and
- * notifications for everyone.
+ * empties the boards, record books, events, challenges, trophies, groups,
+ * friends and notifications for everyone.
  *
  * Everything it writes is marked: ids start with `seed-`, accounts use the
  * `@seed.skermix.dev` domain, and trophies belong to seeded tags. The daily and
@@ -52,6 +52,8 @@ import { runMigrations } from './db/migrate.js'
 import {
   accounts,
   appMeta,
+  challengeResults,
+  challenges,
   directedInvites,
   friendRequests,
   friendships,
@@ -911,6 +913,8 @@ const EVERY_TABLE = {
   notifications,
   push_subscriptions: pushSubscriptions,
   push_ledger: pushLedger,
+  challenges,
+  challenge_results: challengeResults,
 }
 
 /** Every row of every table, to a file, before anything is removed. */
@@ -932,12 +936,15 @@ async function backUp(): Promise<string> {
 }
 
 /**
- * Every score, record, event, trophy, group, friend and notification, for
- * everyone. Accounts, sign-ins, tags, bans and push subscriptions stay, so
- * nobody is signed out and every tag keeps its owner.
+ * Every score, record, event, challenge, trophy, group, friend and
+ * notification, for everyone. Accounts, sign-ins, tags, bans and push
+ * subscriptions stay, so nobody is signed out and every tag keeps its owner.
  */
 async function wipeGameData(d: Db) {
   for (const table of [
+    // A challenge names a saved run, and every run is about to go.
+    challengeResults,
+    challenges,
     runClaims,
     gameRuns,
     scoreFlags,

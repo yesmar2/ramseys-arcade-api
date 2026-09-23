@@ -20,6 +20,7 @@
  * event, a group or a friendship.
  *
  *   npm run seed:world                  replace the seeded world
+ *   npm run seed:world -- --backup      the same, backing up every table first
  *   npm run seed:world -- --clear       remove everything this script added
  *   npm run seed:world -- --fresh       back up every table to backups/, wipe
  *                                       all game data, real players' too, and
@@ -285,18 +286,22 @@ function timeOnDay(key: number, hour: number, notBefore = 0): number | null {
 function makePlayers(existing: Set<string>): Player[] {
   const tags = TAGS.filter((t) => !existing.has(t))
   return tags.map((tag, i) => {
-    // A few are very good, a fifth are strong, half are regulars, the rest casual.
+    // A few are very good, a fifth are strong, half are regulars, the rest
+    // casual. The very good sit just above the strong rather than in a class
+    // of their own, so nobody runs away with a board.
     const u = rand()
     const skill =
-      u < 0.05 ? between(0.86, 0.98) : u < 0.25 ? between(0.64, 0.86) : u < 0.75 ? between(0.36, 0.64) : between(0.1, 0.36)
+      u < 0.05 ? between(0.84, 0.93) : u < 0.25 ? between(0.64, 0.84) : u < 0.75 ? between(0.36, 0.64) : between(0.1, 0.36)
     // The keen ones tend to be the good ones.
     const activity = clamp(0.25 + 0.55 * Math.pow(rand(), 1.3) + (skill - 0.5) * 0.3 + gauss() * 0.08, 0.06, 1)
     const favorites = shuffle(SEEDED_GAMES).slice(0, 2 + Math.floor(rand() * 5))
-    // Nobody is equally good at everything, and everyone is best at their own game.
+    // Nobody is equally good at everything, and everyone is best at their own
+    // game: only a player's main game reaches the top of the range, so each
+    // board has its own champion rather than one player topping them all.
     const aptitude: Record<string, number> = {}
     for (const g of SEEDED_GAMES) {
       const fav = favorites.indexOf(g)
-      aptitude[g] = clamp(skill + gauss() * 0.14 + (fav === 0 ? 0.07 : fav > 0 ? 0.03 : 0), 0.03, 1)
+      aptitude[g] = clamp(skill + gauss() * 0.14 + (fav === 0 ? 0.07 : fav > 0 ? 0.03 : 0), 0.03, fav === 0 ? 0.96 : 0.9)
     }
     const r = rand()
     const hour = r < 0.7 ? between(18.5, 22.5) : r < 0.85 ? between(11.8, 13.5) : between(7.5, 17)
@@ -1102,7 +1107,7 @@ async function main() {
   const target = dbTarget()
   console.log(`Database: ${target.isProduction ? 'PRODUCTION' : target.branch} (${target.host})`)
 
-  if (fresh) {
+  if (fresh || process.argv.includes('--backup')) {
     console.log('Backing up every table…')
     const file = await backUp()
     console.log(`  written to ${file}`)

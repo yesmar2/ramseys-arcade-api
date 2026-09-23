@@ -74,8 +74,17 @@ function gauss(rng: Rng) {
   return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * rng())
 }
 
-/** Run-to-run luck: 1 in the middle, spread by `sigma` either way. */
-const luck = (rng: Rng, sigma: number) => Math.exp(gauss(rng) * sigma)
+/**
+ * Run-to-run luck: 1 in the middle. A run can go wrong in any number of ways,
+ * so the bad side runs long; it can only go so right before the game's own
+ * pace catches up, so the good side is short. `sigma` sets the bad side, and
+ * the good side is under half of it. A player's best is then a good day, not
+ * a freak one, and a board's leaders sit close to each other.
+ */
+function luck(rng: Rng, sigma: number) {
+  const g = gauss(rng)
+  return Math.exp(g < 0 ? g * sigma : g * sigma * 0.45)
+}
 
 /**
  * Bend a value toward a ceiling instead of stopping it there. Past `knee` it
@@ -285,7 +294,8 @@ const crumbtrail: Model = (q, rng) => {
 /** Five scenes against the clock; the board keeps the base minus the time. */
 const findbug: Model = (q, rng) => {
   // Luck works on the time above a floor no sweep beats: five finds in 25s.
-  const secs = Math.min(400, 25 + (curve(q, 118, 56, 31) - 25) * luck(rng, 0.3))
+  // Here a bad run is a slow one, so it is the long side that adds time.
+  const secs = Math.min(400, 25 + (curve(q, 118, 56, 31) - 25) / luck(rng, 0.3))
   const ms = Math.round(secs * 1000)
   // Each scene opens with its wanted card and closes on the find.
   const play = secs + 5 * between(rng, 1.8, 3)

@@ -38,6 +38,13 @@ export type { PublicBracket, PublicBracketMatch, PublicBracketSide } from './bra
 /** Games eligible for rolling daily/weekly events (excludes unfinished / non-event titles). */
 const EVENT_GAMES = ALLOWED_GAMES.filter((g) => g !== 'crosswalk' && g !== 'spotter')
 
+/**
+ * Games the site has retired: no new event picks one, but an event already
+ * running with it keeps it, and its scores, until it ends. Simon became
+ * Fireflies.
+ */
+const RETIRED_GAMES: ReadonlySet<GameSlug> = new Set<GameSlug>(['simon'])
+
 export type TournamentStatus = 'upcoming' | 'active' | 'ended'
 export type TournamentCadence = 'daily' | 'weekly'
 export type TournamentFormat =
@@ -226,6 +233,7 @@ const GAME_LABELS: Record<GameSlug, string> = {
   crumbtrail: 'Crumbtrail',
   bop: 'Bop',
   putt: 'Putt',
+  fireflies: 'Fireflies',
 }
 
 function ymdInTz(ms: number, timeZone = BOARD_TZ): Ymd {
@@ -330,7 +338,7 @@ function mulberry32(seed: number) {
 
 function pickGames(seed: number, count: number): GameSlug[] {
   const rng = mulberry32(seed)
-  const pool = [...EVENT_GAMES]
+  const pool = EVENT_GAMES.filter((g) => !RETIRED_GAMES.has(g))
   for (let i = pool.length - 1; i > 0; i--) {
     const j = Math.floor(rng() * (i + 1))
     ;[pool[i], pool[j]] = [pool[j], pool[i]]
@@ -1360,7 +1368,11 @@ export async function createTournament(
   } else if (games.length < 1 || games.length > MAX_PRIVATE_GAMES) {
     throw Object.assign(new Error('Pick 1–5 games'), { status: 400 })
   }
-  if (!games.every((g) => isAllowedGame(g) && (EVENT_GAMES as readonly string[]).includes(g))) {
+  if (
+    !games.every(
+      (g) => isAllowedGame(g) && (EVENT_GAMES as readonly string[]).includes(g) && !RETIRED_GAMES.has(g),
+    )
+  ) {
     throw Object.assign(new Error('One or more games are not available for events'), { status: 400 })
   }
 

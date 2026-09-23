@@ -85,6 +85,12 @@ const SCORE_RULES: Record<GameSlug, ScoreRule> = {
    * roughly four times the bot's best at every point on that curve.
    */
   frenzy: { kind: 'curve', floor: 300, perSecond: 100, perSecondSquared: 10 },
+  /*
+   * A point a note. Measured: a bot that taps every tune back the instant it
+   * ends scores 525 in five minutes, and each tune takes its full length to
+   * watch, so no hand can go faster. These leave that bot under 60% of the cap.
+   */
+  fireflies: { kind: 'rate', floor: 20, perSecond: 3 },
   findbug: { kind: 'time' },
   spotter: { kind: 'time' },
 }

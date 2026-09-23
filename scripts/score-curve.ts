@@ -12,6 +12,8 @@ import { ALLOWED_GAMES, type GameSlug } from '../src/store.js'
 const BOT_BEST: Partial<Record<GameSlug, { score: number; seconds: number }>> = {
   frenzy: { score: 24_463, seconds: 97 },
   barrage: { score: 13_240, seconds: 177 },
+  // Taps every tune back the instant it ends: faster than any hand.
+  fireflies: { score: 525, seconds: 300 },
 }
 
 const only = process.argv[2] as GameSlug | undefined

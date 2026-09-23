@@ -233,6 +233,7 @@ export const SCORE_STREAK_THRESHOLDS: Record<GameSlug, number> = {
   crumbtrail: 10_000,
   bop: 25,
   putt: 2000,
+  fireflies: 30,
 }
 
 function thresholdStreakLabel(game: GameSlug, threshold: number): string {

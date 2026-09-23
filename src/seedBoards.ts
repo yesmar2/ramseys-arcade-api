@@ -61,6 +61,7 @@ const GAME_BANDS: Record<GameSlug, ScoreProfile> = {
   putt: { min: 300, max: 3200, step: 100 },
   barrage: { min: 300, max: 24_000, step: 5 },
   frenzy: { min: 200, max: 26_000, step: 1 },
+  fireflies: { min: 6, max: 140 },
 }
 
 function lerp(a: number, b: number, t: number) {
@@ -161,6 +162,7 @@ export function buildSeed(seed = 20260904) {
     putt: [],
     barrage: [],
     frenzy: [],
+    fireflies: [],
   }
 
   NAMES.forEach((name, i) => {

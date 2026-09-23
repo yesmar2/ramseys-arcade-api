@@ -197,6 +197,7 @@ const BANDS: Record<GameSlug, { min: number; max: number; step?: number }> = {
   putt: { min: 300, max: 3200, step: 100 },
   barrage: { min: 300, max: 24_000, step: 5 },
   frenzy: { min: 200, max: 26_000, step: 1 },
+  fireflies: { min: 6, max: 140 },
 }
 
 function roundTo(value: number, step = 1) {
@@ -544,7 +545,7 @@ function buildEvents(players: Player[], you: You): Tournament[] {
 
   // Three finished score events over the last month.
   const finished: { title: string; games: GameSlug[]; daysAgo: number; hours: number; n: number; tries: number }[] = [
-    { title: 'Friday Night Triple', games: ['stacker', 'pop', 'simon'], daysAgo: 24, hours: 48, n: 14, tries: 3 },
+    { title: 'Friday Night Triple', games: ['stacker', 'pop', 'fireflies'], daysAgo: 24, hours: 48, n: 14, tries: 3 },
     { title: 'Office League · Week 2', games: ['asteroids', 'pellets'], daysAgo: 12, hours: 96, n: 11, tries: 2 },
     { title: 'Snake Sunday', games: ['snake'], daysAgo: 5, hours: 24, n: 9, tries: 5 },
   ]
@@ -578,7 +579,7 @@ function buildEvents(players: Player[], you: You): Tournament[] {
 
   // Two running score events you are in, one ending soon and one long.
   const running: { title: string; games: GameSlug[]; hoursAgo: number; hours: number; n: number; tries: number }[] = [
-    { title: 'Lunch Break Ladder', games: ['pop', 'centroid', 'simon'], hoursAgo: 30, hours: 72, n: 12, tries: 0 },
+    { title: 'Lunch Break Ladder', games: ['pop', 'centroid', 'fireflies'], hoursAgo: 30, hours: 72, n: 12, tries: 0 },
     { title: 'Patriot Standoff', games: ['patriot'], hoursAgo: 5, hours: 24, n: 7, tries: 3 },
   ]
   for (const r of running) {

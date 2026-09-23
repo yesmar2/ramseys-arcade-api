@@ -113,7 +113,8 @@ recordsRouter.get('/:game', async (req, res) => {
     scopeError(err, res)
     return
   }
-  const { records } = await listGameRecords(game, period, Date.now(), scope)
+  const name = typeof req.query.name === 'string' ? req.query.name : ''
+  const { records } = await listGameRecords(game, period, Date.now(), scope, name || undefined)
   // The holder's mark is drawn beside each record, so send their avatar too.
   res.json({
     game,

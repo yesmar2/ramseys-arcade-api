@@ -534,18 +534,44 @@ export async function bestRecordForName(
   return { ...best, rank: pool.findIndex((e) => e.id === best.id) + 1 }
 }
 
+export type GameRecordSummary = RecordDef & {
+  top: RecordEntry | null
+  /** The best of the other players: what the holder is ahead of. */
+  second: RecordEntry | null
+  /** Players on the board, one each. */
+  players: number
+  /** Where `name` stands on it, when a name was asked about; null when they are not on it. */
+  you?: YouRecordEntry | null
+}
+
+/**
+ * Every record in a game's book with its holder, the runner-up and how many
+ * players are on it, and, given a name, where that player stands on each, so
+ * a book can be drawn in one request rather than one per record.
+ */
 export async function listGameRecords(
   game: GameSlug,
   period: Period = 'all',
   now = Date.now(),
   scope?: NameScope,
-): Promise<{
-  records: Array<RecordDef & { top: RecordEntry | null }>
-}> {
-  const records = []
+  name?: string,
+): Promise<{ records: GameRecordSummary[] }> {
+  const cleaned = name?.trim().slice(0, 12).toUpperCase() ?? ''
+  const records: GameRecordSummary[] = []
   for (const def of listRecordDefs(game)) {
-    const board = await getRecordBoard(game, def.id, period, now, scope)
-    records.push({ ...def, top: board[0] ?? null })
+    const pool = filterByNames(filterByPeriod(await historyFor(game, def.id), period, now), scope)
+    const ranked = bestPerPlayer(sortEntries(pool, def.direction))
+    const row: GameRecordSummary = {
+      ...def,
+      top: ranked[0] ?? null,
+      second: ranked[1] ?? null,
+      players: ranked.length,
+    }
+    if (cleaned) {
+      const at = ranked.findIndex((e) => e.name === cleaned)
+      row.you = at >= 0 ? { ...ranked[at], rank: at + 1 } : null
+    }
+    records.push(row)
   }
   return { records }
 }

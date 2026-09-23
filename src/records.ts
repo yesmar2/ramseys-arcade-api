@@ -534,6 +534,39 @@ export async function bestRecordForName(
   return { ...best, rank: pool.findIndex((e) => e.id === best.id) + 1 }
 }
 
+/**
+ * A record's story: every run that beat everything before it, oldest first.
+ *
+ * A run that improves on its player's own best is always kept, and a run that
+ * sets a record always does, so this is the whole story rather than a sample.
+ * A tie never takes a record: whoever reached the score first keeps it. Given
+ * a name, the same walk over that player's runs alone: their best, each time
+ * it moved.
+ */
+export async function getRecordProgression(
+  game: GameSlug,
+  recordId: string,
+  period: Period = 'all',
+  opts: { now?: number; scope?: NameScope; name?: string } = {},
+): Promise<RecordEntry[]> {
+  const def = getRecordDef(game, recordId)
+  if (!def) return []
+  let pool = filterByNames(
+    filterByPeriod(await historyFor(game, recordId), period, opts.now ?? Date.now()),
+    opts.scope,
+  )
+  if (opts.name !== undefined) {
+    const cleaned = opts.name.trim().slice(0, 12).toUpperCase()
+    pool = pool.filter((e) => e.name === cleaned)
+  }
+  const out: RecordEntry[] = []
+  for (const entry of [...pool].sort((a, b) => a.at - b.at)) {
+    const best = out[out.length - 1]
+    if (!best || isBetter(entry.score, best.score, def.direction)) out.push(entry)
+  }
+  return out
+}
+
 export type GameRecordSummary = RecordDef & {
   top: RecordEntry | null
   /** The best of the other players: what the holder is ahead of. */

@@ -13,6 +13,7 @@ import {
   getRecordBoard,
   getRecordBoardPage,
   getRecordDef,
+  getRecordProgression,
   listGameRecords,
 } from './records.js'
 import { siteRecords, siteRecordStandingFor } from './siteRecords.js'
@@ -35,6 +36,9 @@ const submitSchema = z.object({
  * bound: no single game produces hundreds of entries.
  */
 const RECORD_SUBMIT_LIMIT = { limit: 120, windowMs: 10 * 60 * 1000 }
+
+/** How many of a record's breaks a board page carries, newest kept. */
+const PROGRESSION_CAP = 100
 
 const REQUIRE_RUN_TOKEN =
   process.env.REQUIRE_RUN_TOKEN === '1' || process.env.REQUIRE_RUN_TOKEN === 'true'
@@ -151,6 +155,16 @@ recordsRouter.get('/:game/:recordId', async (req, res) => {
     : null
   const { limit, offset } = pageParams(req.query)
   const page = await getRecordBoardPage(game, recordId, period, { offset, limit, scope })
+  /*
+   * The record's story, and the asker's own, ride on the first page only: they
+   * are the same on every page. The newest hundred breaks cover any record so
+   * far; `progressionTotal` says when there were more.
+   */
+  const story = offset === 0 ? await getRecordProgression(game, recordId, period, { scope }) : null
+  const yours =
+    offset === 0 && name
+      ? await getRecordProgression(game, recordId, period, { scope, name })
+      : null
   res.json({
     game,
     record: def,
@@ -159,6 +173,15 @@ recordsRouter.get('/:game/:recordId', async (req, res) => {
     total: page.total,
     entries: await withAvatarIds(page.entries),
     you: you ? await withAvatarId(you) : null,
+    ...(story
+      ? {
+          progression: await withAvatarIds(story.slice(-PROGRESSION_CAP)),
+          progressionTotal: story.length,
+        }
+      : {}),
+    ...(yours
+      ? { youProgression: yours.slice(-PROGRESSION_CAP).map(({ score, at }) => ({ score, at })) }
+      : {}),
   })
 })
 

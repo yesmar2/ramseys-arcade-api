@@ -1,18 +1,18 @@
 import { Router } from 'express'
 import { accountFromRequest } from './auth.js'
 import { namesOwnedByAccount } from './names.js'
-import { isPlus } from './plans.js'
 import { playerStats } from './stats.js'
 import { isPeriod, type Period } from './store.js'
 
 export const statsRouter = Router()
 
 /**
- * Your own numbers.
+ * Your own numbers, all of them, on every plan.
  *
- * Free gets the headline and the streak; Plus gets the depth. Sending the
- * headline to everyone is deliberate — a page that shows nothing until you pay
- * gives nobody a reason to.
+ * They were split between free and Plus; Plus is being redefined, and until it
+ * is, a page that shows a player how they got here is worth more to the arcade
+ * than a lock nobody can open. `locked` stays in the reply, always false, for
+ * clients that still read it.
  */
 statsRouter.get('/me', async (req, res) => {
   const account = await accountFromRequest(req)
@@ -41,22 +41,13 @@ statsRouter.get('/me', async (req, res) => {
 
   try {
     const stats = await playerStats(target, period)
-    const plus = isPlus(account.plan)
     res.json({
       plan: account.plan,
       tag: target,
       tags: owned,
       period,
-      stats: plus
-        ? stats
-        : // Free keeps what it can act on today, without the history.
-          {
-            headline: stats.headline,
-            streak: { ...stats.streak, days: [] },
-            games: [],
-            nearRecords: [],
-          },
-      locked: !plus,
+      stats,
+      locked: false,
     })
   } catch (err) {
     res.status(500).json({

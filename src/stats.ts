@@ -19,8 +19,8 @@ import {
  * board cannot show: how you got here, how you compare to everyone who ever
  * played, and which record is within reach.
  *
- * The headline counts are free; the rest is Plus. A locked page that shows
- * nothing sells nothing.
+ * All of it is free for now (see statsRoutes.ts): only the player it belongs
+ * to can ask for it.
  */
 
 export type StatsHeadline = {

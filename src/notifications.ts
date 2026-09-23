@@ -5,8 +5,9 @@ import { notifications } from './db/schema.js'
 /**
  * Everything the arcade can tell a player.
  *
- * Only the two match kinds are ever delivered to a device — see `PUSHABLE`.
- * The rest live in the inbox, where they cost the player nothing to miss.
+ * Only the match kinds and a beaten challenge are ever delivered to a device —
+ * see `PUSHABLE`. The rest live in the inbox, where they cost the player
+ * nothing to miss.
  */
 export type NotificationKind =
   | 'match-open'
@@ -17,18 +18,24 @@ export type NotificationKind =
   | 'friend-accepted'
   | 'trophy'
   | 'event-result'
+  | 'challenge-beaten'
+  | 'challenge-taken'
 
 /**
  * The push allow-list.
  *
  * A bracket match has a clock and a forfeit on the other side of it, so missing
- * one costs a player their run. Nothing else in the arcade expires: a beaten
- * record is still beaten when you next open the app, and telling someone about
- * it on their phone buys them nothing they can act on.
+ * one costs a player their run. A beaten challenge is the other exception: it
+ * is a friend answering something the player sent them, and the answer back
+ * is the whole point. Nothing else goes to a phone: a beaten record is still
+ * beaten when you next open the app, and telling someone about it on their
+ * phone buys them nothing they can act on. The daily cap and quiet hours in
+ * push.ts hold for every kind.
  */
 export const PUSHABLE: ReadonlySet<NotificationKind> = new Set<NotificationKind>([
   'match-open',
   'match-closing',
+  'challenge-beaten',
 ])
 
 export type NotificationRow = {

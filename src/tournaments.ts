@@ -216,7 +216,7 @@ type Store = { tournaments: Tournament[] }
 
 type Ymd = { y: number; m: number; d: number; weekday: string }
 
-const GAME_LABELS: Record<GameSlug, string> = {
+export const GAME_LABELS: Record<GameSlug, string> = {
   barrage: 'Barrage',
   frenzy: 'Frenzy',
   stacker: 'Stacker',

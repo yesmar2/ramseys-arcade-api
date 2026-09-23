@@ -423,3 +423,50 @@ export const pushLedger = pgTable(
   },
   (t) => [uniqueIndex('push_ledger_day_idx').on(t.accountId, t.dayKey)],
 )
+
+/**
+ * A run sent to a friend to beat.
+ *
+ * The link names only the id, so what the friend is shown always comes from
+ * here: a real saved run, by the player who owns that tag.
+ */
+export const challenges = pgTable(
+  'challenges',
+  {
+    id: text('id').primaryKey(),
+    game: text('game').notNull(),
+    name: text('name').notNull(),
+    accountId: text('account_id')
+      .notNull()
+      .references(() => accounts.id, { onDelete: 'cascade' }),
+    score: integer('score').notNull(),
+    scoreId: text('score_id').notNull(),
+    /** The challenge this one answers, when it was sent back. */
+    replyTo: text('reply_to'),
+    createdAt: bigint('created_at', { mode: 'number' }).notNull(),
+  },
+  (t) => [
+    index('challenges_account_idx').on(t.accountId, t.createdAt),
+    uniqueIndex('challenges_score_idx').on(t.scoreId),
+  ],
+)
+
+/** Each player's go at a challenge: one row a player, kept at their best. */
+export const challengeResults = pgTable(
+  'challenge_results',
+  {
+    challengeId: text('challenge_id')
+      .notNull()
+      .references(() => challenges.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    accountId: text('account_id').references(() => accounts.id, { onDelete: 'set null' }),
+    score: integer('score').notNull(),
+    won: boolean('won').notNull(),
+    /** Sent back to the challenger from the run that beat it. */
+    replyId: text('reply_id'),
+    attempts: integer('attempts').notNull().default(1),
+    createdAt: bigint('created_at', { mode: 'number' }).notNull(),
+    updatedAt: bigint('updated_at', { mode: 'number' }).notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.challengeId, t.name] })],
+)

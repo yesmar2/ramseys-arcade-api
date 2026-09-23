@@ -11,6 +11,7 @@ import { invalidateSiteRecords } from './siteRecords.js'
 import { resolveBoardScope } from './groups.js'
 import { assertCanUseName, withAvatarId, withAvatarIds } from './names.js'
 import { updateCrossRunStreakRecords } from './records.js'
+import { recordChallengeRun } from './challenges.js'
 import {
   addScore,
   ALLOWED_GAMES,
@@ -134,6 +135,8 @@ const submitSchema = z.object({
   device: z.enum(['phone', 'tablet', 'desktop']).optional(),
   /** Optional until REQUIRE_RUN_TOKEN — older clients do not send one. */
   runId: z.string().min(1).max(64).optional(),
+  /** The challenge this run was played against, from a friend's link. */
+  challengeId: z.string().min(1).max(16).optional(),
 })
 
 /*
@@ -258,7 +261,7 @@ leaderboardsRouter.post('/:game', async (req, res) => {
     return
   }
 
-  const { name, score, token, device, runId } = parsed.data
+  const { name, score, token, device, runId, challengeId } = parsed.data
   if (score > scoreCeiling(game)) {
     res.status(400).json({ error: 'That score is not possible in this game', code: 'SCORE_OUT_OF_RANGE' })
     return
@@ -376,8 +379,24 @@ leaderboardsRouter.post('/:game', async (req, res) => {
     bestBefore,
   )
 
+  // A run from a friend's link: kept against the challenge, and its sender told.
+  const challenge = challengeId
+    ? await recordChallengeRun({
+        challengeId,
+        game,
+        name: claim.name,
+        accountId: account.id,
+        score,
+        scoreId: result.entry.id,
+      }).catch((err: unknown) => {
+        console.warn(`[challenges] ${challengeId}:`, err)
+        return null
+      })
+    : null
+
   res.status(201).json({
     game,
+    challenge,
     entry: await withAvatarId(result.entry),
     rank: result.rank,
     ranks: result.ranks,

@@ -7,10 +7,12 @@ import {
   cleanPlayerName,
   isNameAvailable,
   renameGamerTag,
+  getClaim,
   resolveAvatarId,
   setNameAvatar,
 } from './names.js'
-import { AVATAR_COLOR_COUNT, AVATAR_SHAPES } from './avatars.js'
+import { AVATAR_COLOR_COUNT, AVATAR_EMBLEMS, parseAvatar } from './avatars.js'
+import { flairFor, invalidateFlair, mayWear } from './flair.js'
 
 export const namesRouter = Router()
 
@@ -27,7 +29,7 @@ const renameSchema = z.object({
 })
 
 const avatarSchema = z.object({
-  avatarId: z.string().min(1).max(32),
+  avatarId: z.string().min(1).max(64),
   token: z.string().min(1).max(128).optional(),
 })
 
@@ -86,7 +88,7 @@ namesRouter.get('/:name', async (req, res) => {
     name,
     available: await isNameAvailable(name, token, account?.id),
     avatarId: await resolveAvatarId(name),
-    avatars: { shapes: AVATAR_SHAPES, colors: AVATAR_COLOR_COUNT },
+    avatars: { emblems: AVATAR_EMBLEMS, colors: AVATAR_COLOR_COUNT },
   })
 })
 
@@ -102,6 +104,14 @@ namesRouter.put('/:name/avatar', async (req, res) => {
     return
   }
   try {
+    const wanted = parseAvatar(parsed.data.avatarId)
+    if (wanted && (wanted.ring || wanted.pin)) {
+      const current = parseAvatar((await getClaim(name))?.avatarId)
+      if (!(await mayWear(name, wanted, current))) {
+        res.status(403).json({ error: 'That ring or pin isn’t yours yet', code: 'FLAIR_NOT_EARNED' })
+        return
+      }
+    }
     const account = await accountFromRequest(req)
     const result = await setNameAvatar(name, parsed.data.avatarId, {
       claimToken: parsed.data.token,
@@ -115,6 +125,21 @@ namesRouter.put('/:name/avatar', async (req, res) => {
       error: err instanceof Error ? err.message : 'Could not set avatar',
       code,
     })
+  }
+})
+
+/** The rings and pins a tag has earned, and how close it is to the rest. */
+namesRouter.get('/:name/flair', async (req, res) => {
+  const name = cleanPlayerName(req.params.name ?? '')
+  if (!name) {
+    res.status(400).json({ error: 'Name required' })
+    return
+  }
+  try {
+    if (req.query.fresh === '1') invalidateFlair(name)
+    res.json(await flairFor(name))
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : 'Could not load flair' })
   }
 })
 

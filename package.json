@@ -12,6 +12,7 @@
     "start": "node dist/index.js",
     "seed": "tsx src/writeSeed.ts",
     "seed:world": "tsx src/seedWorld.ts",
+    "avatars:refresh": "tsx src/refreshAvatars.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/db/migrate-cli.ts",
     "dev:neon": "neon-env run --branch dev -- tsx watch src/index.ts",

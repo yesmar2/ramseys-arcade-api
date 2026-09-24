@@ -16,3 +16,5 @@ pruned-records-*.json
 # Whole-database copies written by `npm run seed:world -- --fresh` before it
 # wipes anything. Every table, player data included. Keep it local.
 backups/
+# Throwaway sessions the load test makes on its own database (scripts/loadtest).
+scripts/loadtest/accounts.json

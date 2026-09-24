@@ -185,6 +185,7 @@ tournamentsRouter.get('/:id', async (req, res) => {
     typeof req.query.playerName === 'string' ? req.query.playerName : undefined
   const game = typeof req.query.game === 'string' ? req.query.game : undefined
   const inviteCode = typeof req.query.invite === 'string' ? req.query.invite : undefined
+  const playerId = typeof req.query.playerId === 'string' ? req.query.playerId : undefined
   const account = await accountFromRequest(req)
   try {
     const detail = await getTournamentDetail(req.params.id, Date.now(), {
@@ -192,6 +193,7 @@ tournamentsRouter.get('/:id', async (req, res) => {
       game,
       inviteCode,
       accountId: account?.id,
+      playerId,
     })
     if (!detail) {
       res.status(404).json({ error: 'Tournament not found' })

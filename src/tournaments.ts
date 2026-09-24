@@ -1596,6 +1596,83 @@ export function getTournamentPlayerStatus(
   }
 }
 
+/*
+ * An event's page shows its top hundred, and below them the viewer and the
+ * one player its lesson is about. With thousands in an event, every row went
+ * to every visitor, most of a megabyte a look. What the page says about the
+ * whole field (how many played each game, who topped each, how many played
+ * them all) is counted here from every row instead, once per count.
+ */
+const STANDINGS_TOP = 100
+
+type StandingsSummary = {
+  fieldByGame: Record<string, number>
+  gameBests: { game: GameSlug; names: string[]; score: number | null }[]
+  playedAll: number
+  /**
+   * The row the page's lesson is about, or -1: the best-placed player who won
+   * a game but skipped another, behind a winner who played them all.
+   */
+  lessonAt: number
+  /** Each tag's row. */
+  rowOf: Map<string, number>
+}
+
+const standingsSummaries = new WeakMap<StandingRow[], StandingsSummary>()
+
+function summarizeStandings(t: Tournament, rows: StandingRow[]): StandingsSummary {
+  const hit = standingsSummaries.get(rows)
+  if (hit) return hit
+  const normalized = normalizeTournament(t)
+  const games = normalized.games
+  // A game's place only counts where the player scored on it.
+  const placed = (row: StandingRow, game: GameSlug) => {
+    const cell = row.byGame[game]
+    return cell?.score != null ? (cell.place ?? null) : null
+  }
+  const fieldByGame: Record<string, number> = {}
+  const bests = games.map((game) => ({ game, names: [] as string[], score: null as number | null }))
+  for (const game of games) fieldByGame[game] = 0
+  let playedAll = 0
+  const rowOf = new Map<string, number>()
+  rows.forEach((row, i) => {
+    if (!rowOf.has(row.name)) rowOf.set(row.name, i)
+    let all = true
+    games.forEach((game, g) => {
+      const cell = row.byGame[game]
+      if (cell?.score == null) {
+        all = false
+        return
+      }
+      fieldByGame[game]++
+      if (cell.place === 1) {
+        bests[g]!.names.push(row.name)
+        bests[g]!.score ??= cell.score
+      }
+    })
+    if (all) playedAll++
+  })
+  let lessonAt = -1
+  const winner = rows[0]
+  if (
+    resolveFormat(normalized) === 'place-points' &&
+    games.length >= 2 &&
+    rows.length >= 4 &&
+    winner &&
+    games.every((game) => placed(winner, game) != null)
+  ) {
+    lessonAt = rows.findIndex(
+      (row, i) =>
+        i > 0 &&
+        games.some((game) => placed(row, game) === 1) &&
+        games.some((game) => placed(row, game) == null),
+    )
+  }
+  const summary: StandingsSummary = { fieldByGame, gameBests: bests, playedAll, lessonAt, rowOf }
+  standingsSummaries.set(rows, summary)
+  return summary
+}
+
 export async function getTournamentDetail(
   id: string,
   now = Date.now(),
@@ -1604,6 +1681,8 @@ export async function getTournamentDetail(
     game?: string
     inviteCode?: string
     accountId?: string
+    /** A seat this device holds, so a trimmed roster still carries it under an old tag. */
+    playerId?: string
   },
 ) {
   const raw = await getTournament(id)
@@ -1629,10 +1708,35 @@ export async function getTournamentDetail(
   }
   const isHost = Boolean(opts?.accountId && t.createdBy?.accountId === opts.accountId)
   const rosterFull = isTournamentRosterFull(t)
+  const standings = computeStandings(t)
+  const summary = summarizeStandings(t, standings)
+  // A bracket's seats are its story, and a small event's rows are few: those go whole.
+  const whole = resolveKind(t) === 'bracket' || standings.length <= STANDINGS_TOP
+  const you = opts?.playerName?.trim() ? cleanName(opts.playerName) : null
+  let shown: number[]
+  if (whole) {
+    shown = standings.map((_, i) => i)
+  } else {
+    shown = Array.from({ length: STANDINGS_TOP }, (_, i) => i)
+    const below = [you == null ? undefined : summary.rowOf.get(you), summary.lessonAt]
+    for (const i of below) {
+      if (i != null && i >= STANDINGS_TOP && !shown.includes(i)) shown.push(i)
+    }
+    shown.sort((a, b) => a - b)
+  }
+  const seats = whole
+    ? t.players
+    : t.players.filter((p) => p.name === you || (opts?.playerId != null && p.id === opts.playerId))
   return {
     ...publicTournament(t, now),
-    players: t.players.map((p) => ({ id: p.id, name: p.name, joinedAt: p.joinedAt })),
-    standings: await withAvatarIds(computeStandings(t)),
+    // The whole roster, or for a big event the viewer's own seat.
+    players: seats.map((p) => ({ id: p.id, name: p.name, joinedAt: p.joinedAt })),
+    // Each row with its place in the whole field.
+    standings: await withAvatarIds(shown.map((i) => ({ ...standings[i]!, place: i + 1 }))),
+    standingsTotal: standings.length,
+    fieldByGame: summary.fieldByGame,
+    gameBests: summary.gameBests,
+    playedAll: summary.playedAll,
     // The curve's ends; the places between them are spread across the field.
     placePoints: { top: TOP_PLACE_POINTS, last: 1 },
     bracket: publicBracket(t) ?? previewBracket(t),

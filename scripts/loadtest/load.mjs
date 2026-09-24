@@ -103,27 +103,43 @@ async function learnBooks() {
   }
 }
 
-// Reading: the home page, a game's page, the boards, a profile.
+// The official events running now (the day's and the week's), read from the API once.
+let EVENTS = []
+async function learnEvents() {
+  const body = await (await fetch(`${BASE}/tournaments?source=official`)).json()
+  EVENTS = (body.tournaments ?? [])
+    .filter((t) => t.status === 'active' && (t.cadence === 'daily' || t.cadence === 'weekly'))
+    .map((t) => ({ id: t.id, games: t.games }))
+}
+const eventGames = () => [...new Set(EVENTS.flatMap((e) => e.games))].filter((g) => g in TOPS)
+
+// Reading: the home page, a game's page, an event, the boards, a profile.
 async function browse() {
   const name = player()
   const game = pick(GAMES)
   const period = pick(PERIODS)
   const r = Math.random()
   if (r < 0.2) {
-    // Home: the standings strip, the site's records and one game's book.
+    // Home: the standings strip, the site's records, one game's book, and the events on now.
     await Promise.all([
       call('GET summary', `/leaderboards/summary?period=${period}&limit=3`),
       call('GET rank', `/leaderboards/rank?period=${period}&limit=5`),
       call('GET site records', `/records/site?name=${name}`),
       call('GET record book', `/records/${game}?period=all`),
+      call('GET events', `/tournaments?playerName=${name}`),
+      call('GET events', `/tournaments?source=joined&playerName=${name}`),
     ])
   } else if (r < 0.35) {
-    // A game's page: its board, your bests, its record book with you in it.
+    // A game's page: its board, your bests, its record book with you in it, its events.
     await Promise.all([
       call('GET board', `/leaderboards/${game}?period=${period}&limit=100&name=${name}`),
       call('GET bests', `/leaderboards/bests?name=${name}`),
       call('GET record book', `/records/${game}?period=all&name=${name}`),
+      call('GET game events', `/tournaments/active-for/${game}`),
     ])
+  } else if (r < 0.4 && EVENTS.length) {
+    // An event's page, with you in its standings.
+    await call('GET event', `/tournaments/${pick(EVENTS).id}?playerName=${name}`)
   } else if (r < 0.6) {
     await Promise.all([
       call('GET summary', `/leaderboards/summary?period=${period}`),
@@ -138,7 +154,9 @@ async function browse() {
 
 // A run the way a game and its end card make one: records during it, the save, then the card's reads.
 async function playRun(account) {
-  const game = pick(Object.keys(TOPS))
+  // Four runs in ten on the events' games: an event is where a crowd gathers.
+  const hot = eventGames()
+  const game = hot.length && Math.random() < 0.4 ? pick(hot) : pick(Object.keys(TOPS))
   const auth = { 'content-type': 'application/json', authorization: `Bearer ${account.token}` }
   const books = BOOKS[game] ?? []
   const posted = []
@@ -159,6 +177,14 @@ async function playRun(account) {
     body: JSON.stringify({ name: account.name, score, device: 'desktop' }),
   })
   if (!saved) return
+  // Then into each event the game is in, as the end card does.
+  for (const event of EVENTS.filter((e) => e.games.includes(game))) {
+    await call('POST event score', `/tournaments/${event.id}/scores`, {
+      method: 'POST',
+      headers: auth,
+      body: JSON.stringify({ name: account.name, game, score }),
+    })
+  }
   await Promise.all([
     call('GET board', `/leaderboards/${game}?period=weekly&limit=500&name=${account.name}`),
     call('GET rank', `/leaderboards/rank?period=weekly&name=${account.name}`),
@@ -171,6 +197,20 @@ async function playRun(account) {
 const pid = serverPid()
 const writers = WRITERS ? await accounts(WRITERS) : []
 await learnBooks()
+await learnEvents()
+// The players join the events on now, the way they would from its page.
+for (const account of writers) {
+  for (const event of EVENTS) {
+    await call('POST event join', `/tournaments/${event.id}/join`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${account.token}` },
+      body: JSON.stringify({ name: account.name }),
+    })
+  }
+}
+if (failures.size) console.log('joining the events failed:', Object.fromEntries(failures))
+samples.clear()
+failures.clear()
 console.log(`base ${BASE} · server pid ${pid} · ${USERS} browsing · ${writers.length} saving · ${SECONDS}s`)
 const rss = []
 const end = Date.now() + SECONDS * 1000

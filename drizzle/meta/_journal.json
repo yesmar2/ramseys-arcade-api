@@ -78,6 +78,13 @@
       "when": 1790279068300,
       "tag": "0010_event_rows",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1790280675000,
+      "tag": "0011_change_feed",
+      "breakpoints": true
     }
   ]
 }

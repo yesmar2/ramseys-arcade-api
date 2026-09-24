@@ -1,6 +1,7 @@
 import { asc, desc, eq, sql } from 'drizzle-orm'
 import { db } from './db/client.js'
 import { leaderboardScores } from './db/schema.js'
+import { announceRewrite, insertWithFeed, MULTI_INSTANCE, onChange, onRewrite } from './feed.js'
 
 export const ALLOWED_GAMES = [
   'asteroids',
@@ -164,6 +165,7 @@ export async function replaceAllBoards(next: Store) {
       }
     }
   })
+  await announceRewrite(['scores', 'site-records'])
 }
 
 export async function replaceGameBoard(game: GameSlug, entries: LeaderboardEntry[]) {
@@ -184,6 +186,7 @@ export async function replaceGameBoard(game: GameSlug, entries: LeaderboardEntry
       )
     }
   })
+  await announceRewrite(['scores', 'site-records'])
 }
 
 /** Board order: the higher score first, and of two equal ones, the earlier. */
@@ -443,6 +446,11 @@ export function filterByClosedPeriod(
  * same three kept for the copy. Only if they differ is the table read again.
  * It used to be read again whole every ten minutes, every score sent over the
  * wire and every board and standing redrawn, for a table that hadn't changed.
+ *
+ * With more than one server, each save reaches the other servers' copies
+ * through the change feed (feed.ts), and there is no look at the table: the
+ * others' saves not yet read from the feed would look like a change every
+ * time. A script that rewrites the table says so through the feed instead.
  */
 const HISTORY_TTL_MS = 10 * 60_000
 
@@ -589,9 +597,26 @@ function rememberScore(game: string, entry: LeaderboardEntry) {
   gameVersions.set(game, (gameVersions.get(game) ?? 0) + 1)
 }
 
+/** Another server's save: into the copy in its place, unless the copy was read with it already there. */
+onChange<{ game: string; entry: LeaderboardEntry }>('score', ({ game, entry }) => {
+  const run: LeaderboardEntry = {
+    id: String(entry.id),
+    name: String(entry.name),
+    score: Number(entry.score),
+    at: Number(entry.at),
+    device: isDeviceType(entry.device) ? entry.device : 'desktop',
+  }
+  const list = historyCache?.byGame.get(game)
+  if (list && indexOfRun(list, run) !== -1) return
+  rememberScore(game, run)
+  noteSave(run.name)
+})
+
+onRewrite('scores', () => invalidateHistoryCache())
+
 async function loadCopy(): Promise<HistoryCopy> {
   if (historyCache) {
-    if (Date.now() - historyCache.at >= HISTORY_TTL_MS) checkHistorySoon(historyCache)
+    if (!MULTI_INSTANCE && Date.now() - historyCache.at >= HISTORY_TTL_MS) checkHistorySoon(historyCache)
     return historyCache
   }
   if (historyLoading) return historyLoading
@@ -1396,18 +1421,23 @@ export async function addScore(
   scoreWritesInFlight++
   scoreWritesBegun++
   try {
-    await db().insert(leaderboardScores).values({
-      id: entry.id,
-      game,
-      name: entry.name,
-      score: entry.score,
-      at: entry.at,
-      device: entry.device,
-      runId: audit.runId ?? null,
-      durationMs: audit.durationMs ?? null,
-      ipHash: audit.ipHash ?? null,
-      userAgent: audit.userAgent?.slice(0, 256) ?? null,
-    })
+    // With more than one server, the row and the news of it for the others land together.
+    await insertWithFeed(
+      db().insert(leaderboardScores).values({
+        id: entry.id,
+        game,
+        name: entry.name,
+        score: entry.score,
+        at: entry.at,
+        device: entry.device,
+        runId: audit.runId ?? null,
+        durationMs: audit.durationMs ?? null,
+        ipHash: audit.ipHash ?? null,
+        userAgent: audit.userAgent?.slice(0, 256) ?? null,
+      }),
+      'score',
+      { game, entry },
+    )
     rememberScore(game, entry)
   } finally {
     scoreWritesInFlight--
@@ -1453,5 +1483,6 @@ export async function renamePlayerAcrossLeaderboards(
     .set({ name: to })
     .where(eq(leaderboardScores.name, from))
     .returning({ id: leaderboardScores.id })
+  if (updated.length) await announceRewrite(['scores'])
   return { from, to, updated: updated.length }
 }

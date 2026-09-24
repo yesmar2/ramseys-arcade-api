@@ -1,11 +1,12 @@
 // The same requests to the old code (8797) and the new (8796), answers compared field by field.
-// Usage: node compare.mjs [--count 200] [--seed 7]
-const OLD = 'http://127.0.0.1:8797'
-const NEW = 'http://127.0.0.1:8796'
+// Usage: node compare.mjs [--count 200] [--seed 7] [--old http://127.0.0.1:8797] [--new http://127.0.0.1:8796]
+// Also two servers of the same code on one database (MULTI_INSTANCE=1), which should agree.
 const arg = (name, fallback) => {
   const i = process.argv.indexOf(`--${name}`)
   return i > 0 ? process.argv[i + 1] : fallback
 }
+const OLD = arg('old', 'http://127.0.0.1:8797')
+const NEW = arg('new', 'http://127.0.0.1:8796')
 const COUNT = Number(arg('count', 200))
 let seed = Number(arg('seed', 7))
 const rand = () => ((seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648)

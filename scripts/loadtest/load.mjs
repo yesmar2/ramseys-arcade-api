@@ -1,5 +1,8 @@
 // Load test for the arcade API: a crowd of virtual players browsing boards and saving scores.
 // Usage: node load.mjs --users 200 --seconds 60 --writers 100 [--base http://127.0.0.1:8796] [--mix browse|report]
+// Several servers on one database (MULTI_INSTANCE=1): --bases http://127.0.0.1:8796,http://127.0.0.1:8797
+// sends each request to one of them at random, the way a load balancer without sticky sessions would,
+// and each player says back the feed number of their last change, as the app does.
 // Throwaway database only. Prints per-request latency percentiles, errors and the server's memory.
 import { execSync } from 'node:child_process'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
@@ -8,7 +11,8 @@ const arg = (name, fallback) => {
   const i = process.argv.indexOf(`--${name}`)
   return i > 0 ? process.argv[i + 1] : fallback
 }
-const BASE = arg('base', 'http://127.0.0.1:8796')
+const BASES = arg('bases', arg('base', 'http://127.0.0.1:8796')).split(',').map((b) => b.trim())
+const BASE = BASES[0]
 const USERS = Number(arg('users', 100))
 const SECONDS = Number(arg('seconds', 60))
 const WRITERS = Number(arg('writers', 0))
@@ -29,14 +33,24 @@ const failures = new Map() // label -> count
 let inFlight = 0
 let peakInFlight = 0
 
-async function call(label, path, init = {}) {
+/** A player's last change's feed number, said back for 15 s, as the app does (feedSync.ts). */
+const FEED_HOLD_MS = 15_000
+
+async function call(label, path, init = {}, feed = null) {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS)
   const t0 = performance.now()
   inFlight++
   peakInFlight = Math.max(peakInFlight, inFlight)
   try {
-    const res = await fetch(BASE + path, { ...init, signal: controller.signal })
+    const headers = { ...(init.headers ?? {}) }
+    if (feed?.after && Date.now() - feed.at < FEED_HOLD_MS) headers['x-feed-after'] = String(feed.after)
+    const res = await fetch(pick(BASES) + path, { ...init, headers, signal: controller.signal })
+    const said = Number(res.headers.get('x-feed-id'))
+    if (feed && said > feed.after) {
+      feed.after = said
+      feed.at = Date.now()
+    }
     const body = await res.text()
     const ms = performance.now() - t0
     if (!res.ok) {
@@ -58,8 +72,8 @@ async function call(label, path, init = {}) {
 
 /* ---------- the server's memory, sampled from outside ---------- */
 
-function serverPid() {
-  const port = new URL(BASE).port
+function serverPid(base) {
+  const port = new URL(base).port
   const out = execSync('netstat -ano', { encoding: 'utf8' })
   const line = out.split(/\r?\n/).find((l) => l.includes(`:${port} `) && l.includes('LISTENING'))
   return line ? line.trim().split(/\s+/).pop() : null
@@ -154,6 +168,7 @@ async function browse() {
 
 // A run the way a game and its end card make one: records during it, the save, then the card's reads.
 async function playRun(account) {
+  const feed = (account.feed ??= { after: 0, at: 0 })
   // Four runs in ten on the events' games: an event is where a crowd gathers.
   const hot = eventGames()
   const game = hot.length && Math.random() < 0.4 ? pick(hot) : pick(Object.keys(TOPS))
@@ -163,38 +178,41 @@ async function playRun(account) {
   for (let i = 0; i < 2 && books.length; i++) {
     const book = pick(books)
     const value = book.lower ? 5000 + Math.floor(Math.random() * 120000) : 2 + Math.floor(Math.random() ** 2 * 60)
-    await call('POST record', `/records/${game}/${book.id}`, {
-      method: 'POST',
-      headers: auth,
-      body: JSON.stringify({ name: account.name, score: value, device: 'desktop' }),
-    })
+    await call(
+      'POST record',
+      `/records/${game}/${book.id}`,
+      { method: 'POST', headers: auth, body: JSON.stringify({ name: account.name, score: value, device: 'desktop' }) },
+      feed,
+    )
     posted.push(book.id)
   }
   const score = Math.max(1, Math.floor(Math.random() ** 2 * TOPS[game]))
-  const saved = await call('POST save', `/leaderboards/${game}`, {
-    method: 'POST',
-    headers: auth,
-    body: JSON.stringify({ name: account.name, score, device: 'desktop' }),
-  })
+  const saved = await call(
+    'POST save',
+    `/leaderboards/${game}`,
+    { method: 'POST', headers: auth, body: JSON.stringify({ name: account.name, score, device: 'desktop' }) },
+    feed,
+  )
   if (!saved) return
   // Then into each event the game is in, as the end card does.
   for (const event of EVENTS.filter((e) => e.games.includes(game))) {
-    await call('POST event score', `/tournaments/${event.id}/scores`, {
-      method: 'POST',
-      headers: auth,
-      body: JSON.stringify({ name: account.name, game, score }),
-    })
+    await call(
+      'POST event score',
+      `/tournaments/${event.id}/scores`,
+      { method: 'POST', headers: auth, body: JSON.stringify({ name: account.name, game, score }) },
+      feed,
+    )
   }
   await Promise.all([
-    call('GET board', `/leaderboards/${game}?period=weekly&limit=500&name=${account.name}`),
-    call('GET rank', `/leaderboards/rank?period=weekly&name=${account.name}`),
-    ...posted.map((id) => call('GET record', `/records/${game}/${id}?period=all&name=${account.name}&limit=1`)),
+    call('GET board', `/leaderboards/${game}?period=weekly&limit=500&name=${account.name}`, {}, feed),
+    call('GET rank', `/leaderboards/rank?period=weekly&name=${account.name}`, {}, feed),
+    ...posted.map((id) => call('GET record', `/records/${game}/${id}?period=all&name=${account.name}&limit=1`, {}, feed)),
   ])
 }
 
 /* ---------- the run ---------- */
 
-const pid = serverPid()
+const pids = BASES.map(serverPid)
 const writers = WRITERS ? await accounts(WRITERS) : []
 await learnBooks()
 await learnEvents()
@@ -211,12 +229,14 @@ for (const account of writers) {
 if (failures.size) console.log('joining the events failed:', Object.fromEntries(failures))
 samples.clear()
 failures.clear()
-console.log(`base ${BASE} · server pid ${pid} · ${USERS} browsing · ${writers.length} saving · ${SECONDS}s`)
-const rss = []
+console.log(`${BASES.join(' + ')} · server pid ${pids.join(', ')} · ${USERS} browsing · ${writers.length} saving · ${SECONDS}s`)
+const rss = BASES.map(() => [])
 const end = Date.now() + SECONDS * 1000
 const memTimer = setInterval(() => {
-  const mb = pid ? rssMb(pid) : null
-  if (mb) rss.push(mb)
+  pids.forEach((pid, i) => {
+    const mb = pid ? rssMb(pid) : null
+    if (mb) rss[i].push(mb)
+  })
 }, 2000)
 
 const browsers = Array.from({ length: USERS }, async () => {
@@ -253,4 +273,5 @@ const rows = [...samples.entries()].sort().map(([label, list]) => {
 })
 console.table(rows)
 if (failures.size) console.table([...failures.entries()].map(([what, n]) => ({ failed: what, count: n })))
-console.log(`peak requests in flight ${peakInFlight} · server memory ${rss.length ? `${Math.min(...rss)}–${Math.max(...rss)} MB` : 'n/a'}`)
+const memory = rss.map((list) => (list.length ? `${Math.min(...list)}–${Math.max(...list)} MB` : 'n/a')).join(', ')
+console.log(`peak requests in flight ${peakInFlight} · server memory ${memory}`)

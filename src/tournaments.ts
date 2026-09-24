@@ -2,6 +2,7 @@ import crypto from 'node:crypto'
 import { and, eq, inArray, sql } from 'drizzle-orm'
 import { db } from './db/client.js'
 import { tournamentPlayers, tournamentScores, tournaments as tournamentsTable } from './db/schema.js'
+import { MULTI_INSTANCE, noteFeedId, onChange, onRewrite, pollNow, publish, withLease } from './feed.js'
 import { fileMatchAlerts } from './matchAlerts.js'
 import { planDenied, planLimits, type AccountPlan } from './plans.js'
 import {
@@ -753,6 +754,15 @@ function tournamentToRow(t: Tournament) {
  * Each event is written one write at a time: a change made while its write is
  * under way goes in the next one, which carries every change made meanwhile.
  * Two writes of one event used to race, and the database could keep the older.
+ *
+ * With more than one server, each write also goes into the change feed in the
+ * same transaction (feed.ts), and every other server puts it into its own
+ * copy: the seats and runs that changed, and the event's JSON when it did. The
+ * day's and the week's events take runs from every server at once, since a
+ * run is a row of its own and one player's rows are only ever theirs. Any
+ * other event (a bracket, a capped roster) takes one change at a time across
+ * the servers, behind a lease, each server first reading the feed for the
+ * change made before its turn (withEventLock).
  */
 const OUTSIDE_CHECK_MS = 10_000
 let eventStore: Store | null = null
@@ -774,7 +784,7 @@ const written = new Map<string, Written>()
 const lastHash = new Map<string, string>()
 /** Writes begun per event, so a look for outside changes can tell ours from theirs. */
 const writeSeq = new Map<string, number>()
-const writeSlots = new Map<string, { running: Promise<void> | null; next: Promise<void> | null }>()
+const writeSlots = new Map<string, { running: Promise<number | null> | null; next: Promise<number | null> | null }>()
 const rowHash = sql<string>`md5(${tournamentsTable.data}::text)`
 
 const SEP = '\u0001'
@@ -842,33 +852,39 @@ function chunks<T>(list: T[], size = 500): T[][] {
 async function writeStore(store: Store, touched?: Tournament[]) {
   store.tournaments = store.tournaments.map(normalizeTournament)
   if (touched) {
-    await Promise.all([...new Set(touched.map((t) => t.id))].map(writeEvent))
+    const feedIds = await Promise.all([...new Set(touched.map((t) => t.id))].map(writeEvent))
+    for (const feedId of feedIds) noteFeedId(feedId)
     return
   }
   const ids = new Set(store.tournaments.map((t) => t.id))
   const gone = [...written.keys()].filter((id) => !ids.has(id))
   if (gone.length) {
     // Its roster and runs go with it (on delete cascade).
-    await db().delete(tournamentsTable).where(inArray(tournamentsTable.id, gone))
+    const feedId = await db().transaction(async (tx) => {
+      await tx.delete(tournamentsTable).where(inArray(tournamentsTable.id, gone))
+      return publish('events-gone', { ids: gone }, tx)
+    })
+    noteFeedId(feedId)
     for (const id of gone) {
       written.delete(id)
       lastHash.delete(id)
     }
   }
-  await Promise.all([...ids].map(writeEvent))
+  const feedIds = await Promise.all([...ids].map(writeEvent))
+  for (const feedId of feedIds) noteFeedId(feedId)
 }
 
-/** Write one event as it stands, behind any write of it already under way. */
-function writeEvent(id: string): Promise<void> {
+/** Write one event as it stands, behind any write of it already under way: its feed number, with more than one server. */
+function writeEvent(id: string): Promise<number | null> {
   let slot = writeSlots.get(id)
   if (!slot) {
     slot = { running: null, next: null }
     writeSlots.set(id, slot)
   }
   const s = slot
-  const run = (): Promise<void> => {
+  const run = (): Promise<number | null> => {
     s.next = null
-    const write: Promise<void> = writeEventNow(id).finally(() => {
+    const write: Promise<number | null> = writeEventNow(id).finally(() => {
       if (s.running === write) s.running = null
     })
     s.running = write
@@ -879,9 +895,24 @@ function writeEvent(id: string): Promise<void> {
   return s.next
 }
 
-async function writeEventNow(id: string) {
+/** An event's change as the feed carries it: rows as written, or "read it again" when there are too many. */
+type EventChange = {
+  id: string
+  /** The event's JSON, when it changed, and the database's fingerprint of it. */
+  meta?: string
+  hash?: string
+  seats?: (typeof tournamentPlayers.$inferInsert)[]
+  left?: string[]
+  runs?: (typeof tournamentScores.$inferInsert)[]
+  gone?: string[]
+  reread?: boolean
+}
+/** More rows than this in one write (a move from the old JSON, a big merge), and the others read the event again instead. */
+const FEED_ROWS_MAX = 500
+
+async function writeEventNow(id: string): Promise<number | null> {
   const t = eventStore?.tournaments.find((x) => x.id === id)
-  if (!t) return
+  if (!t) return null
   const was = written.get(id) ?? { meta: '', players: new Map(), scores: new Map(), inPlace: -1 }
   const inPlaceAtStart = inPlaceChanges
 
@@ -918,10 +949,11 @@ async function writeEventNow(id: string) {
     const ids = new Set(t.scores.map((sc) => sc.id))
     goneRuns = [...was.scores.keys()].filter((sid) => !ids.has(sid))
   }
-  if (metaJson === was.meta && !seats.length && !leftSeats.length && !runs.length && !goneRuns.length) return
+  if (metaJson === was.meta && !seats.length && !leftSeats.length && !runs.length && !goneRuns.length) return null
 
   writeSeq.set(id, (writeSeq.get(id) ?? 0) + 1)
   const row = tournamentToRow(t)
+  let feedId: number | null = null
   const hash = await db().transaction(async (tx) => {
     let saved: string | undefined
     // The event first: its roster and runs point at it.
@@ -978,6 +1010,21 @@ async function writeEventNow(id: string) {
     for (const part of chunks(goneRuns)) {
       await tx.delete(tournamentScores).where(inArray(tournamentScores.id, part))
     }
+    // Last, so it lands with everything above or not at all.
+    if (MULTI_INSTANCE) {
+      const change: EventChange =
+        seats.length + runs.length > FEED_ROWS_MAX
+          ? { id, reread: true }
+          : {
+              id,
+              ...(metaJson !== was.meta ? { meta: metaJson, ...(saved ? { hash: saved } : {}) } : {}),
+              ...(seats.length ? { seats: seats.map((seat) => seat.values) } : {}),
+              ...(leftSeats.length ? { left: leftSeats } : {}),
+              ...(runs.length ? { runs: runs.map((run) => run.values) } : {}),
+              ...(goneRuns.length ? { gone: goneRuns } : {}),
+            }
+      feedId = await publish('event', change, tx)
+    }
     return saved
   })
 
@@ -991,6 +1038,153 @@ async function writeEventNow(id: string) {
   now.inPlace = inPlaceAtStart
   written.set(id, now)
   if (hash) lastHash.set(id, hash)
+  return feedId
+}
+
+/*
+ * Another server's change to an event, put into this server's copy and into
+ * what it counts as written, so its own next write doesn't send it again. The
+ * event's JSON is taken in place, so a request here holding the event keeps
+ * holding the one in the store. An event this server hasn't got, or a change
+ * too big for the feed, is read from the tables.
+ */
+function applyEventChange(change: EventChange): void | Promise<void> {
+  const store = eventStore
+  // Not read yet: reading it will find the change in the tables.
+  if (!store) return
+  const id = String(change.id)
+  let t = store.tournaments.find((x) => x.id === id)
+  if (change.reread || (!t && !change.meta)) return rereadEvent(id)
+  let was = written.get(id)
+  if (!t) {
+    t = normalizeTournament({ ...(JSON.parse(change.meta!) as Tournament), players: [], scores: [] })
+    store.tournaments.push(t)
+  }
+  if (!was) {
+    was = { meta: '', players: new Map(), scores: new Map(), inPlace: inPlaceChanges }
+    written.set(id, was)
+  }
+  if (change.meta) {
+    const meta = JSON.parse(change.meta) as Record<string, unknown>
+    const target = t as unknown as Record<string, unknown>
+    for (const key of Object.keys(target)) {
+      if (key !== 'players' && key !== 'scores' && !(key in meta)) delete target[key]
+    }
+    Object.assign(target, meta)
+    was.meta = change.meta
+    if (change.hash) lastHash.set(id, change.hash)
+  }
+  if (change.seats?.length) {
+    const byId = new Map(t.players.map((p) => [p.id, p] as const))
+    for (const row of change.seats) {
+      const seat: TournamentPlayer = { id: String(row.id), name: String(row.name), joinedAt: Number(row.joinedAt) }
+      if (row.accountId) seat.accountId = String(row.accountId)
+      const had = byId.get(seat.id)
+      if (had) {
+        had.name = seat.name
+        had.joinedAt = seat.joinedAt
+        if (seat.accountId) had.accountId = seat.accountId
+        else delete had.accountId
+        inPlaceChanges++
+      } else {
+        t.players.push(seat)
+        byId.set(seat.id, seat)
+      }
+      was.players.set(seat.id, playerRow(seat))
+    }
+  }
+  if (change.left?.length) {
+    const left = new Set(change.left.map(String))
+    t.players = t.players.filter((p) => !left.has(p.id))
+    for (const pid of left) was.players.delete(pid)
+  }
+  if (change.runs?.length) {
+    const byId = new Map(t.scores.map((sc) => [sc.id, sc] as const))
+    for (const row of change.runs) {
+      const run: TournamentScore = {
+        id: String(row.id),
+        playerId: String(row.playerId),
+        game: row.game as GameSlug,
+        score: Number(row.score),
+        at: Number(row.at),
+      }
+      if (row.attempt != null) run.attempt = Number(row.attempt)
+      if (row.matchId != null) run.matchId = String(row.matchId)
+      const had = byId.get(run.id)
+      if (had) {
+        const target = had as unknown as Record<string, unknown>
+        for (const key of ['attempt', 'matchId']) if (!(key in run)) delete target[key]
+        Object.assign(had, run)
+        inPlaceChanges++
+      } else {
+        t.scores.push(run)
+        byId.set(run.id, run)
+      }
+      was.scores.set(run.id!, scoreRow(run))
+    }
+  }
+  if (change.gone?.length) {
+    const gone = new Set(change.gone.map(String))
+    t.scores = t.scores.filter((sc) => !gone.has(sc.id!))
+    for (const sid of gone) was.scores.delete(sid)
+  }
+  // Counted again at the next look, with the change in it.
+  lastStandings.delete(t)
+}
+
+/** One event read again from the tables, once any write of it here is done. */
+async function rereadEvent(id: string) {
+  const slot = writeSlots.get(id)
+  if (slot?.running || slot?.next) await (slot.next ?? slot.running)?.catch(() => {})
+  const store = eventStore
+  if (!store) return
+  const fresh = await readEvents([id])
+  if (eventStore !== store) return
+  const t = fresh.events[0]
+  if (t) {
+    putTournament(store, t)
+    lastHash.set(id, fresh.hashes.get(id)!)
+  } else {
+    store.tournaments = store.tournaments.filter((x) => x.id !== id)
+    written.delete(id)
+    lastHash.delete(id)
+  }
+}
+
+onChange<EventChange>('event', (change) => applyEventChange(change))
+
+onChange<{ ids?: string[] }>('events-gone', ({ ids }) => {
+  const store = eventStore
+  const gone = new Set((ids ?? []).map(String))
+  if (!gone.size) return
+  if (store) store.tournaments = store.tournaments.filter((t) => !gone.has(t.id))
+  for (const id of gone) {
+    written.delete(id)
+    lastHash.delete(id)
+  }
+})
+
+/** Every event read again at the next look: a script rewrote them. */
+let everyEventStale = false
+onRewrite('events', () => {
+  everyEventStale = true
+  outsideCheckedAt = 0
+})
+
+/**
+ * Run a change to an event as the only server changing it, having read the
+ * feed for whatever the last one did. The day's and the week's events don't
+ * wait: they take runs from every server at once. With one server it simply
+ * runs.
+ */
+async function withEventLock<T>(id: string, fn: () => Promise<T>): Promise<T> {
+  if (!MULTI_INSTANCE) return fn()
+  const t = (await ensureStore()).tournaments.find((x) => x.id === id)
+  if (t?.official) return fn()
+  return withLease(`event:${id}`, async () => {
+    await pollNow()
+    return fn()
+  })
 }
 
 /** An event row written the old way, its roster and runs still in its JSON. */
@@ -1154,11 +1348,13 @@ async function adoptOutsideChanges() {
       (writeSeq.get(id) ?? 0) !== (seqAtStart.get(id) ?? 0) || Boolean(slot?.running || slot?.next)
     )
   }
+  const all = everyEventStale
+  everyEventStale = false
   const rows = await db().select({ id: tournamentsTable.id, hash: rowHash }).from(tournamentsTable)
   const inDb = new Set(rows.map((r) => r.id))
-  const changed = rows.filter((r) => lastHash.get(r.id) !== r.hash && !busy(r.id)).map((r) => r.id)
+  const changed = rows.filter((r) => (all || lastHash.get(r.id) !== r.hash) && !busy(r.id)).map((r) => r.id)
   const gone = store.tournaments
-    .filter((t) => lastHash.has(t.id) && !inDb.has(t.id) && !busy(t.id))
+    .filter((t) => (all || lastHash.has(t.id)) && !inDb.has(t.id) && !busy(t.id))
     .map((t) => t.id)
   if (!changed.length && !gone.length) return
   const fresh = changed.length ? await readEvents(changed) : { events: [], hashes: new Map<string, string>() }
@@ -1433,9 +1629,10 @@ const awardedEvents = new Set<string>()
 /** An event's result is news for a day or so; older ones found after a restart stay unsaid. */
 const RESULT_NEWS_MS = 36 * 60 * 60 * 1000
 
-async function awardEndedEventTrophies(store: Store, now: number) {
+async function awardEndedEventTrophies(store: Store, now: number, only?: string) {
   const pending: Promise<unknown>[] = []
   for (const raw of store.tournaments) {
+    if (only && raw.id !== only) continue
     if (awardedEvents.has(raw.id)) continue
     const t = normalizeTournament(raw)
     if (tournamentStatus(t, now) !== 'ended') continue
@@ -1544,20 +1741,38 @@ async function tellEventResults(t: Tournament, winner: string, standings: Standi
  * match alerts reach the players who need them. Runs on the sweep's timer and
  * after a bracket score, instead of waiting for someone to open a page.
  */
+/** A bracket's clock moved as the only server changing it. */
+async function syncBracketClockLocked(id: string, now: number) {
+  await withEventLock(id, async () => {
+    const store = await ensureStore(now)
+    const raw = store.tournaments.find((x) => x.id === id)
+    if (!raw) return
+    const t = normalizeTournament(raw)
+    if (!syncBracketClock(t, now)) return
+    putTournament(store, t)
+    await writeStore(store, [t])
+  })
+}
+
 export async function sweepTournaments(now = Date.now(), only?: string) {
   const store = await ensureStore(now)
   const changed: Tournament[] = []
-  for (const raw of store.tournaments) {
+  for (const raw of [...store.tournaments]) {
     if (only && raw.id !== only) continue
     const t = normalizeTournament(raw)
     if (resolveKind(t) !== 'bracket' || !t.bracket?.lockedAt || bracketHasChampion(t)) continue
+    if (MULTI_INSTANCE) {
+      // Tried on a copy first: only a bracket whose clock moves waits for its turn.
+      if (syncBracketClock(structuredClone(t), now)) await syncBracketClockLocked(t.id, now)
+      continue
+    }
     if (syncBracketClock(t, now)) {
       putTournament(store, t)
       changed.push(t)
     }
   }
   if (changed.length) await writeStore(store, changed)
-  await awardEndedEventTrophies(store, now)
+  await awardEndedEventTrophies(store, now, only)
   const events = store.tournaments.map(normalizeTournament).filter((t) => !only || t.id === only)
   await fileMatchAlerts(events, now)
 }
@@ -1960,11 +2175,13 @@ export async function getTournamentDetail(
     accountId?: string
     /** A seat this device holds, so a trimmed roster still carries it under an old tag. */
     playerId?: string
+    /** Asked from inside a change that holds the event's turn (withEventLock). */
+    locked?: boolean
   },
 ) {
   const raw = await getTournament(id)
   if (!raw) return null
-  const t = normalizeTournament(raw)
+  let t = normalizeTournament(raw)
   if (!canAccessTournament(t, detailAccessOpts(opts))) {
     throw Object.assign(new Error('Valid invite required'), {
       status: 403,
@@ -1972,7 +2189,13 @@ export async function getTournamentDetail(
     })
   }
 
-  if (syncBracketClock(t, now)) {
+  if (MULTI_INSTANCE && !opts?.locked) {
+    // Tried on a copy first: only a bracket whose clock moves waits for its turn.
+    if (resolveKind(t) === 'bracket' && syncBracketClock(structuredClone(t), now)) {
+      await syncBracketClockLocked(id, now)
+      t = normalizeTournament((await getTournament(id)) ?? t)
+    }
+  } else if (syncBracketClock(t, now)) {
     const store = await ensureStore(now)
     putTournament(store, t)
     await writeStore(store, [t])
@@ -2262,6 +2485,16 @@ export async function joinTournament(
   now = Date.now(),
   playerId?: string | null,
   access: TournamentAccessOpts = {},
+) {
+  return withEventLock(id, () => joinTournamentNow(id, name, now, playerId, access))
+}
+
+async function joinTournamentNow(
+  id: string,
+  name: string,
+  now: number,
+  playerId: string | null | undefined,
+  access: TournamentAccessOpts,
 ): Promise<{
   tournament: Awaited<ReturnType<typeof getTournamentDetail>>
   player: TournamentPlayer
@@ -2291,6 +2524,7 @@ export async function joinTournament(
     return {
       tournament: (await getTournamentDetail(id, now, {
         ...detailAccessOpts(access),
+        locked: true,
         playerName: cleaned,
         accountId: access.accountId,
       }))!,
@@ -2318,6 +2552,7 @@ export async function joinTournament(
         return {
           tournament: (await getTournamentDetail(id, now, {
             ...detailAccessOpts(access),
+            locked: true,
             playerName: seat.name,
             accountId: access.accountId,
           }))!,
@@ -2331,6 +2566,7 @@ export async function joinTournament(
         return {
           tournament: (await getTournamentDetail(id, now, {
             ...detailAccessOpts(access),
+            locked: true,
             playerName: cleaned,
             accountId: access.accountId,
           }))!,
@@ -2344,6 +2580,7 @@ export async function joinTournament(
       return {
         tournament: (await getTournamentDetail(id, now, {
           ...detailAccessOpts(access),
+          locked: true,
           playerName: cleaned,
           accountId: access.accountId,
         }))!,
@@ -2382,6 +2619,7 @@ export async function joinTournament(
   return {
     tournament: (await getTournamentDetail(id, now, {
       ...detailAccessOpts(access),
+      locked: true,
       playerName: cleaned,
       accountId: access.accountId,
     }))!,
@@ -2396,6 +2634,17 @@ export async function submitTournamentScore(
   score: number,
   now = Date.now(),
   access: TournamentAccessOpts = {},
+) {
+  return withEventLock(id, () => submitTournamentScoreNow(id, name, game, score, now, access))
+}
+
+async function submitTournamentScoreNow(
+  id: string,
+  name: string,
+  game: string,
+  score: number,
+  now: number,
+  access: TournamentAccessOpts,
 ): Promise<{
   tournament: Awaited<ReturnType<typeof getTournamentDetail>>
   accepted: boolean
@@ -2579,6 +2828,7 @@ export async function submitTournamentScore(
   if (resolveKind(t) !== 'bracket') await settledStandings(t, postedAt)
   const tournament = (await getTournamentDetail(id, now, {
     ...detailAccessOpts(access),
+    locked: true,
     playerName: cleaned,
     game,
     accountId: access.accountId,

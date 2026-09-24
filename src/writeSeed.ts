@@ -3,6 +3,7 @@ import { seedRecords } from './seedRecords.js'
 import { ensureShowcaseTrophies } from './trophies.js'
 import { isAllowedGame } from './store.js'
 import { closeDb } from './db/client.js'
+import { announceRewrite } from './feed.js'
 import { runMigrations } from './db/migrate.js'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -62,6 +63,8 @@ try {
     await ensureShowcaseTrophies()
     console.log('Seeded sample boards + records + showcase trophies')
   }
+  // API servers running as more than one read the boards again (feed.ts).
+  await announceRewrite(['scores', 'records', 'site-records'], { force: true })
 } finally {
   await closeDb()
 }

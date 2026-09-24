@@ -1,6 +1,7 @@
 import { eq, sql } from 'drizzle-orm'
 import { db } from './db/client.js'
 import { recordScores } from './db/schema.js'
+import { announceRewrite, insertWithFeed, MULTI_INSTANCE, onChange, onRewrite } from './feed.js'
 import { getClaim } from './names.js'
 import { notify } from './notifications.js'
 import { clock, gameLabel, spanWords } from './words.js'
@@ -402,6 +403,7 @@ export async function replaceAllRecords(next: RecordsStore) {
       )
     }
   })
+  await announceRewrite(['records', 'site-records'])
 }
 
 export async function isRecordsStoreEmpty() {
@@ -446,6 +448,8 @@ function recordOrder(direction: RecordDirection) {
  * and checked against the table every ten minutes, as the score history is:
  * rows, their sum and the newest, compared with the copy's, and the table read
  * again only if they differ, as a script cleaning up bad records would make them.
+ * With more than one server there is no such check: each record reaches the
+ * other servers through the change feed (feed.ts), as a script's rewrite does.
  */
 const HISTORY_TTL_MS = 10 * 60_000
 
@@ -517,7 +521,7 @@ export function invalidateRecordHistoryCache() {
 
 async function loadRecordCopy(): Promise<RecordCopy> {
   if (historyCache) {
-    if (Date.now() - historyCache.at >= HISTORY_TTL_MS) checkRecordsSoon(historyCache)
+    if (!MULTI_INSTANCE && Date.now() - historyCache.at >= HISTORY_TTL_MS) checkRecordsSoon(historyCache)
     return historyCache
   }
   if (historyLoading) return historyLoading
@@ -614,6 +618,23 @@ function rememberRecord(game: GameSlug, recordId: string, def: RecordDef, entry:
   }
   bookVersions.set(key, version + 1)
 }
+
+/** Another server's record: into the copy and its book, unless the copy was read with it already there. */
+onChange<{ game: GameSlug; recordId: string; entry: RecordEntry }>('record', ({ game, recordId, entry }) => {
+  const def = getRecordDef(game, recordId)
+  if (!def) return
+  const run: RecordEntry = {
+    id: String(entry.id),
+    name: String(entry.name),
+    score: Number(entry.score),
+    at: Number(entry.at),
+    device: isDeviceType(entry.device) ? entry.device : 'desktop',
+  }
+  if (historyCache?.byKey.get(`${game}::${recordId}`)?.some((e) => e.id === run.id)) return
+  rememberRecord(game, recordId, def, run)
+})
+
+onRewrite('records', () => invalidateRecordHistoryCache())
 
 async function bookView(game: GameSlug, recordId: string, def: RecordDef): Promise<BookView> {
   const copy = await loadRecordCopy()
@@ -893,15 +914,20 @@ export async function addRecord(
   recordWritesInFlight++
   recordWritesBegun++
   try {
-    await db().insert(recordScores).values({
-      id: entry.id,
-      game,
-      recordId,
-      name: entry.name,
-      score: entry.score,
-      at: entry.at,
-      device: entry.device,
-    })
+    // With more than one server, the row and the news of it for the others land together.
+    await insertWithFeed(
+      db().insert(recordScores).values({
+        id: entry.id,
+        game,
+        recordId,
+        name: entry.name,
+        score: entry.score,
+        at: entry.at,
+        device: entry.device,
+      }),
+      'record',
+      { game, recordId, entry },
+    )
     rememberRecord(game, recordId, def, entry)
   } finally {
     recordWritesInFlight--
@@ -1038,6 +1064,7 @@ export async function renamePlayerAcrossRecords(
     .set({ name: to })
     .where(eq(recordScores.name, from))
     .returning({ id: recordScores.id })
+  if (updated.length) await announceRewrite(['records'])
   return { from, to, updated: updated.length }
 }
 

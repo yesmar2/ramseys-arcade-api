@@ -112,17 +112,23 @@ async function awardClosedPeriod(
     const id = awardId(period, periodKey, row.name)
     if (existing.has(id)) continue
     const accountId = await lookupAccountId(row.name)
-    await db().insert(trophyAwards).values({
-      id,
-      period,
-      periodKey,
-      name: row.name,
-      rank: row.rank,
-      score: row.score,
-      games: row.games,
-      accountId: accountId ?? null,
-      awardedAt: now,
-    })
+    // Another server giving the same period's trophies at the same moment gives each once; only the one that did says so.
+    const given = await db()
+      .insert(trophyAwards)
+      .values({
+        id,
+        period,
+        periodKey,
+        name: row.name,
+        rank: row.rank,
+        score: row.score,
+        games: row.games,
+        accountId: accountId ?? null,
+        awardedAt: now,
+      })
+      .onConflictDoNothing()
+      .returning({ id: trophyAwards.id })
+    if (!given.length) continue
     changed = true
     if (announce && accountId) {
       await notifyPlace(accountId, { id, period, periodKey, name: row.name, rank: row.rank, score: row.score }).catch(

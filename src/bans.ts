@@ -4,6 +4,7 @@ import { leaderboardScores, nameBans, nameClaims, recordScores } from './db/sche
 import { invalidateRecordHistoryCache } from './records.js'
 import { invalidateSiteRecords } from './siteRecords.js'
 import { invalidateHistoryCache } from './store.js'
+import { announceRewrite } from './feed.js'
 
 export type BanRow = {
   name: string
@@ -116,6 +117,7 @@ export async function purgeName(name: string): Promise<{
   invalidateHistoryCache()
   invalidateRecordHistoryCache()
   invalidateSiteRecords()
+  await announceRewrite(['scores', 'records', 'site-records'])
   return { leaderboard: boards.length, records: books.length }
 }
 
@@ -133,6 +135,7 @@ export async function voidScores(ids: string[]): Promise<number> {
    */
   invalidateHistoryCache()
   invalidateSiteRecords()
+  await announceRewrite(['scores', 'site-records'])
   return removed.length
 }
 

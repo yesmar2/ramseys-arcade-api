@@ -28,6 +28,7 @@ import { checkDbHealth, queryStats } from './db/client.js'
 import { runMigrations } from './db/migrate.js'
 import { migrateStrideToCrosswalk } from './migrateStrideToCrosswalk.js'
 import { lastSweptAt, startSweeping } from './sweep.js'
+import { MULTI_INSTANCE, startFeed, waitFor, withLease } from './feed.js'
 
 /** Load .env into process.env when present (does not override existing vars). */
 function loadDotEnv() {
@@ -70,7 +71,10 @@ const CORS_ORIGIN = process.env.CORS_ORIGIN
 
 async function main() {
   await runMigrations()
-  await migrateStrideToCrosswalk()
+  // Before anything reads a copy into memory, so no other server's change is missed.
+  await startFeed()
+  // One server at a time through the checks at boot: two would do each twice.
+  await withLease('boot', () => migrateStrideToCrosswalk(), { ttlMs: 5 * 60_000, waitMs: 5 * 60_000 })
 
   const app = express()
 
@@ -87,6 +91,10 @@ async function main() {
       origin: CORS_ORIGIN
         ? CORS_ORIGIN.split(',').map((s) => s.trim())
         : true,
+      // The app reads where a write sits in the change feed (feed.ts).
+      exposedHeaders: ['X-Feed-Id'],
+      // A browser asks before every signed-in request it hasn't asked about lately; ten minutes, not five seconds.
+      maxAge: 600,
     }),
   )
   app.use(express.json({ limit: '32kb' }))
@@ -102,6 +110,7 @@ async function main() {
       res.writeHead = ((...args: Parameters<typeof res.writeHead>) => {
         res.setHeader('X-Elapsed-Ms', String(Math.round(performance.now() - started)))
         res.setHeader('X-Db-Queries', String(stats?.queries ?? 0))
+        if (stats?.feedId) res.setHeader('X-Feed-Id', String(stats.feedId))
         return writeHead(...args)
       }) as typeof res.writeHead
       res.on('finish', () => {
@@ -115,6 +124,15 @@ async function main() {
       next()
     })
   })
+
+  // A caller who just changed something through another server: read the feed that far first (feed.ts).
+  if (MULTI_INSTANCE) {
+    app.use((req, _res, next) => {
+      const after = Number(req.get('x-feed-after'))
+      if (!(after > 0)) return next()
+      waitFor(after).then(() => next(), next)
+    })
+  }
 
   app.get('/health', async (_req, res) => {
     const dbHealth = await checkDbHealth()
@@ -151,22 +169,28 @@ async function main() {
   const forceSeed = process.env.SEED_FORCE === '1' || process.env.SEED_FORCE === 'true'
   const sampleSeed =
     process.env.SEED_SAMPLE === '1' || process.env.SEED_SAMPLE === 'true'
-  if (await applySeedRevision(forceSeed)) {
-    console.log('Cleared leaderboards + records (revision bump or SEED_FORCE)')
-  } else if (sampleSeed) {
-    if (await seedLeaderboards(false)) {
-      console.log('Seeded leaderboards with sample arcade scores')
-    }
-    if (await seedRecords(false)) {
-      console.log('Seeded record books with sample times')
-    }
-  }
+  await withLease(
+    'boot',
+    async () => {
+      if (await applySeedRevision(forceSeed)) {
+        console.log('Cleared leaderboards + records (revision bump or SEED_FORCE)')
+      } else if (sampleSeed) {
+        if (await seedLeaderboards(false)) {
+          console.log('Seeded leaderboards with sample arcade scores')
+        }
+        if (await seedRecords(false)) {
+          console.log('Seeded record books with sample times')
+        }
+      }
 
-  try {
-    await applyDataRepairs()
-  } catch (err) {
-    console.error('[repair] failed', err)
-  }
+      try {
+        await applyDataRepairs()
+      } catch (err) {
+        console.error('[repair] failed', err)
+      }
+    },
+    { ttlMs: 5 * 60_000, waitMs: 5 * 60_000 },
+  )
 
   app.use((_req, res) => {
     res.status(404).json({ error: 'Not found' })

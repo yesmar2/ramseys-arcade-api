@@ -6,8 +6,11 @@ import * as schema from './schema.js'
 
 let sqlClient: ReturnType<typeof postgres> | null = null
 
-/** Per-request query counter, so a response can say how many round trips it cost. */
-export const queryStats = new AsyncLocalStorage<{ queries: number }>()
+/**
+ * Per request: how many round trips it cost, and the feed number of the last
+ * change it made, when the API runs as more than one server (feed.ts).
+ */
+export const queryStats = new AsyncLocalStorage<{ queries: number; feedId?: number }>()
 let dbInstance: ReturnType<typeof drizzle<typeof schema>> | null = null
 
 export function requireDatabaseUrl(): string {

@@ -2,6 +2,7 @@ import crypto from 'node:crypto'
 import { eq, inArray } from 'drizzle-orm'
 import { db } from './db/client.js'
 import { nameClaims } from './db/schema.js'
+import { announce, onChange, onRewrite } from './feed.js'
 import { renamePlayerAcrossGroups } from './groups.js'
 import { renamePlayerAcrossLeaderboards } from './store.js'
 import { renamePlayerAcrossRecords } from './records.js'
@@ -58,7 +59,8 @@ export async function getClaim(name: string): Promise<NameClaim | null> {
  * dropped whole at every claim written, so each new player sent the next
  * request to read every tag on the site again. It is still read again every
  * ten minutes, for scripts. Writes read the database directly through
- * getClaim, so ownership checks are never stale.
+ * getClaim, so ownership checks are never stale. With more than one server,
+ * the tags a claim touched are read back on every server (feed.ts).
  */
 type ClaimRow = typeof nameClaims.$inferSelect
 const CLAIMS_TTL_MS = 10 * 60_000
@@ -99,7 +101,7 @@ async function loadClaimsCopy(): Promise<Claims> {
     }
     claimsCache = copy
     // A claim written while the table was being read may or may not be in what came back.
-    if (changedDuringLoad.size) await refreshClaims([...changedDuringLoad])
+    if (changedDuringLoad.size) await reloadClaims([...changedDuringLoad])
     return copy
   })().finally(() => {
     claimsLoading = null
@@ -111,8 +113,18 @@ async function loadClaims(): Promise<Map<string, ClaimRow>> {
   return (await loadClaimsCopy()).byName
 }
 
-/** Claims just written: their rows read back into the cache, or dropped from it if they're gone. */
+/** Claims just written: their rows read back into the cache here and on every other server. */
 export async function refreshClaims(names: string[]) {
+  if (!names.length) return
+  await reloadClaims(names)
+  await announce('claims', { names })
+}
+
+onChange<{ names?: string[] }>('claims', ({ names }) => reloadClaims((names ?? []).map(String)))
+onRewrite('claims', () => invalidateClaimCache())
+
+/** Claims changed: their rows read back into the cache, or dropped from it if they're gone. */
+async function reloadClaims(names: string[]) {
   if (!names.length) return
   if (claimsLoading) for (const name of names) changedDuringLoad.add(name)
   const copy = claimsCache

@@ -1,4 +1,5 @@
 import { allScores, boardDateKey, previousBoardDateKey } from './store.js'
+import { onRewrite } from './feed.js'
 
 /**
  * Records for the whole site rather than one game.
@@ -141,6 +142,8 @@ export function invalidateSiteRecords() {
   cache.clear()
   generation++
 }
+
+onRewrite('site-records', () => invalidateSiteRecords())
 
 export async function siteRecords(
   scope?: { names: Set<string> } | null,

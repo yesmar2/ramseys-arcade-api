@@ -16,6 +16,7 @@
 import { eq } from 'drizzle-orm'
 import { randomAvatarId } from './avatars.js'
 import { closeDb, db } from './db/client.js'
+import { announceRewrite } from './feed.js'
 import { nameClaims } from './db/schema.js'
 import { assertNotProduction, dbTarget } from './env.js'
 
@@ -50,6 +51,8 @@ async function main() {
     else reset++
   }
   console.log(`  ${seeded} seeded tags drawn again, ${reset} other tags back to their monogram`)
+  // API servers running as more than one read the tags again (feed.ts).
+  await announceRewrite(['claims'], { force: true })
 }
 
 main()

@@ -4,6 +4,7 @@ import { groupMembers, groups } from './db/schema.js'
 import { getAccount } from './auth.js'
 import { cleanPlayerName, getClaim, namesOwnedByAccount, withAvatarIds } from './names.js'
 import { planDenied, planLimits, type AccountPlan } from './plans.js'
+import { announceRewrite, onRewrite } from './feed.js'
 
 /** A group's size follows whoever owns it, not whoever is joining. */
 async function ownerPlan(accountId: string): Promise<AccountPlan> {
@@ -50,7 +51,9 @@ function fail(message: string, status: number, code?: string): never {
 /*
  * There are a handful of groups and a few dozen memberships, and every
  * scoped board request needs one of them. Load them all in two queries and
- * keep them for a minute; any write through this module drops the copy.
+ * keep them for a minute; any write through this module drops the copy, once
+ * as it starts and again when it's written, so a read in between can't keep
+ * what it had. With more than one server, the others drop theirs then too.
  */
 const GROUPS_TTL_MS = 60_000
 let groupsCache: { at: number; groups: Group[] } | null = null
@@ -58,6 +61,14 @@ let groupsLoading: Promise<Group[]> | null = null
 
 export function invalidateGroupsCache() {
   groupsCache = null
+}
+
+onRewrite('groups', () => invalidateGroupsCache())
+
+/** A write through this module is done: the copy goes, here and on every other server. */
+async function groupsWritten() {
+  invalidateGroupsCache()
+  await announceRewrite(['groups'])
 }
 
 async function loadGroup(id: string): Promise<Group | null> {
@@ -294,6 +305,7 @@ export async function createGroup(
       )
     }
   })
+  await groupsWritten()
 
   return publicGroup(group, { accountId: creator.accountId, playerName: tag })
 }
@@ -325,6 +337,7 @@ export async function joinGroup(
     name,
     joinedAt: now,
   })
+  await groupsWritten()
   group.members.push({ name, joinedAt: now })
   return publicGroup(group, { playerName: name })
 }
@@ -348,6 +361,7 @@ export async function leaveGroup(id: string, rawName: string, accountId?: string
   if (group.members.length === 0 && isGroupOwner(group, accountId)) {
     await db().delete(groups).where(eq(groups.id, id))
   }
+  await groupsWritten()
   return { ok: true }
 }
 
@@ -361,6 +375,7 @@ export async function kickMember(id: string, accountId: string, rawName: string)
   await db()
     .delete(groupMembers)
     .where(and(eq(groupMembers.groupId, id), eq(groupMembers.name, name)))
+  await groupsWritten()
   group.members = group.members.filter((m) => m.name !== name)
   return publicGroup(group, { accountId })
 }
@@ -373,6 +388,7 @@ export async function renameGroup(id: string, accountId: string, rawName: string
   if (name.length < 2) fail('Name must be at least 2 characters', 400)
   invalidateGroupsCache()
   await db().update(groups).set({ name }).where(eq(groups.id, id))
+  await groupsWritten()
   group.name = name
   return publicGroup(group, { accountId })
 }
@@ -407,6 +423,7 @@ export async function transferGroup(id: string, accountId: string, rawName: stri
     .update(groups)
     .set({ createdByAccountId: claim.accountId })
     .where(eq(groups.id, id))
+  await groupsWritten()
   group.createdBy = { accountId: claim.accountId }
   return publicGroup(group, { accountId })
 }
@@ -418,6 +435,7 @@ export async function rotateInvite(id: string, accountId: string) {
   const inviteCode = generateInviteCode()
   invalidateGroupsCache()
   await db().update(groups).set({ inviteCode }).where(eq(groups.id, id))
+  await groupsWritten()
   group.inviteCode = inviteCode
   return publicGroup(group, { accountId })
 }
@@ -428,6 +446,7 @@ export async function deleteGroup(id: string, accountId: string) {
   if (!isGroupOwner(group, accountId)) fail('Only the owner can delete', 403)
   invalidateGroupsCache()
   await db().delete(groups).where(eq(groups.id, id))
+  await groupsWritten()
   return { ok: true }
 }
 
@@ -441,5 +460,6 @@ export async function renamePlayerAcrossGroups(fromRaw: string, toRaw: string) {
     .set({ name: to })
     .where(eq(groupMembers.name, from))
     .returning({ groupId: groupMembers.groupId })
+  if (updated.length) await groupsWritten()
   return { updated: updated.length }
 }

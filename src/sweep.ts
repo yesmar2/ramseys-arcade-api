@@ -1,3 +1,4 @@
+import { pruneFeed, takeLease } from './feed.js'
 import { pushHeld } from './push.js'
 import { sweepTournaments } from './tournaments.js'
 import { ensurePeriodTrophies } from './trophies.js'
@@ -11,9 +12,14 @@ import { ensurePeriodTrophies } from './trophies.js'
  * happened to open the events, so a quiet night sent nothing. The API runs
  * this every few minutes while it's awake, and a scheduled ping keeps it
  * awake (.github/workflows/keep-awake.yml).
+ *
+ * With more than one server, one of them sweeps: whichever holds the sweep's
+ * lease, kept for a little longer than the gap between sweeps, so another
+ * takes over if that one goes away.
  */
 
 const EVERY_MS = 5 * 60_000
+const LEASE_MS = EVERY_MS + 2 * 60_000
 
 let running: Promise<void> | null = null
 let sweptAt: number | null = null
@@ -21,10 +27,17 @@ let sweptAt: number | null = null
 export async function sweep(): Promise<void> {
   if (running) return running
   running = (async () => {
+    try {
+      if (!(await takeLease('sweep', LEASE_MS))) return
+    } catch (err) {
+      console.warn('[sweep] taking the lease failed:', err)
+      return
+    }
     const steps: [string, () => Promise<unknown>][] = [
       ['events', () => sweepTournaments(Date.now())],
       ['trophies', () => ensurePeriodTrophies(Date.now())],
       ['pushes', () => pushHeld(Date.now())],
+      ['feed', () => pruneFeed(Date.now())],
     ]
     for (const [name, step] of steps) {
       try {

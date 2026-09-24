@@ -49,6 +49,7 @@ import {
   resolveReadyMatches,
 } from './bracket.js'
 import { closeDb, db } from './db/client.js'
+import { announceRewrite } from './feed.js'
 import { runMigrations } from './db/migrate.js'
 import {
   accounts,
@@ -1131,6 +1132,9 @@ async function main() {
     const file = await backUp()
     console.log(`  written to ${file}`)
   }
+  // API servers running as more than one read everything again once this is done (feed.ts).
+  const tellServers = () =>
+    announceRewrite(['scores', 'records', 'events', 'claims', 'groups', 'site-records'], { force: true })
   const events = await db().transaction(async (tx) => {
     if (fresh) {
       console.log('Wiping game data…')
@@ -1142,6 +1146,7 @@ async function main() {
     return buildWorld(tx)
   })
   if (!events) {
+    await tellServers()
     console.log('Seed data removed.')
     return
   }
@@ -1154,6 +1159,7 @@ async function main() {
   const wk = weekStartKey(NOW)
   const top = (await globalRanksForClosedPeriod('weekly', wk)).slice(0, 3)
   console.log(`This week so far (${wk}, month ${monthKey(NOW)}): ${top.map((r) => `${r.name} ${r.score}`).join(', ') || 'no scores'}`)
+  await tellServers()
   console.log('Done.')
 }
 

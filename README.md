@@ -29,6 +29,20 @@ This repo includes `render.yaml`. From the [Render dashboard](https://dashboard.
 
 Health check: `GET /health` — returns `{ ok, games, db }`. A missing/unreachable DB yields `503`.
 
+### More than one instance
+
+Each instance keeps the boards, record books, events, tags and sessions in memory, so by default the API must run as **one** instance. To run more (Render: Settings → Scaling, a paid instance type):
+
+1. Set `MULTI_INSTANCE=1` on the service and deploy, still at one instance.
+2. Then raise the instance count.
+
+With it on, every change goes into the `change_feed` table and every instance reads it twice a second (`src/feed.ts`); a response to a change carries `X-Feed-Id`, and the app sends it back as `X-Feed-After` for 15 seconds, so whichever instance answers next has read that far first. The sweep runs on one instance at a time (a lease in the `leases` table), and so do the checks at boot. Things to know:
+
+- The feed polls the database twice a second per instance, so Neon never idles down while the API runs.
+- Rate limits are counted per instance, so a caller spread across two instances gets twice the allowance.
+- A script that rewrites tables (`npm run seed:world`, `npm run seed`, `avatars:refresh`) tells running instances through the feed; anything else that writes to the tables directly needs a restart of the API. With one instance the ten-minute look at the tables still catches it.
+- Going back to one instance: lower the count first, then remove the variable.
+
 ### Launch checklist
 
 - [ ] Neon project created; pooled `DATABASE_URL` set on Render
@@ -52,6 +66,7 @@ Health check: `GET /health` — returns `{ ok, games, db }`. A missing/unreachab
 | `IP_HASH_SALT` | Salt for the address hash kept beside each score. Set it in production |
 | `ADMIN_EMAILS` | Comma-separated emails allowed to use `/admin/*`. Unset means nobody |
 | `ALLOW_MAGIC_LINK` | Set to `1` to re-enable email sign-in in production. Only do this once something actually sends the mail — see below |
+| `MULTI_INSTANCE` | Set to `1` before running more than one instance. See below |
 
 ## Anti-cheat
 

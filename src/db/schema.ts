@@ -520,3 +520,29 @@ export const challengeResults = pgTable(
   },
   (t) => [primaryKey({ columns: [t.challengeId, t.name] })],
 )
+
+/*
+ * What one API server changed, for the others: each keeps its own copy of
+ * the boards, the record books and the events in memory, and reads this
+ * every half second to bring its copy up to date (feed.ts). Only written
+ * when MULTI_INSTANCE=1; a row is kept ten minutes.
+ */
+export const changeFeed = pgTable(
+  'change_feed',
+  {
+    id: bigserial('id', { mode: 'number' }).primaryKey(),
+    at: bigint('at', { mode: 'number' }).notNull(),
+    /** The server that made the change: it has it already. */
+    instance: text('instance').notNull(),
+    kind: text('kind').notNull(),
+    payload: jsonb('payload').notNull(),
+  },
+  (t) => [index('change_feed_at_idx').on(t.at)],
+)
+
+/** Who holds a job only one server may do at a time (the sweep, an event's changes), and until when. */
+export const leases = pgTable('leases', {
+  name: text('name').primaryKey(),
+  holder: text('holder').notNull(),
+  until: bigint('until', { mode: 'number' }).notNull(),
+})

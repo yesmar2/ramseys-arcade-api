@@ -17,6 +17,7 @@ A crowd on a throwaway database, to see where the API gives out before real play
 8. **A period's runs, by timestamps, against the day keys**: `npx tsx scripts/loadtest/period-check.ts` compares the boards' period filter with `inPeriod` on real runs and on runs a millisecond either side of every quarter hour through both daylight-saving changes, month ends and a year end.
 9. **The ten-minute look at the tables**: `LOG_SQL=1 npx tsx scripts/loadtest/history-check.ts` moves the clock on and shows the score and record copies kept after one small query when nothing changed, and the tables read again when a row was added outside the API.
 10. **Which queries a request makes**: `LOG_SQL=1` prints every query the API sends; `LOG_REQUESTS=1` prints each request with its time and query count.
+11. **More than one server** (`MULTI_INSTANCE=1`, see `src/feed.ts`): start two with the same exports plus `MULTI_INSTANCE=1`, on 8796 and 8797. `node scripts/loadtest/multi-check.mjs` makes changes on one and reads them on the other: a save, a record, a log-out, an avatar, a group, a run in the day's event, a capped event and a bracket joined from both at once. `load.mjs --bases http://127.0.0.1:8796,http://127.0.0.1:8797` sends each request to either at random, each player saying back their last change's feed number as the app does; `compare.mjs --old <one> --new <other>` should then find every answer the same, and so should a third server started afterwards, reading fresh.
 
 Stop with `pg_ctl -D <scratch>/pgdata stop -m fast` and delete the folder.
 
@@ -46,3 +47,9 @@ An "error" in `load.mjs` is a connection dropped, not a status: the server stall
 **The save (same day):**
 - A save redrew its game's four period boards, and each redraw looked every player up by name in a new map and worked out every run's day: 30 to 100 ms a save at 18,000 runs a game, most of the CPU a crowd of savers used. Now each run carries its player's number, a board is drawn with a stamp and typed arrays, and a period is two timestamps; the saved run's rank is a binary search, and the streak records read the player's runs from memory instead of the table.
 - 200 + 100 with events in the mix: no failures; reads 13 to 17 ms at the median; saves 54 ms at the median (from 2.6 s), records 96 ms (from 833 ms), event runs 391 ms (half a second of that is the standings settling). Boards, ranks and standings matched the round-1 code across 400 compared requests.
+
+**More than one server (same day, `MULTI_INSTANCE=1`):**
+- Two servers on one database, each request to either at random: 200 browsing + 100 saving, no failures; afterwards the two agreed on all 400 compared answers, a third server started fresh from the tables agreed with them, and every event page matched across all three.
+- A capped event joined by six players from both servers at once seated exactly three; a bracket filled from both was drawn once, and was the draw in the database.
+- The feed costs a server almost nothing: one server taking all of 1,000 browsing + 100 saving while a second followed the feed ran as one server with the flag off (about 2,080 requests a second, 6 to 7 ms at the median, 95% under 90 ms).
+- This laptop can't show what a second server adds: with two servers, the database and the load all on it, it ran at 99% CPU and two did worse than one. On separate machines each server serves its share of the reads, and every server still takes in every save.

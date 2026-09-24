@@ -3,6 +3,7 @@ import { eq, lt } from 'drizzle-orm'
 import type { Request } from 'express'
 import { db } from './db/client.js'
 import { accounts, magicLinks, sessions } from './db/schema.js'
+import { announce, onChange } from './feed.js'
 
 export type AccountPlan = 'free' | 'plus'
 
@@ -201,7 +202,8 @@ export async function verifyMagicLink(token: string): Promise<{
  * seen fifty thousand are kept: the cache used to be thrown away whole at
  * five thousand, sending every signed-in player's next request to the
  * database at once. Requests with the same token at the same moment share
- * one look-up.
+ * one look-up. A session is kept under a hash of its token, which is what a
+ * log-out tells the other servers, when there are more than one (feed.ts).
  */
 const SESSION_CACHE_TTL_MS = 5 * 60_000
 const SESSION_CACHE_MAX = 50_000
@@ -211,22 +213,32 @@ const sessionLookups = new Map<string, Promise<SessionAnswer>>()
 /** Moves on every log-out, so a look-up begun before one isn't kept after it. */
 let sessionDrops = 0
 
+function sessionKey(token: string) {
+  return crypto.createHash('sha256').update(token).digest('base64url')
+}
+
 export function invalidateSessionCache(token?: string) {
   sessionDrops++
-  if (token) sessionCache.delete(token)
+  if (token) sessionCache.delete(sessionKey(token))
   else sessionCache.clear()
 }
+
+onChange<{ key?: string }>('session-drop', ({ key }) => {
+  sessionDrops++
+  if (key) sessionCache.delete(String(key))
+})
 
 export async function resolveSession(
   sessionToken: string | null | undefined,
 ): Promise<Account | null> {
   if (!sessionToken) return null
-  const hit = sessionCache.get(sessionToken)
+  const key = sessionKey(sessionToken)
+  const hit = sessionCache.get(key)
   const now = Date.now()
   if (hit && now - hit.at < SESSION_CACHE_TTL_MS && now < hit.expiresAt) {
     // Seen again: to the back of the line, which is the last to go.
-    sessionCache.delete(sessionToken)
-    sessionCache.set(sessionToken, hit)
+    sessionCache.delete(key)
+    sessionCache.set(key, hit)
     return hit.account
   }
   const dropsAtStart = sessionDrops
@@ -237,8 +249,8 @@ export async function resolveSession(
   }
   const answer = await lookup
   if (dropsAtStart === sessionDrops) {
-    sessionCache.delete(sessionToken)
-    sessionCache.set(sessionToken, { ...answer, at: Date.now() })
+    sessionCache.delete(key)
+    sessionCache.set(key, { ...answer, at: Date.now() })
     while (sessionCache.size > SESSION_CACHE_MAX) {
       sessionCache.delete(sessionCache.keys().next().value as string)
     }
@@ -267,6 +279,7 @@ export async function logoutSession(sessionToken: string | null | undefined) {
   if (!sessionToken) return
   invalidateSessionCache(sessionToken)
   await db().delete(sessions).where(eq(sessions.token, sessionToken))
+  await announce('session-drop', { key: sessionKey(sessionToken) })
 }
 
 export function bearerFromRequest(req: Request): string | null {

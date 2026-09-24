@@ -71,6 +71,13 @@
       "when": 1790260638605,
       "tag": "0009_notification_meta",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1790279068300,
+      "tag": "0010_event_rows",
+      "breakpoints": true
     }
   ]
 }

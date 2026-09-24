@@ -1,6 +1,7 @@
-import { eq, inArray, sql } from 'drizzle-orm'
+import crypto from 'node:crypto'
+import { and, eq, inArray, sql } from 'drizzle-orm'
 import { db } from './db/client.js'
-import { tournaments as tournamentsTable } from './db/schema.js'
+import { tournamentPlayers, tournamentScores, tournaments as tournamentsTable } from './db/schema.js'
 import { fileMatchAlerts } from './matchAlerts.js'
 import { planDenied, planLimits, type AccountPlan } from './plans.js'
 import {
@@ -123,6 +124,8 @@ export function seatCarriesTo(
 }
 
 export type TournamentScore = {
+  /** Its row in tournament_scores: given when first written. */
+  id?: string
   playerId: string
   game: GameSlug
   score: number
@@ -362,7 +365,7 @@ function normalizeTournamentUncached(t: Tournament): Tournament {
   const games = t.games
     .map((g) => resolveGameSlug(g) ?? (canonicalizeGameSlug(g) as GameSlug))
     .filter((g): g is GameSlug => isAllowedGame(g))
-  const scores = t.scores.map((s) => {
+  const scores = (t.scores ?? []).map((s) => {
     const game = resolveGameSlug(s.game)
     return game && game !== s.game ? { ...s, game } : s
   })
@@ -383,6 +386,7 @@ function normalizeTournamentUncached(t: Tournament): Tournament {
   }
   return {
     ...t,
+    players: t.players ?? [],
     games: games.length > 0 ? games : t.games,
     scores,
     format,
@@ -714,10 +718,15 @@ function emptyStore(now = Date.now()): Store {
   return { tournaments: [buildDailyEvent(now), buildWeeklyEvent(now)] }
 }
 
+/** An event's JSON: everything but its roster and runs, which have tables of their own. */
+function metaOf(t: Tournament): Omit<Tournament, 'players' | 'scores'> {
+  const { players: _players, scores: _scores, ...meta } = t
+  return meta
+}
+
 function tournamentToRow(t: Tournament) {
   return {
     id: t.id,
-    data: t as unknown as Record<string, unknown>,
     official: Boolean(t.official),
     cadence: t.cadence ?? null,
     startsAt: t.startsAt,
@@ -728,14 +737,18 @@ function tournamentToRow(t: Tournament) {
 }
 
 /*
- * The store is every event as one JSON row each, read once and kept: this
- * process writes every change, so the copy in memory is the truth. It used to
- * be read again, whole, every ten seconds, which cost more with every player
- * in every event, and could land between a run being added and written,
- * dropping the run. Now the database is only asked for each event's
- * fingerprint every ten seconds, and an event is read again only when
- * something else changed it (a script, a reseed) and this process isn't
- * writing it.
+ * The store is every event, read once and kept: this process writes every
+ * change, so the copy in memory is the truth. It used to be read again,
+ * whole, every ten seconds, which cost more with every player in every event,
+ * and could land between a run being added and written, dropping the run.
+ * Now the database is only asked for each event's fingerprint every ten
+ * seconds, and an event is read again only when something else changed it (a
+ * script, a reseed) and this process isn't writing it.
+ *
+ * An event's roster and runs have rows of their own; its JSON holds the rest,
+ * its settings and bracket. A write sends only what differs from what was
+ * last written: a run posted is one row inserted. It used to be the whole
+ * event, roster and runs, two megabytes at five thousand players.
  *
  * Each event is written one write at a time: a change made while its write is
  * under way goes in the next one, which carries every change made meanwhile.
@@ -744,19 +757,51 @@ function tournamentToRow(t: Tournament) {
 const OUTSIDE_CHECK_MS = 10_000
 let eventStore: Store | null = null
 let storeLoading: Promise<Store> | null = null
-/** What each event's row holds, as this process last wrote or read it. */
-const lastWritten = new Map<string, string>()
-/** The database's fingerprint of each event's row (md5 of its JSON), as last written or read. */
+
+/** What the database holds for an event, as this process last wrote or read it. */
+type Written = {
+  /** The event's JSON (metaOf). */
+  meta: string
+  /** Each seat's row, by id. */
+  players: Map<string, string>
+  /** Each run's row, by id. */
+  scores: Map<string, string>
+  /** inPlaceChanges then: a change inside a run since means comparing every run. */
+  inPlace: number
+}
+const written = new Map<string, Written>()
+/** The database's fingerprint of each event's JSON (md5), as last written or read. */
 const lastHash = new Map<string, string>()
 /** Writes begun per event, so a look for outside changes can tell ours from theirs. */
 const writeSeq = new Map<string, number>()
 const writeSlots = new Map<string, { running: Promise<void> | null; next: Promise<void> | null }>()
 const rowHash = sql<string>`md5(${tournamentsTable.data}::text)`
 
+const SEP = '\u0001'
+const playerRow = (p: TournamentPlayer) => [p.name, p.joinedAt, p.accountId ?? ''].join(SEP)
+const scoreRow = (s: TournamentScore) =>
+  [s.playerId, s.game, s.score, s.at, s.attempt ?? '', s.matchId ?? ''].join(SEP)
+
+function newScoreId() {
+  return `ts-${Date.now().toString(36)}-${crypto.randomBytes(6).toString('base64url')}`
+}
+
+/** A run from before runs had rows, named for what it is, so reading it in twice keeps one. */
+function legacyScoreId(tournamentId: string, s: TournamentScore) {
+  const key = [tournamentId, s.playerId, s.game, s.score, s.at, s.attempt ?? '', s.matchId ?? ''].join('|')
+  return `ls-${crypto.createHash('sha1').update(key).digest('base64url').slice(0, 22)}`
+}
+
+function chunks<T>(list: T[], size = 500): T[][] {
+  const out: T[][] = []
+  for (let i = 0; i < list.length; i += size) out.push(list.slice(i, i + size))
+  return out
+}
+
 /**
  * Put changes back in the database. A caller that changed particular events
- * names them, and only those are turned into JSON and compared with what was
- * written; with none named (a load, a rollover, a migration), every event is.
+ * names them, and only those are compared with what was written; with none
+ * named (a load, a rollover, a migration), every event is.
  */
 async function writeStore(store: Store, touched?: Tournament[]) {
   store.tournaments = store.tournaments.map(normalizeTournament)
@@ -765,11 +810,12 @@ async function writeStore(store: Store, touched?: Tournament[]) {
     return
   }
   const ids = new Set(store.tournaments.map((t) => t.id))
-  const gone = [...lastWritten.keys()].filter((id) => !ids.has(id))
+  const gone = [...written.keys()].filter((id) => !ids.has(id))
   if (gone.length) {
+    // Its roster and runs go with it (on delete cascade).
     await db().delete(tournamentsTable).where(inArray(tournamentsTable.id, gone))
     for (const id of gone) {
-      lastWritten.delete(id)
+      written.delete(id)
       lastHash.delete(id)
     }
   }
@@ -800,29 +846,251 @@ function writeEvent(id: string): Promise<void> {
 async function writeEventNow(id: string) {
   const t = eventStore?.tournaments.find((x) => x.id === id)
   if (!t) return
-  const json = JSON.stringify(t)
-  if (lastWritten.get(id) === json) return
-  writeSeq.set(id, (writeSeq.get(id) ?? 0) + 1)
-  const row = tournamentToRow(t)
-  const [saved] = await db()
-    .insert(tournamentsTable)
-    // The JSON made for the comparison, sent as it is rather than made again.
-    .values({ ...row, data: sql`${json}::jsonb` })
-    .onConflictDoUpdate({
-      target: tournamentsTable.id,
-      set: {
-        data: sql`excluded.data`,
-        official: row.official,
-        cadence: row.cadence,
-        startsAt: row.startsAt,
-        endsAt: row.endsAt,
-        visibility: row.visibility,
-        inviteCode: row.inviteCode,
+  const was = written.get(id) ?? { meta: '', players: new Map(), scores: new Map(), inPlace: -1 }
+  const inPlaceAtStart = inPlaceChanges
+
+  // Everything to send is worked out here, before the first await: a change
+  // made while this write is under way goes in the next.
+  const metaJson = JSON.stringify(metaOf(t))
+  // Every seat is compared: a seat changes in place (claimed, renamed).
+  const seats: { row: string; values: typeof tournamentPlayers.$inferInsert }[] = []
+  const seatIds = new Set<string>()
+  for (const p of t.players) {
+    seatIds.add(p.id)
+    const row = playerRow(p)
+    if (was.players.get(p.id) === row) continue
+    seats.push({
+      row,
+      values: { tournamentId: id, id: p.id, name: p.name, joinedAt: p.joinedAt, accountId: p.accountId ?? null },
+    })
+  }
+  const leftSeats = [...was.players.keys()].filter((pid) => !seatIds.has(pid))
+  // New runs by id; every run compared only after a change made inside one (a merge).
+  const everyRun = was.inPlace !== inPlaceAtStart
+  const runs: { id: string; row: string; values: typeof tournamentScores.$inferInsert }[] = []
+  let newRuns = 0
+  for (const sc of t.scores) {
+    sc.id ??= newScoreId()
+    const had = was.scores.get(sc.id)
+    if (had === undefined) newRuns++
+    else if (!everyRun) continue
+    const row = scoreRow(sc)
+    if (had === row) continue
+    runs.push({
+      id: sc.id,
+      row,
+      values: {
+        id: sc.id,
+        tournamentId: id,
+        playerId: sc.playerId,
+        game: sc.game,
+        score: sc.score,
+        at: sc.at,
+        attempt: sc.attempt ?? null,
+        matchId: sc.matchId ?? null,
       },
     })
-    .returning({ hash: rowHash })
-  lastWritten.set(id, json)
-  if (saved) lastHash.set(id, saved.hash)
+  }
+  let goneRuns: string[] = []
+  if (was.scores.size + newRuns !== t.scores.length) {
+    const ids = new Set(t.scores.map((sc) => sc.id))
+    goneRuns = [...was.scores.keys()].filter((sid) => !ids.has(sid))
+  }
+  if (metaJson === was.meta && !seats.length && !leftSeats.length && !runs.length && !goneRuns.length) return
+
+  writeSeq.set(id, (writeSeq.get(id) ?? 0) + 1)
+  const row = tournamentToRow(t)
+  const hash = await db().transaction(async (tx) => {
+    let saved: string | undefined
+    // The event first: its roster and runs point at it.
+    if (metaJson !== was.meta) {
+      const [meta] = await tx
+        .insert(tournamentsTable)
+        // The JSON made for the comparison, sent as it is rather than made again.
+        .values({ ...row, data: sql`${metaJson}::jsonb` })
+        .onConflictDoUpdate({
+          target: tournamentsTable.id,
+          set: {
+            data: sql`excluded.data`,
+            official: row.official,
+            cadence: row.cadence,
+            startsAt: row.startsAt,
+            endsAt: row.endsAt,
+            visibility: row.visibility,
+            inviteCode: row.inviteCode,
+          },
+        })
+        .returning({ hash: rowHash })
+      saved = meta?.hash
+    }
+    for (const part of chunks(seats)) {
+      await tx
+        .insert(tournamentPlayers)
+        .values(part.map((seat) => seat.values))
+        .onConflictDoUpdate({
+          target: [tournamentPlayers.tournamentId, tournamentPlayers.id],
+          set: { name: sql`excluded.name`, joinedAt: sql`excluded.joined_at`, accountId: sql`excluded.account_id` },
+        })
+    }
+    for (const part of chunks(leftSeats)) {
+      await tx
+        .delete(tournamentPlayers)
+        .where(and(eq(tournamentPlayers.tournamentId, id), inArray(tournamentPlayers.id, part)))
+    }
+    for (const part of chunks(runs)) {
+      await tx
+        .insert(tournamentScores)
+        .values(part.map((run) => run.values))
+        .onConflictDoUpdate({
+          target: tournamentScores.id,
+          set: {
+            playerId: sql`excluded.player_id`,
+            game: sql`excluded.game`,
+            score: sql`excluded.score`,
+            at: sql`excluded.at`,
+            attempt: sql`excluded.attempt`,
+            matchId: sql`excluded.match_id`,
+          },
+        })
+    }
+    for (const part of chunks(goneRuns)) {
+      await tx.delete(tournamentScores).where(inArray(tournamentScores.id, part))
+    }
+    return saved
+  })
+
+  // What the database holds now.
+  const now = written.get(id) ?? was
+  now.meta = metaJson
+  for (const seat of seats) now.players.set(seat.values.id, seat.row)
+  for (const pid of leftSeats) now.players.delete(pid)
+  for (const run of runs) now.scores.set(run.id, run.row)
+  for (const sid of goneRuns) now.scores.delete(sid)
+  now.inPlace = inPlaceAtStart
+  written.set(id, now)
+  if (hash) lastHash.set(id, hash)
+}
+
+/** An event row written the old way, its roster and runs still in its JSON. */
+function carriesRows(data: unknown): boolean {
+  const d = data as { players?: unknown; scores?: unknown } | null
+  return Boolean(d && (Array.isArray(d.players) || Array.isArray(d.scores)))
+}
+
+/**
+ * Move an old-style row's roster and runs into their tables, keeping any
+ * already there (a run is named for what it is: reading it in twice keeps
+ * one), then out of its JSON, unless the row changed since it was read; it is
+ * read in again next time then. Every event was written this way before the
+ * tables, and an older process mid-deploy, or a script, may still write one.
+ */
+async function moveRowsOut(row: { id: string; data: unknown; hash: string }) {
+  const data = row.data as { players?: TournamentPlayer[]; scores?: TournamentScore[] }
+  const players = Array.isArray(data.players) ? data.players : []
+  const scores = Array.isArray(data.scores) ? data.scores : []
+  await db().transaction(async (tx) => {
+    for (const part of chunks(players)) {
+      await tx
+        .insert(tournamentPlayers)
+        .values(
+          part.map((p) => ({
+            tournamentId: row.id,
+            id: p.id,
+            name: p.name,
+            joinedAt: Number(p.joinedAt) || 0,
+            accountId: p.accountId ?? null,
+          })),
+        )
+        .onConflictDoNothing()
+    }
+    for (const part of chunks(scores)) {
+      await tx
+        .insert(tournamentScores)
+        .values(
+          part.map((sc) => ({
+            id: sc.id ?? legacyScoreId(row.id, sc),
+            tournamentId: row.id,
+            playerId: sc.playerId,
+            game: sc.game,
+            score: sc.score,
+            at: sc.at,
+            attempt: sc.attempt ?? null,
+            matchId: sc.matchId ?? null,
+          })),
+        )
+        .onConflictDoNothing()
+    }
+    await tx
+      .update(tournamentsTable)
+      .set({ data: sql`${tournamentsTable.data} - 'players' - 'scores'` })
+      .where(and(eq(tournamentsTable.id, row.id), sql`md5(${tournamentsTable.data}::text) = ${row.hash}`))
+  })
+}
+
+/**
+ * Events as the database holds them, each with its roster and runs, in the
+ * order they came: all of them, or those named. An old-style row has its
+ * roster and runs moved into their tables first.
+ */
+async function readEvents(ids?: string[]): Promise<{ events: Tournament[]; hashes: Map<string, string> }> {
+  const select = () =>
+    db().select({ id: tournamentsTable.id, data: tournamentsTable.data, hash: rowHash }).from(tournamentsTable)
+  let rows = ids ? await select().where(inArray(tournamentsTable.id, ids)) : await select()
+  const old = rows.filter((r) => carriesRows(r.data))
+  if (old.length) {
+    for (const r of old) await moveRowsOut(r)
+    const again = await select().where(inArray(tournamentsTable.id, old.map((r) => r.id)))
+    rows = [...rows.filter((r) => !carriesRows(r.data)), ...again]
+    console.log(`[events] moved the roster and runs of ${old.length} events into their tables`)
+  }
+  const players = ids
+    ? await db()
+        .select()
+        .from(tournamentPlayers)
+        .where(inArray(tournamentPlayers.tournamentId, ids))
+        .orderBy(tournamentPlayers.seq)
+    : await db().select().from(tournamentPlayers).orderBy(tournamentPlayers.seq)
+  const scores = ids
+    ? await db()
+        .select()
+        .from(tournamentScores)
+        .where(inArray(tournamentScores.tournamentId, ids))
+        .orderBy(tournamentScores.seq)
+    : await db().select().from(tournamentScores).orderBy(tournamentScores.seq)
+  const seatsOf = new Map<string, TournamentPlayer[]>()
+  for (const p of players) {
+    const seat: TournamentPlayer = { id: p.id, name: p.name, joinedAt: p.joinedAt }
+    if (p.accountId) seat.accountId = p.accountId
+    const list = seatsOf.get(p.tournamentId)
+    if (list) list.push(seat)
+    else seatsOf.set(p.tournamentId, [seat])
+  }
+  const runsOf = new Map<string, TournamentScore[]>()
+  for (const r of scores) {
+    const run: TournamentScore = { id: r.id, playerId: r.playerId, game: r.game as GameSlug, score: r.score, at: r.at }
+    if (r.attempt != null) run.attempt = r.attempt
+    if (r.matchId != null) run.matchId = r.matchId
+    const list = runsOf.get(r.tournamentId)
+    if (list) list.push(run)
+    else runsOf.set(r.tournamentId, [run])
+  }
+  const hashes = new Map<string, string>()
+  const events: Tournament[] = []
+  for (const r of rows) {
+    // Some old-style rows can still be carrying theirs, if they changed as they were moved.
+    if (carriesRows(r.data)) continue
+    const raw = r.data as Tournament
+    const t = normalizeTournament({ ...raw, players: seatsOf.get(r.id) ?? [], scores: runsOf.get(r.id) ?? [] })
+    events.push(t)
+    hashes.set(r.id, r.hash)
+    written.set(t.id, {
+      meta: JSON.stringify(metaOf(t)),
+      players: new Map(t.players.map((p) => [p.id, playerRow(p)])),
+      scores: new Map(t.scores.map((sc) => [sc.id!, scoreRow(sc)])),
+      inPlace: inPlaceChanges,
+    })
+  }
+  return { events, hashes }
 }
 
 async function ensureStore(now = Date.now()): Promise<Store> {
@@ -872,26 +1140,19 @@ async function adoptOutsideChanges() {
     .filter((t) => lastHash.has(t.id) && !inDb.has(t.id) && !busy(t.id))
     .map((t) => t.id)
   if (!changed.length && !gone.length) return
-  const fresh = changed.length
-    ? await db()
-        .select({ id: tournamentsTable.id, data: tournamentsTable.data, hash: rowHash })
-        .from(tournamentsTable)
-        .where(inArray(tournamentsTable.id, changed))
-    : []
+  const fresh = changed.length ? await readEvents(changed) : { events: [], hashes: new Map<string, string>() }
   let took = 0
-  for (const row of fresh) {
-    if (busy(row.id)) continue
-    const t = normalizeTournament(row.data as Tournament)
+  for (const t of fresh.events) {
+    if (busy(t.id)) continue
     putTournament(store, t)
-    lastWritten.set(t.id, JSON.stringify(t))
-    lastHash.set(t.id, row.hash)
+    lastHash.set(t.id, fresh.hashes.get(t.id)!)
     took++
   }
   const removed = gone.filter((id) => !busy(id))
   if (removed.length) {
     store.tournaments = store.tournaments.filter((t) => !removed.includes(t.id))
     for (const id of removed) {
-      lastWritten.delete(id)
+      written.delete(id)
       lastHash.delete(id)
     }
   }
@@ -901,24 +1162,19 @@ async function adoptOutsideChanges() {
 }
 
 async function loadStoreFromDb(now: number): Promise<Store> {
-  const rows = await db()
-    .select({ id: tournamentsTable.id, data: tournamentsTable.data, hash: rowHash })
-    .from(tournamentsTable)
-  lastWritten.clear()
+  written.clear()
   lastHash.clear()
+  const { events, hashes } = await readEvents()
   let store: Store
-  if (rows.length === 0) {
+  if (events.length === 0) {
     store = emptyStore(now)
     eventStore = store
     await writeStore(store)
     return store
   }
-  store = {
-    tournaments: rows.map((r) => normalizeTournament(r.data as Tournament)),
-  }
+  store = { tournaments: events }
   eventStore = store
-  for (const t of store.tournaments) lastWritten.set(t.id, JSON.stringify(t))
-  for (const r of rows) lastHash.set(r.id, r.hash)
+  for (const [id, hash] of hashes) lastHash.set(id, hash)
   outsideCheckedAt = Date.now()
   let migrated = false
   for (const t of store.tournaments) {

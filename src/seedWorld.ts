@@ -35,7 +35,7 @@
  * weekly events are the arcade's own, so their seeded seats carry `seed-` ids.
  */
 
-import { eq, inArray, like, or, sql } from 'drizzle-orm'
+import { and, eq, inArray, like, or, sql } from 'drizzle-orm'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -72,6 +72,8 @@ import {
   runClaims,
   scoreFlags,
   sessions,
+  tournamentPlayers,
+  tournamentScores,
   tournaments as tournamentsTable,
   trophyAwards,
   trophyCursor,
@@ -881,17 +883,32 @@ async function clearSeed(d: Db) {
   await d.delete(directedInvites).where(like(directedInvites.id, 'seed-%'))
   await d.delete(nameClaims).where(like(nameClaims.accountId, 'seed-acct-%'))
   await d.delete(accounts).where(like(accounts.email, '%@seed.skermix.dev'))
-  // The arcade's own events keep their real seats and lose the seeded ones.
-  for (const row of await d.select().from(tournamentsTable).where(eq(tournamentsTable.official, true))) {
-    const t = row.data as Tournament
-    const seeded = new Set(t.players.filter((s) => s.id.startsWith('seed-')).map((s) => s.id))
-    if (!seeded.size) continue
+  // The arcade's own events keep their real seats and lose the seeded ones:
+  // from their tables, and from an event still written the old way, with its
+  // roster and runs in its JSON.
+  const officialRows = await d.select().from(tournamentsTable).where(eq(tournamentsTable.official, true))
+  const officialIds = officialRows.map((row) => row.id)
+  if (officialIds.length) {
+    await d
+      .delete(tournamentScores)
+      .where(and(inArray(tournamentScores.tournamentId, officialIds), like(tournamentScores.playerId, 'seed-%')))
+    await d
+      .delete(tournamentPlayers)
+      .where(and(inArray(tournamentPlayers.tournamentId, officialIds), like(tournamentPlayers.id, 'seed-%')))
+  }
+  for (const row of officialRows) {
+    const t = row.data as Partial<Tournament>
+    const players = Array.isArray(t.players) ? t.players : null
+    const scores = Array.isArray(t.scores) ? t.scores : null
+    const seeded = new Set((players ?? []).filter((s) => s.id.startsWith('seed-')).map((s) => s.id))
     const next = {
       ...t,
-      players: t.players.filter((s) => !seeded.has(s.id)),
-      scores: t.scores.filter((s) => !seeded.has(s.playerId)),
+      ...(players ? { players: players.filter((s) => !seeded.has(s.id)) } : {}),
+      ...(scores ? { scores: scores.filter((s) => !seeded.has(s.playerId) && !s.playerId.startsWith('seed-')) } : {}),
+      // A running API reads a changed event again, rows and all: this is the change it sees.
+      rowsChangedAt: Date.now(),
     }
-    await d.update(tournamentsTable).set({ data: next as never }).where(eq(tournamentsTable.id, t.id))
+    await d.update(tournamentsTable).set({ data: next as never }).where(eq(tournamentsTable.id, row.id))
   }
 }
 
@@ -905,6 +922,8 @@ const EVERY_TABLE = {
   run_claims: runClaims,
   record_scores: recordScores,
   tournaments: tournamentsTable,
+  tournament_players: tournamentPlayers,
+  tournament_scores: tournamentScores,
   groups,
   group_members: groupMembers,
   directed_invites: directedInvites,
@@ -1188,15 +1207,50 @@ async function buildWorld(d: Db): Promise<Tournament[]> {
   }
   for (const t of official) fillOfficial(t, players, meant.get(t.id))
   // The arcade's own events may already hold real players; they keep their seats.
-  const standing = await d
-    .select()
-    .from(tournamentsTable)
-    .where(inArray(tournamentsTable.id, official.map((t) => t.id)))
+  const officialIds = official.map((t) => t.id)
+  const standing = officialIds.length
+    ? await d.select().from(tournamentsTable).where(inArray(tournamentsTable.id, officialIds))
+    : []
+  const realSeats = officialIds.length
+    ? await d
+        .select()
+        .from(tournamentPlayers)
+        .where(inArray(tournamentPlayers.tournamentId, officialIds))
+        .orderBy(tournamentPlayers.seq)
+    : []
+  const realRuns = officialIds.length
+    ? await d
+        .select()
+        .from(tournamentScores)
+        .where(inArray(tournamentScores.tournamentId, officialIds))
+        .orderBy(tournamentScores.seq)
+    : []
   for (const row of standing) {
-    const real = row.data as Tournament
+    // An event's real players are in its tables, or in its JSON if it was written the old way.
+    const old = row.data as Partial<Tournament>
     const t = official.find((e) => e.id === row.id)!
-    t.players = [...real.players, ...t.players]
-    t.scores = [...real.scores, ...t.scores]
+    const seats = [
+      ...(Array.isArray(old.players) ? old.players : []),
+      ...realSeats
+        .filter((p) => p.tournamentId === row.id)
+        .map((p) => ({ id: p.id, name: p.name, joinedAt: p.joinedAt, ...(p.accountId ? { accountId: p.accountId } : {}) })),
+    ]
+    const runs = [
+      ...(Array.isArray(old.scores) ? old.scores : []),
+      ...realRuns
+        .filter((r) => r.tournamentId === row.id)
+        .map((r) => ({
+          id: r.id,
+          playerId: r.playerId,
+          game: r.game as GameSlug,
+          score: r.score,
+          at: r.at,
+          ...(r.attempt != null ? { attempt: r.attempt } : {}),
+          ...(r.matchId != null ? { matchId: r.matchId } : {}),
+        })),
+    ]
+    t.players = [...seats, ...t.players]
+    t.scores = [...runs, ...t.scores]
   }
 
   console.log('Creating accounts and tags…')

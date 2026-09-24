@@ -1,5 +1,6 @@
 import {
   bigint,
+  bigserial,
   boolean,
   index,
   integer,
@@ -157,7 +158,11 @@ export const recordScores = pgTable(
 )
 
 /**
- * Tournament aggregate as jsonb (players/scores/bracket nested).
+ * An event's settings and bracket as jsonb; its roster and runs have tables
+ * of their own (tournament_players, tournament_scores). They used to be
+ * nested in here, so every run posted rewrote the whole event, two megabytes
+ * at five thousand players. A row written the old way still reads: its roster
+ * and runs are moved into the tables when the API finds it.
  * Indexed metadata supports listing without parsing every document.
  */
 export const tournaments = pgTable(
@@ -177,6 +182,44 @@ export const tournaments = pgTable(
     index('tournaments_starts_idx').on(t.startsAt),
     index('tournaments_invite_idx').on(t.inviteCode),
   ],
+)
+
+/** An event's roster, a row a seat, in the order they joined (seq). Goes when its event goes. */
+export const tournamentPlayers = pgTable(
+  'tournament_players',
+  {
+    tournamentId: text('tournament_id')
+      .notNull()
+      .references(() => tournaments.id, { onDelete: 'cascade' }),
+    id: text('id').notNull(),
+    name: text('name').notNull(),
+    joinedAt: bigint('joined_at', { mode: 'number' }).notNull(),
+    accountId: text('account_id'),
+    seq: bigserial('seq', { mode: 'number' }).notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.tournamentId, t.id] }),
+    index('tournament_players_seq_idx').on(t.tournamentId, t.seq),
+  ],
+)
+
+/** An event's runs, a row a run, in the order they were posted (seq). Goes when its event goes. */
+export const tournamentScores = pgTable(
+  'tournament_scores',
+  {
+    id: text('id').primaryKey(),
+    tournamentId: text('tournament_id')
+      .notNull()
+      .references(() => tournaments.id, { onDelete: 'cascade' }),
+    playerId: text('player_id').notNull(),
+    game: text('game').notNull(),
+    score: integer('score').notNull(),
+    at: bigint('at', { mode: 'number' }).notNull(),
+    attempt: integer('attempt'),
+    matchId: text('match_id'),
+    seq: bigserial('seq', { mode: 'number' }).notNull(),
+  },
+  (t) => [index('tournament_scores_event_idx').on(t.tournamentId, t.seq)],
 )
 
 export const groups = pgTable(

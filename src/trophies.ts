@@ -1,4 +1,4 @@
-import { desc, eq, inArray } from 'drizzle-orm'
+import { and, count, desc, eq, inArray } from 'drizzle-orm'
 import { db } from './db/client.js'
 import { getClaim } from './names.js'
 import { notify } from './notifications.js'
@@ -231,6 +231,24 @@ const ENSURE_EVERY_MS = 5 * 60_000
 let lastEnsuredAt = 0
 let ensuring: Promise<void> | null = null
 
+/*
+ * A closed week or month can't change, so once its trophies are all given
+ * there is nothing left to rank. Ranking it again on every pass read every
+ * score back from the table and redrew every board, every five minutes: a
+ * stall of seconds under a crowd, for a period that ended days ago. A period
+ * is settled once this process has given its trophies, or once all of them
+ * are found given already, by an earlier one.
+ */
+const settledPeriods = new Set<string>()
+
+async function awardsGiven(period: Exclude<TrophyPeriod, 'event'>, periodKey: number): Promise<number> {
+  const rows = await db()
+    .select({ n: count() })
+    .from(trophyAwards)
+    .where(and(eq(trophyAwards.period, period), eq(trophyAwards.periodKey, periodKey)))
+  return Number(rows[0]?.n ?? 0)
+}
+
 /** Award global-rank trophies for completed weekly/monthly periods (lazy rollover). */
 export async function ensurePeriodTrophies(now = Date.now()) {
   if (now - lastEnsuredAt < ENSURE_EVERY_MS) return
@@ -239,24 +257,47 @@ export async function ensurePeriodTrophies(now = Date.now()) {
   // a second on their profile for it.
   if (ensuring) return lastEnsuredAt ? undefined : ensuring
   ensuring = (async () => {
-    // Rank from the tables as they stand. The board cache can be minutes
-    // behind a script that rewrote them (a prune, a wipe, a reseed), and an
-    // award made from a stale board stays on someone's shelf for good.
-    invalidateHistoryCache()
+    const latest = [`weekly:${previousWeekStart(now)}`, `monthly:${previousMonthKey(now)}`]
+    if (latest.every((id) => settledPeriods.has(id))) {
+      lastEnsuredAt = Date.now()
+      return
+    }
     const cursor = await getCursor()
-    const weekCount = cursor.weeklyInitialized ? 1 : 8
-    const monthCount = cursor.monthlyInitialized ? 1 : 6
-
     // Only the period that just closed is news; a backfill is not.
-    for (const weekKey of listWeekKeysBefore(now, weekCount)) {
-      await awardClosedPeriod('weekly', weekKey, now, weekKey === previousWeekStart(now))
+    const closed = [
+      ...listWeekKeysBefore(now, cursor.weeklyInitialized ? 1 : 8).map((key) => ({
+        period: 'weekly' as const,
+        key,
+        news: key === previousWeekStart(now),
+      })),
+      ...listMonthKeysBefore(now, cursor.monthlyInitialized ? 1 : 6).map((key) => ({
+        period: 'monthly' as const,
+        key,
+        news: key === previousMonthKey(now),
+      })),
+    ]
+    const open: typeof closed = []
+    for (const p of closed) {
+      const id = `${p.period}:${p.key}`
+      if (settledPeriods.has(id)) continue
+      if ((await awardsGiven(p.period, p.key)) >= MAX_TROPHY_RANK) settledPeriods.add(id)
+      else open.push(p)
     }
 
-    for (const monthKeyVal of listMonthKeysBefore(now, monthCount)) {
-      await awardClosedPeriod('monthly', monthKeyVal, now, monthKeyVal === previousMonthKey(now))
+    if (open.length) {
+      // Rank from the tables as they stand. The board cache can be minutes
+      // behind a script that rewrote them (a prune, a wipe, a reseed), and an
+      // award made from a stale board stays on someone's shelf for good.
+      invalidateHistoryCache()
+      for (const p of open) {
+        await awardClosedPeriod(p.period, p.key, now, p.news)
+        settledPeriods.add(`${p.period}:${p.key}`)
+      }
     }
 
-    await setCursor({ weeklyInitialized: true, monthlyInitialized: true })
+    if (!cursor.weeklyInitialized || !cursor.monthlyInitialized) {
+      await setCursor({ weeklyInitialized: true, monthlyInitialized: true })
+    }
     // Showcase trophies are sample data for `npm run seed`, not something every
     // rollover should put back: they name weeks nobody played.
     lastEnsuredAt = Date.now()

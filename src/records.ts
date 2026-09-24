@@ -10,6 +10,7 @@ import {
   filterByPeriod,
   isDeviceType,
   legacyGameSlugs,
+  periodWindow,
   previousBoardDateKey,
   resolveGameSlug,
   type DeviceType,
@@ -426,22 +427,47 @@ function isBetter(
   return direction === 'lower' ? next < previous : next > previous
 }
 
+/** A book's order: its best first (lowest for a time, highest for a count), the earlier of two equal. */
+function recordOrder(direction: RecordDirection) {
+  return (a: RecordEntry, b: RecordEntry) => {
+    if (a.score !== b.score) return direction === 'lower' ? a.score - b.score : b.score - a.score
+    return a.at - b.at
+  }
+}
+
 /*
- * Record history, read once and kept for a moment — the same reason as the
- * leaderboard cache: a game's record book is two dozen boards, and each was
- * its own query.
+ * Record history, read once and kept current: the same shape as the score
+ * history in store.ts, and for the same reason. A new record goes into its
+ * place in the copy as it lands. It used to throw the copy away, and games
+ * post records all through a run, so under a crowd nearly every book read
+ * waited on the whole record table being read again. The copy is still read
+ * again every ten minutes, in case a script changed the table, and at once
+ * when something rewrites records wholesale (invalidateRecordHistoryCache).
  */
-const HISTORY_TTL_MS = 30_000
-let historyCache: { at: number; byKey: Map<string, RecordEntry[]> } | null = null
-let historyLoading: Promise<Map<string, RecordEntry[]>> | null = null
+const HISTORY_TTL_MS = 10 * 60_000
+
+type RecordCopy = { at: number; epoch: number; byKey: Map<string, RecordEntry[]> }
+
+let historyCache: RecordCopy | null = null
+let historyLoading: Promise<RecordCopy> | null = null
+let historyEpoch = 0
+/** Counts wholesale rewrites: a reading begun before one is handed out but not kept. */
+let historyInvalidations = 0
+/** Records saved while a reading was under way: put into the new copy when it lands. */
+let savedDuringLoad: { key: string; entry: RecordEntry }[] = []
+/** Moves each time a book takes a record in place; a view of the book is redrawn when it does. */
+const bookVersions = new Map<string, number>()
 
 export function invalidateRecordHistoryCache() {
   historyCache = null
+  historyInvalidations++
 }
 
-async function loadRecordHistory(): Promise<Map<string, RecordEntry[]>> {
-  if (historyCache && Date.now() - historyCache.at < HISTORY_TTL_MS) return historyCache.byKey
+async function loadRecordCopy(): Promise<RecordCopy> {
+  if (historyCache && Date.now() - historyCache.at < HISTORY_TTL_MS) return historyCache
   if (historyLoading) return historyLoading
+  savedDuringLoad = []
+  const invalidationsAtStart = historyInvalidations
   historyLoading = (async () => {
     const rows = await db().select().from(recordScores)
     const byKey = new Map<string, RecordEntry[]>()
@@ -451,27 +477,123 @@ async function loadRecordHistory(): Promise<Map<string, RecordEntry[]>> {
       list.push(rowToEntry(row))
       byKey.set(key, list)
     }
-    historyCache = { at: Date.now(), byKey }
-    return byKey
+    // A record saved while the table was being read may or may not be in what came back.
+    for (const { key, entry } of savedDuringLoad) {
+      const list = byKey.get(key) ?? []
+      if (!list.some((e) => e.id === entry.id)) list.push(entry)
+      byKey.set(key, list)
+    }
+    savedDuringLoad = []
+    const copy: RecordCopy = { at: Date.now(), epoch: ++historyEpoch, byKey }
+    // Rewritten wholesale while this was reading: good enough to answer with, not to keep.
+    if (invalidationsAtStart === historyInvalidations) historyCache = copy
+    return copy
   })().finally(() => {
     historyLoading = null
   })
   return historyLoading
 }
 
-async function historyFor(game: GameSlug, recordId: string): Promise<RecordEntry[]> {
-  const byKey = await loadRecordHistory()
-  const out: RecordEntry[] = []
-  for (const g of [game, ...legacyGameSlugs(game)]) {
-    const list = byKey.get(`${g}::${recordId}`)
-    if (list) out.push(...list)
+/*
+ * A book's every run in its order, sorted once, and each period's board drawn
+ * from it once: kept until the book takes a record, the history is read
+ * again, or the period moves on. Before, every book read sorted every run of
+ * every book it touched, per request: a game's whole book was two dozen sorts.
+ */
+type BookView = { epoch: number; version: number; sorted: RecordEntry[] }
+
+type RecordBoardView = {
+  epoch: number
+  version: number
+  window: string
+  /** The book's runs in the period, in its order. */
+  runs: RecordEntry[]
+  /** Each player's best of them, in order: the board. */
+  ranked: RecordEntry[]
+  /** Each player's index in ranked. */
+  rankAt: Map<string, number>
+}
+
+const bookViews = new Map<string, BookView>()
+const boardViews = new Map<string, RecordBoardView>()
+
+/** A record just written to the table, put into the history, and its book, in place. */
+function rememberRecord(game: GameSlug, recordId: string, def: RecordDef, entry: RecordEntry) {
+  const key = `${game}::${recordId}`
+  if (historyLoading) savedDuringLoad.push({ key, entry })
+  const version = bookVersions.get(key) ?? 0
+  if (historyCache) {
+    const list = historyCache.byKey.get(key) ?? []
+    list.push(entry)
+    historyCache.byKey.set(key, list)
+    // The sorted book, if it is drawn from this copy and current, takes the run in its place.
+    const book = bookViews.get(key)
+    if (book && book.epoch === historyCache.epoch && book.version === version) {
+      const order = recordOrder(def.direction)
+      let lo = 0
+      let hi = book.sorted.length
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1
+        if (order(book.sorted[mid], entry) <= 0) lo = mid + 1
+        else hi = mid
+      }
+      book.sorted.splice(lo, 0, entry)
+      book.version = version + 1
+    }
   }
-  return out
+  bookVersions.set(key, version + 1)
+}
+
+async function bookView(game: GameSlug, recordId: string, def: RecordDef): Promise<BookView> {
+  const copy = await loadRecordCopy()
+  const key = `${game}::${recordId}`
+  const version = bookVersions.get(key) ?? 0
+  const hit = bookViews.get(key)
+  if (hit && hit.epoch === copy.epoch && hit.version === version) return hit
+  const runs: RecordEntry[] = []
+  for (const g of [game, ...legacyGameSlugs(game)]) {
+    const list = copy.byKey.get(`${g}::${recordId}`)
+    if (list) runs.push(...list)
+  }
+  const view: BookView = { epoch: copy.epoch, version, sorted: sortEntries(runs, def.direction) }
+  bookViews.set(key, view)
+  return view
+}
+
+async function boardView(
+  game: GameSlug,
+  recordId: string,
+  def: RecordDef,
+  period: Period,
+  now = Date.now(),
+): Promise<RecordBoardView> {
+  const book = await bookView(game, recordId, def)
+  const window = periodWindow(period, now)
+  const key = `${game}::${recordId}:${period}`
+  const hit = boardViews.get(key)
+  if (hit && hit.epoch === book.epoch && hit.version === book.version && hit.window === window) return hit
+  const runs = period === 'all' ? book.sorted.slice() : filterByPeriod(book.sorted, period, now)
+  const ranked = bestPerPlayer(runs)
+  const view: RecordBoardView = {
+    epoch: book.epoch,
+    version: book.version,
+    window,
+    runs,
+    ranked,
+    rankAt: new Map(ranked.map((entry, i) => [entry.name, i])),
+  }
+  boardViews.set(key, view)
+  return view
 }
 
 function filterByNames<T extends { name: string }>(entries: T[], scope?: NameScope): T[] {
   if (!scope) return entries
   return entries.filter((e) => scope.has(e.name))
+}
+
+/** A book's board for a period, one row per player; narrowed to a group when there is a scope. */
+function rankedFor(view: RecordBoardView, scope?: NameScope): RecordEntry[] {
+  return scope ? bestPerPlayer(filterByNames(view.runs, scope)) : view.ranked
 }
 
 export async function getRecordBoard(
@@ -483,8 +605,7 @@ export async function getRecordBoard(
 ): Promise<RecordEntry[]> {
   const def = getRecordDef(game, recordId)
   if (!def) return []
-  const pool = filterByNames(filterByPeriod(await historyFor(game, recordId), period, now), scope)
-  return bestPerPlayer(sortEntries(pool, def.direction)).slice(0, BOARD_PAGE)
+  return rankedFor(await boardView(game, recordId, def, period, now), scope).slice(0, BOARD_PAGE)
 }
 
 /**
@@ -504,11 +625,7 @@ export async function getRecordBoardPage(
   const now = opts.now ?? Date.now()
   const offset = Math.max(0, Math.floor(opts.offset ?? 0))
   const limit = Math.max(1, Math.floor(opts.limit ?? BOARD_PAGE))
-  const pool = filterByNames(
-    filterByPeriod(await historyFor(game, recordId), period, now),
-    opts.scope,
-  )
-  const ranked = bestPerPlayer(sortEntries(pool, def.direction))
+  const ranked = rankedFor(await boardView(game, recordId, def, period, now), opts.scope)
   return { entries: ranked.slice(offset, offset + limit), total: ranked.length }
 }
 
@@ -524,16 +641,14 @@ export async function bestRecordForName(
   if (!def) return null
   const cleaned = name.trim().slice(0, 12).toUpperCase()
   if (!cleaned) return null
-  const pool = bestPerPlayer(
-    sortEntries(
-      filterByNames(filterByPeriod(await historyFor(game, recordId), period, now), scope),
-      def.direction,
-    ),
-  )
-  const mine = pool.filter((e) => e.name === cleaned)
-  if (!mine.length) return null
-  const best = mine[0]
-  return { ...best, rank: pool.findIndex((e) => e.id === best.id) + 1 }
+  const view = await boardView(game, recordId, def, period, now)
+  if (!scope) {
+    const at = view.rankAt.get(cleaned)
+    return at == null ? null : { ...view.ranked[at], rank: at + 1 }
+  }
+  const ranked = rankedFor(view, scope)
+  const at = ranked.findIndex((e) => e.name === cleaned)
+  return at < 0 ? null : { ...ranked[at], rank: at + 1 }
 }
 
 /**
@@ -553,10 +668,8 @@ export async function getRecordProgression(
 ): Promise<RecordEntry[]> {
   const def = getRecordDef(game, recordId)
   if (!def) return []
-  let pool = filterByNames(
-    filterByPeriod(await historyFor(game, recordId), period, opts.now ?? Date.now()),
-    opts.scope,
-  )
+  const book = await bookView(game, recordId, def)
+  let pool = filterByNames(filterByPeriod(book.sorted, period, opts.now ?? Date.now()), opts.scope)
   if (opts.name !== undefined) {
     const cleaned = opts.name.trim().slice(0, 12).toUpperCase()
     pool = pool.filter((e) => e.name === cleaned)
@@ -594,8 +707,8 @@ export async function listGameRecords(
   const cleaned = name?.trim().slice(0, 12).toUpperCase() ?? ''
   const records: GameRecordSummary[] = []
   for (const def of listRecordDefs(game)) {
-    const pool = filterByNames(filterByPeriod(await historyFor(game, def.id), period, now), scope)
-    const ranked = bestPerPlayer(sortEntries(pool, def.direction))
+    const view = await boardView(game, def.id, def, period, now)
+    const ranked = rankedFor(view, scope)
     const row: GameRecordSummary = {
       ...def,
       top: ranked[0] ?? null,
@@ -603,7 +716,7 @@ export async function listGameRecords(
       players: ranked.length,
     }
     if (cleaned) {
-      const at = ranked.findIndex((e) => e.name === cleaned)
+      const at = scope ? ranked.findIndex((e) => e.name === cleaned) : (view.rankAt.get(cleaned) ?? -1)
       row.you = at >= 0 ? { ...ranked[at], rank: at + 1 } : null
     }
     records.push(row)
@@ -653,13 +766,18 @@ export async function addRecord(
   }
   const value = Math.floor(score)
   const cleaned = name.trim().slice(0, 12).toUpperCase() || 'PLAYER'
-  const history = await historyFor(game, recordId)
-  // Who holds the board right now, so a change of hands can be spotted below.
-  const priorLeader = bestPerPlayer(sortEntries(history, def.direction))[0] ?? null
-  const mine = history.filter((e) => e.name === cleaned)
   const now = Date.now()
-  const improvesPeriod = (period: Period) => {
-    const best = sortEntries(filterByPeriod(mine, period, now), def.direction)[0]
+  const allTime = await boardView(game, recordId, def, 'all', now)
+  // Who holds the board right now, so a change of hands can be spotted below.
+  const priorLeader = allTime.ranked[0] ?? null
+  /** The player's own best in a period: their row on that period's board. */
+  const bestIn = async (period: Period) => {
+    const view = await boardView(game, recordId, def, period, now)
+    const at = view.rankAt.get(cleaned)
+    return at == null ? undefined : view.ranked[at]
+  }
+  const improvesPeriod = async (period: Period) => {
+    const best = await bestIn(period)
     return !best || isBetter(value, best.score, def.direction)
   }
   /*
@@ -668,21 +786,21 @@ export async function addRecord(
    * is how one streak of two ended up on the podium three times over.
    */
   const accept =
-    improvesPeriod('all') ||
-    improvesPeriod('daily') ||
-    improvesPeriod('weekly') ||
-    improvesPeriod('monthly')
+    (await improvesPeriod('all')) ||
+    (await improvesPeriod('daily')) ||
+    (await improvesPeriod('weekly')) ||
+    (await improvesPeriod('monthly'))
   if (!accept) {
     const board = await getRecordBoard(game, recordId, 'all')
     const you = await bestRecordForName(game, recordId, cleaned, 'all')
-    const previousBest = sortEntries(mine, def.direction)[0] ?? null
+    const previousBest = (await bestIn('all')) ?? null
     return {
       improved: false,
       entry: previousBest,
       rank: you?.rank ?? null,
       ranks: {},
       board,
-      totalEntries: history.length,
+      totalEntries: (await bookView(game, recordId, def)).sorted.length,
     }
   }
 
@@ -696,9 +814,10 @@ export async function addRecord(
 
   /*
    * Every attempt is kept. The old prune held the newest 500 rows per board,
-   * which quietly dropped a player's own best once the board got busy.
+   * which quietly dropped a player's own best once the board got busy. Once
+   * written, the run goes into the history in place (rememberRecord): no
+   * reading the whole table back.
    */
-  invalidateRecordHistoryCache()
   await db().insert(recordScores).values({
     id: entry.id,
     game,
@@ -708,14 +827,15 @@ export async function addRecord(
     at: entry.at,
     device: entry.device,
   })
+  rememberRecord(game, recordId, def, entry)
 
-  const next = await historyFor(game, recordId)
-  await notifyRecordTaken(game, recordId, def, priorLeader, cleaned, next, now)
+  const leader = (await boardView(game, recordId, def, 'all')).ranked[0] ?? null
+  await notifyRecordTaken(game, recordId, def, priorLeader, cleaned, leader, now)
   const ranks: Partial<Record<Period, number>> = {}
   for (const period of ['daily', 'weekly', 'monthly', 'all'] as const) {
-    const pool = bestPerPlayer(sortEntries(filterByPeriod(next, period), def.direction))
-    const index = pool.findIndex((e) => e.id === entry.id)
-    if (index !== -1) ranks[period] = index + 1
+    const view = await boardView(game, recordId, def, period)
+    const at = view.rankAt.get(cleaned)
+    if (at != null && view.ranked[at].id === entry.id) ranks[period] = at + 1
   }
 
   return {
@@ -724,7 +844,7 @@ export async function addRecord(
     rank: ranks.all ?? ranks.daily ?? null,
     ranks,
     board: await getRecordBoard(game, recordId, 'all'),
-    totalEntries: next.length,
+    totalEntries: (await bookView(game, recordId, def)).sorted.length,
   }
 }
 
@@ -890,11 +1010,10 @@ async function notifyRecordTaken(
   def: RecordDef,
   priorLeader: RecordEntry | null,
   taker: string,
-  next: RecordEntry[],
+  leader: RecordEntry | null,
   now: number,
 ) {
   if (!priorLeader || priorLeader.name === taker) return
-  const leader = bestPerPlayer(sortEntries(next, def.direction))[0] ?? null
   if (leader?.name !== taker) return
 
   try {

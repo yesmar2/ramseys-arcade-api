@@ -1,6 +1,7 @@
 import { desc, eq, inArray, or, sql } from 'drizzle-orm'
 import { db } from './db/client.js'
 import { leaderboardScores, nameBans, nameClaims, recordScores } from './db/schema.js'
+import { invalidateRecordHistoryCache } from './records.js'
 import { invalidateSiteRecords } from './siteRecords.js'
 import { invalidateHistoryCache } from './store.js'
 
@@ -111,8 +112,9 @@ export async function purgeName(name: string): Promise<{
     .delete(recordScores)
     .where(eq(recordScores.name, cleaned))
     .returning({ id: recordScores.id })
-  // Boards are served from a cache; without this the purged scores stay up.
+  // Boards and books are served from caches; without this the purged scores stay up.
   invalidateHistoryCache()
+  invalidateRecordHistoryCache()
   invalidateSiteRecords()
   return { leaderboard: boards.length, records: books.length }
 }

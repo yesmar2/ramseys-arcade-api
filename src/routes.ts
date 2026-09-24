@@ -7,7 +7,6 @@ import { isBanned } from './bans.js'
 import { clientIp, hashIp, takeToken } from './rateLimit.js'
 import { claimRun, peekRun } from './runs.js'
 import { flagIfSuspicious } from './scoreFlags.js'
-import { invalidateSiteRecords } from './siteRecords.js'
 import { resolveBoardScope } from './groups.js'
 import { assertCanUseName, withAvatarId, withAvatarIds } from './names.js'
 import { updateCrossRunStreakRecords } from './records.js'
@@ -362,9 +361,9 @@ leaderboardsRouter.post('/:game', async (req, res) => {
     device ?? 'desktop',
   )
 
-  // A run that just extended a streak should show up in the site books now,
-  // not whenever their minute happens to be up.
-  invalidateSiteRecords()
+  // The site's records (streaks, busiest day) catch up within their minute
+  // (siteRecords.ts). Clearing them on every save made nearly every home page
+  // visit under steady play read the whole score table again.
 
   // After the save, never in its way: a suspicion is a note for a person.
   await flagIfSuspicious(

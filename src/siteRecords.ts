@@ -1,6 +1,4 @@
-import { db } from './db/client.js'
-import { leaderboardScores } from './db/schema.js'
-import { boardDateKey, previousBoardDateKey } from './store.js'
+import { allScores, boardDateKey, previousBoardDateKey } from './store.js'
 
 /**
  * Records for the whole site rather than one game.
@@ -84,155 +82,190 @@ export type SiteRecordBoard = SiteRecordDef & { entries: SiteRecordEntry[] }
  * Everything one player did, folded down as the rows go past.
  *
  * Built in a single pass because the alternative is six queries that have to
- * agree with each other about what a day is.
+ * agree with each other about what a day is. The rows come a game at a time,
+ * so "which games" is a count and the game last counted, not a set.
  */
 type Tally = {
-  days: Set<number>
-  games: Set<string>
-  /** Day key → runs that day, and the games seen in it. */
-  byDay: Map<number, { runs: number; games: Set<string> }>
+  games: number
+  lastGame: string
+  /** Day key → runs that day, and the games seen in it: every day played. */
+  byDay: Map<number, DayTally>
 }
 
-function emptyTally(): Tally {
-  return { days: new Set(), games: new Set(), byDay: new Map() }
-}
-
-/** Longest run of consecutive days present, ever — not the one ending today. */
-function bestStreak(days: Set<number>): number {
-  const sorted = [...days].sort((a, b) => a - b)
-  let best = 0
-  let run = 0
-  let prev: number | null = null
-  for (const day of sorted) {
-    run = prev != null && previousBoardDateKey(day) === prev ? run + 1 : 1
-    if (run > best) best = run
-    prev = day
-  }
-  return best
-}
-
-function topOfDay(
-  byDay: Tally['byDay'],
-  pick: (entry: { runs: number; games: Set<string> }) => number,
-): { value: number; at: number | null } {
-  let value = 0
-  let at: number | null = null
-  for (const [day, entry] of byDay) {
-    const n = pick(entry)
-    if (n > value) {
-      value = n
-      at = day
-    }
-  }
-  return { value, at }
-}
+type DayTally = { runs: number; games: number; lastGame: string }
 
 const TOP_N = 10
 
-function rank(
-  rows: { name: string; value: number; at: number | null }[],
-): SiteRecordEntry[] {
-  return rows
-    .filter((row) => row.value > 0)
-    .sort((a, b) => b.value - a.value || a.name.localeCompare(b.name))
-    .slice(0, TOP_N)
-}
+/** Ties go to the name first in the alphabet; one collator, as localeCompare would sort. */
+const nameOrder = new Intl.Collator()
 
-const CACHE_TTL_MS = 60_000
-let cache: { at: number; key: string; boards: SiteRecordBoard[] } | null = null
-
-export function invalidateSiteRecords() {
-  cache = null
+/** Whether a row with this value and name goes above one with those. */
+function above(value: number, name: string, than: SiteRecordEntry) {
+  return value > than.value || (value === than.value && nameOrder.compare(name, than.name) < 0)
 }
 
 /**
- * Build every site record in one pass over the scores.
- *
- * Reads the whole score table, which is the right shape for a board that is
- * about lifetime habits and a table this size. If it ever stops being cheap,
- * the fold below is what moves into SQL — the shape of the answer would not
- * change.
+ * A board's top ten, kept as the players go past: most first, and of two
+ * equal, the name first in the alphabet. Sorting all twenty thousand players
+ * six times over to keep ten of each was most of what building these cost.
  */
+class TopTen {
+  readonly entries: SiteRecordEntry[] = []
+
+  offer(name: string, value: number, at: number | null = null) {
+    if (value <= 0) return
+    const rows = this.entries
+    if (rows.length === TOP_N && !above(value, name, rows[TOP_N - 1])) return
+    let i = rows.length
+    while (i > 0 && above(value, name, rows[i - 1])) i--
+    rows.splice(i, 0, { name, value, at })
+    if (rows.length > TOP_N) rows.pop()
+  }
+}
+
+/*
+ * Kept a minute for each audience: everyone, and each group that asks. A
+ * save used to throw them away, so under steady play nearly every home page
+ * visit read the whole score table again, a second and more at a few hundred
+ * thousand scores. These are lifetime habits; a minute behind is fine.
+ */
+const CACHE_TTL_MS = 60_000
+/** Audiences kept at once; the least recently built goes first. */
+const CACHE_SCOPES = 32
+const cache = new Map<string, { at: number; boards: SiteRecordBoard[] }>()
+const building = new Map<string, Promise<SiteRecordBoard[]>>()
+/** Counts wholesale changes (a ban's scores voided): a build begun before one isn't kept. */
+let generation = 0
+
+export function invalidateSiteRecords() {
+  cache.clear()
+  generation++
+}
+
 export async function siteRecords(
   scope?: { names: Set<string> } | null,
 ): Promise<SiteRecordBoard[]> {
   const key = scope ? [...scope.names].sort().join(',') : 'everyone'
-  if (cache && cache.key === key && Date.now() - cache.at < CACHE_TTL_MS) {
-    return cache.boards
+  const hit = cache.get(key)
+  if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.boards
+  let pending = building.get(key)
+  if (!pending) {
+    const startedAt = generation
+    pending = buildSiteRecords(scope)
+      .then((boards) => {
+        if (startedAt === generation) {
+          cache.delete(key)
+          cache.set(key, { at: Date.now(), boards })
+          while (cache.size > CACHE_SCOPES) cache.delete(cache.keys().next().value as string)
+        }
+        return boards
+      })
+      .finally(() => building.delete(key))
+    building.set(key, pending)
   }
+  return pending
+}
 
-  const rows = await db()
-    .select({
-      name: leaderboardScores.name,
-      game: leaderboardScores.game,
-      score: leaderboardScores.score,
-      at: leaderboardScores.at,
-    })
-    .from(leaderboardScores)
+/**
+ * Build every site record in one pass over the scores: the copy the boards
+ * are drawn from (allScores), not another read of the table.
+ */
+async function buildSiteRecords(scope?: { names: Set<string> } | null): Promise<SiteRecordBoard[]> {
+  const byGame = await allScores()
 
   const tallies = new Map<string, Tally>()
-  /** Game → the best score seen and who holds it, for "boards held". */
-  const leaders = new Map<string, { name: string; score: number }>()
+  /** Name → games whose all-time top score is theirs, for "boards held". */
+  const held = new Map<string, number>()
 
-  for (const row of rows) {
-    if (scope && !scope.names.has(row.name)) continue
+  for (const [game, entries] of byGame) {
+    // A game at a time, letting requests through in between: a few hundred
+    // thousand rows in one go held everyone else up for most of a second.
+    await new Promise((resolve) => setImmediate(resolve))
+    // In board order, so the first row, the earlier of two equal scores, holds the board.
+    let leader: string | null = null
+    for (const { name, at } of entries) {
+      if (scope && !scope.names.has(name)) continue
+      if (leader == null) leader = name
 
-    const leader = leaders.get(row.game)
-    if (!leader || row.score > leader.score) {
-      leaders.set(row.game, { name: row.name, score: row.score })
+      let tally = tallies.get(name)
+      if (!tally) {
+        tally = { games: 0, lastGame: '', byDay: new Map() }
+        tallies.set(name, tally)
+      }
+      if (tally.lastGame !== game) {
+        tally.lastGame = game
+        tally.games++
+      }
+      const day = boardDateKey(at)
+      let dayTally = tally.byDay.get(day)
+      if (!dayTally) {
+        dayTally = { runs: 0, games: 0, lastGame: '' }
+        tally.byDay.set(day, dayTally)
+      }
+      dayTally.runs++
+      if (dayTally.lastGame !== game) {
+        dayTally.lastGame = game
+        dayTally.games++
+      }
     }
-
-    let tally = tallies.get(row.name)
-    if (!tally) {
-      tally = emptyTally()
-      tallies.set(row.name, tally)
-    }
-    const day = boardDateKey(Number(row.at))
-    tally.days.add(day)
-    tally.games.add(row.game)
-    const dayEntry = tally.byDay.get(day) ?? { runs: 0, games: new Set<string>() }
-    dayEntry.runs += 1
-    dayEntry.games.add(row.game)
-    tally.byDay.set(day, dayEntry)
+    if (leader != null) held.set(leader, (held.get(leader) ?? 0) + 1)
   }
 
-  const heldByName = new Map<string, number>()
-  for (const { name } of leaders.values()) {
-    heldByName.set(name, (heldByName.get(name) ?? 0) + 1)
-  }
-
-  const streaks: SiteRecordEntry[] = []
-  const gamesInDay: SiteRecordEntry[] = []
-  const runsInDay: SiteRecordEntry[] = []
-  const daysPlayed: SiteRecordEntry[] = []
-  const gamesPlayed: SiteRecordEntry[] = []
-  const boardsHeld: SiteRecordEntry[] = []
+  const streaks = new TopTen()
+  const gamesInDay = new TopTen()
+  const runsInDay = new TopTen()
+  const daysPlayed = new TopTen()
+  const gamesPlayed = new TopTen()
+  const boardsHeld = new TopTen()
+  /** Each day's day before, worked out once: there are only so many days. */
+  const dayBefore = new Map<number, number>()
 
   for (const [name, tally] of tallies) {
-    streaks.push({ name, value: bestStreak(tally.days), at: null })
+    // Oldest day first, so of two equal days the first is the one kept.
+    const days = [...tally.byDay].sort((a, b) => a[0] - b[0])
+    let streak = 0
+    let run = 0
+    let prev: number | null = null
+    let mostGames: DayTally | null = null
+    let mostGamesAt: number | null = null
+    let mostRuns: DayTally | null = null
+    let mostRunsAt: number | null = null
+    for (const [day, dayTally] of days) {
+      let before = dayBefore.get(day)
+      if (before === undefined) {
+        before = previousBoardDateKey(day)
+        dayBefore.set(day, before)
+      }
+      // The longest run of consecutive days present, ever: not the one ending today.
+      run = prev != null && before === prev ? run + 1 : 1
+      if (run > streak) streak = run
+      prev = day
+      if (!mostGames || dayTally.games > mostGames.games) {
+        mostGames = dayTally
+        mostGamesAt = day
+      }
+      if (!mostRuns || dayTally.runs > mostRuns.runs) {
+        mostRuns = dayTally
+        mostRunsAt = day
+      }
+    }
 
-    const games = topOfDay(tally.byDay, (d) => d.games.size)
-    gamesInDay.push({ name, value: games.value, at: games.at })
-
-    const runs = topOfDay(tally.byDay, (d) => d.runs)
-    runsInDay.push({ name, value: runs.value, at: runs.at })
-
-    daysPlayed.push({ name, value: tally.days.size, at: null })
-    gamesPlayed.push({ name, value: tally.games.size, at: null })
-    boardsHeld.push({ name, value: heldByName.get(name) ?? 0, at: null })
+    streaks.offer(name, streak)
+    gamesInDay.offer(name, mostGames?.games ?? 0, mostGamesAt)
+    runsInDay.offer(name, mostRuns?.runs ?? 0, mostRunsAt)
+    daysPlayed.offer(name, days.length)
+    gamesPlayed.offer(name, tally.games)
+    boardsHeld.offer(name, held.get(name) ?? 0)
   }
 
-  const boards: SiteRecordBoard[] = [
-    { ...SITE_RECORD_DEFS['day-streak'], entries: rank(streaks) },
-    { ...SITE_RECORD_DEFS['games-in-a-day'], entries: rank(gamesInDay) },
-    { ...SITE_RECORD_DEFS['runs-in-a-day'], entries: rank(runsInDay) },
-    { ...SITE_RECORD_DEFS['days-played'], entries: rank(daysPlayed) },
-    { ...SITE_RECORD_DEFS['games-played'], entries: rank(gamesPlayed) },
-    { ...SITE_RECORD_DEFS['boards-topped'], entries: rank(boardsHeld) },
+  return [
+    { ...SITE_RECORD_DEFS['day-streak'], entries: streaks.entries },
+    { ...SITE_RECORD_DEFS['games-in-a-day'], entries: gamesInDay.entries },
+    { ...SITE_RECORD_DEFS['runs-in-a-day'], entries: runsInDay.entries },
+    { ...SITE_RECORD_DEFS['days-played'], entries: daysPlayed.entries },
+    { ...SITE_RECORD_DEFS['games-played'], entries: gamesPlayed.entries },
+    { ...SITE_RECORD_DEFS['boards-topped'], entries: boardsHeld.entries },
   ]
-
-  cache = { at: Date.now(), key, boards }
-  return boards
 }
 
 /** Where one player stands on each site record, for their own stats page. */

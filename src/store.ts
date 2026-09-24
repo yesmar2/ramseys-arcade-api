@@ -497,6 +497,15 @@ async function loadHistory(): Promise<Map<string, LeaderboardEntry[]>> {
   return (await loadCopy()).byGame
 }
 
+/**
+ * Every score on every board, per game in board order: the same copy the
+ * boards are drawn from, for folds over all of it (the site's records) that
+ * would otherwise read the whole table again. Read it; never change it.
+ */
+export async function allScores(): Promise<ReadonlyMap<string, readonly LeaderboardEntry[]>> {
+  return loadHistory()
+}
+
 async function historyFor(game: GameSlug): Promise<LeaderboardEntry[]> {
   const byGame = await loadHistory()
   return byGame.get(game) ?? []
@@ -526,7 +535,7 @@ type PoolView = {
 const poolViews = new Map<string, PoolView>()
 
 /** What a period's board covers from now: a new day moves the daily and weekly ones, a new month the monthly. */
-function periodWindow(period: Period, now: number): string {
+export function periodWindow(period: Period, now: number): string {
   if (period === 'all') return 'all'
   if (period === 'monthly') return String(monthKey(now))
   return String(keyOf(now))
@@ -720,9 +729,8 @@ async function closedPeriodPlacements(
   period: ClosedPeriod,
   periodKey: number,
 ): Promise<{ name: string; place: number }[]> {
-  return placementsFromPool(
-    sortByScore(filterByClosedPeriod(await historyFor(game), period, periodKey)),
-  )
+  // The history is in board order, so its scores from any period already are.
+  return placementsFromPool(filterByClosedPeriod(await historyFor(game), period, periodKey))
 }
 
 async function aggregateGlobalRanks(
@@ -780,6 +788,9 @@ async function aggregateGlobalRanks(
  * off that game's board when a line is asked for, a handful at a time; kept
  * for everyone, it was most of the API's memory.
  */
+/** A player's line in the standings: their total, and where it puts them. */
+type StandingRow = { name: string; score: number; games: number; pos: number }
+
 type StandingsView = {
   epoch: number
   window: string
@@ -787,14 +798,22 @@ type StandingsView = {
   asOf: number
   /** The board each game's places were counted from. */
   counted: Map<GameSlug, PoolView>
-  tallies: Map<string, { score: number; games: number }>
-  /** Players in standings order, with the totals they were put in order by. */
-  order: { name: string; score: number; games: number }[] | null
-  /** Each player's index in order. */
-  index: Map<string, number>
+  /** Each player's line, by name: the same rows as in order. */
+  tallies: Map<string, StandingRow>
+  /** Players in standings order; each row's pos is its index here. */
+  order: StandingRow[]
+  /** The tallies changed in a way order can't be patched for: sort it whole. */
+  unsorted: boolean
 }
 
 const standingsViews = new Map<Period, StandingsView>()
+
+/** Standings order: more points first, then more games, then the name first in the alphabet. */
+function standingOrder(a: StandingRow, b: StandingRow) {
+  if (b.score !== a.score) return b.score - a.score
+  if (b.games !== a.games) return b.games - a.games
+  return nameOrder.compare(a.name, b.name)
+}
 
 /** Count one game's places into the tallies, or (sign -1) take them back out. */
 function countPlaces(view: StandingsView, pool: PoolView, sign: 1 | -1) {
@@ -807,7 +826,7 @@ function countPlaces(view: StandingsView, pool: PoolView, sign: 1 | -1) {
         row.score += points
         row.games += 1
       } else {
-        view.tallies.set(name, { score: points, games: 1 })
+        view.tallies.set(name, { name, score: points, games: 1, pos: -1 })
       }
     } else if (row) {
       row.score -= points
@@ -815,22 +834,92 @@ function countPlaces(view: StandingsView, pool: PoolView, sign: 1 | -1) {
       if (row.games <= 0) view.tallies.delete(name)
     }
   }
+  view.unsorted = true
 }
 
-function orderTallies(view: StandingsView) {
-  const order = Array.from(view.tallies, ([name, { score, games }]) => ({ name, score, games }))
-  order.sort((a, b) => {
-    if (b.score !== a.score) return b.score - a.score
-    if (b.games !== a.games) return b.games - a.games
-    return nameOrder.compare(a.name, b.name)
-  })
+/*
+ * A save moves a few players' points, not everyone's: a place is worth one of
+ * a hundred steps of points, so the players a new run pushes down a place
+ * mostly keep what they had. So when a game's board changes, its places are
+ * counted again against the board they were last counted from, and only the
+ * players whose points changed are touched. Counting every player out and in
+ * again, then sorting twenty thousand, was most of what the API did under a
+ * crowd, in stretches of half a second and more.
+ *
+ * False when the board lost a player since, which only happens when the
+ * history is read again (and then the standings start over anyway): the
+ * difference can't be counted then, so the caller counts the game out and in.
+ */
+function recountPlaces(view: StandingsView, had: PoolView, pool: PoolView, moved: Set<StandingRow>): boolean {
+  const changes: { name: string; points: number; was: number }[] = []
+  let kept = 0
+  for (const [name, at] of pool.bestAt) {
+    const points = placePoints(pool.placeAt[at], pool.players)
+    const hadAt = had.bestAt.get(name)
+    let was = 0
+    if (hadAt != null) {
+      kept++
+      was = placePoints(had.placeAt[hadAt], had.players)
+    }
+    if (points !== was) changes.push({ name, points, was })
+  }
+  if (kept !== had.players) return false
+  for (const { name, points, was } of changes) {
+    let row = view.tallies.get(name)
+    if (!row) {
+      row = { name, score: 0, games: 0, pos: -1 }
+      view.tallies.set(name, row)
+    }
+    row.score += points - was
+    if (was <= 0) row.games += 1
+    // Marked to come out of order and go back in where its new total puts it.
+    row.pos = -1
+    moved.add(row)
+  }
+  return true
+}
+
+function sortStandings(view: StandingsView) {
+  const order = [...view.tallies.values()]
+  order.sort(standingOrder)
+  for (let i = 0; i < order.length; i++) order[i].pos = i
   view.order = order
-  view.index = new Map(order.map((row, i) => [row.name, i]))
+  view.unsorted = false
+}
+
+/**
+ * Put the players whose totals moved back in order: everyone else keeps
+ * their order, so each moved player's place is a binary search, not a sort.
+ */
+function reorderStandings(view: StandingsView, moved: Set<StandingRow>) {
+  if (moved.size > view.order.length / 8) {
+    sortStandings(view)
+    return
+  }
+  const stay = view.order.filter((row) => row.pos !== -1)
+  const coming = [...moved].sort(standingOrder)
+  const order: StandingRow[] = new Array(stay.length + coming.length)
+  let k = 0
+  let from = 0
+  for (const row of coming) {
+    let lo = from
+    let hi = stay.length
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1
+      if (standingOrder(stay[mid], row) < 0) lo = mid + 1
+      else hi = mid
+    }
+    while (from < lo) order[k++] = stay[from++]
+    order[k++] = row
+  }
+  while (from < stay.length) order[k++] = stay[from++]
+  for (let i = 0; i < order.length; i++) order[i].pos = i
+  view.order = order
 }
 
 /** The line at one place in the standings, with where the player placed on each game. */
 function standingAt(view: StandingsView, i: number): GlobalRankEntry {
-  const row = view.order![i]
+  const row = view.order[i]
   const byGame: Partial<Record<GameSlug, GlobalGamePlace>> = {}
   for (const game of ALLOWED_GAMES) {
     const pool = view.counted.get(game)
@@ -873,19 +962,22 @@ async function refreshStandings(period: Period, now: number): Promise<StandingsV
   const window = periodWindow(period, now)
   let view = standingsViews.get(period)
   if (!view || view.epoch !== epoch || view.window !== window) {
-    view = { epoch, window, asOf, counted: new Map(), tallies: new Map(), order: null, index: new Map() }
+    view = { epoch, window, asOf, counted: new Map(), tallies: new Map(), order: [], unsorted: true }
     standingsViews.set(period, view)
   }
+  const moved = new Set<StandingRow>()
   ALLOWED_GAMES.forEach((game, i) => {
     const pool = pools[i]
     const had = view.counted.get(game)
     if (had === pool) return
-    if (had) countPlaces(view, had, -1)
-    countPlaces(view, pool, 1)
+    if (!had || !recountPlaces(view, had, pool, moved)) {
+      if (had) countPlaces(view, had, -1)
+      countPlaces(view, pool, 1)
+    }
     view.counted.set(game, pool)
-    view.order = null
   })
-  if (!view.order) orderTallies(view)
+  if (view.unsorted) sortStandings(view)
+  else if (moved.size) reorderStandings(view, moved)
   view.asOf = asOf
   return view
 }
@@ -895,7 +987,7 @@ async function standingsView(period: Period, now: number, forName?: string): Pro
   const mine = forName ? (savedAt.get(forName) ?? 0) : 0
   for (let round = 0; round < 3; round++) {
     const view = standingsViews.get(period)
-    const current = view?.order && view.window === periodWindow(period, now)
+    const current = view && !view.unsorted && view.window === periodWindow(period, now)
     if (view && current && view.asOf > mine && Date.now() - view.asOf < STANDINGS_SETTLE_MS) return view
     // Just saved: wait out the moment, so saves close together share one count.
     if (view && current && mine >= view.asOf) {
@@ -920,7 +1012,7 @@ export async function globalRanks(
 ): Promise<GlobalRankEntry[]> {
   if (scope) return aggregateGlobalRanks((game) => periodPlacements(game, period, now, scope))
   const view = await standingsView(period, now)
-  return view.order!.map((_, i) => standingAt(view, i))
+  return view.order.map((_, i) => standingAt(view, i))
 }
 
 /** One page of the standings, and how many players they run to. */
@@ -936,7 +1028,7 @@ export async function globalRanksPage(
     return { total: all.length, entries: all.slice(offset, offset + limit) }
   }
   const view = await standingsView(period, now)
-  const total = view.order!.length
+  const total = view.order.length
   const entries: GlobalRankEntry[] = []
   for (let i = Math.max(0, offset); i < Math.min(total, offset + limit); i++) entries.push(standingAt(view, i))
   return { total, entries }
@@ -947,7 +1039,12 @@ export async function globalRanksForClosedPeriod(
   period: ClosedPeriod,
   periodKey: number,
 ): Promise<GlobalRankEntry[]> {
-  return aggregateGlobalRanks((game) => closedPeriodPlacements(game, period, periodKey))
+  return aggregateGlobalRanks(async (game) => {
+    // Seconds of work at a few hundred thousand scores, if rarely asked for:
+    // a game at a time, letting requests through in between.
+    await new Promise((resolve) => setImmediate(resolve))
+    return closedPeriodPlacements(game, period, periodKey)
+  })
 }
 
 export async function rankForName(
@@ -979,8 +1076,8 @@ export async function rankForName(
     }
   }
   const view = await standingsView(period, now, cleaned || undefined)
-  const total = view.order!.length
-  const idx = cleaned ? view.index.get(cleaned) : undefined
+  const total = view.order.length
+  const idx = cleaned ? view.tallies.get(cleaned)?.pos : undefined
   if (idx == null) return nobody(total)
   const me = standingAt(view, idx)
   const nearby: GlobalRankEntry[] = []

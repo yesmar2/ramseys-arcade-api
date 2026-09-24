@@ -792,6 +792,42 @@ function legacyScoreId(tournamentId: string, s: TournamentScore) {
   return `ls-${crypto.createHash('sha1').update(key).digest('base64url').slice(0, 22)}`
 }
 
+/*
+ * The tables' number columns are whole numbers, and the JSON never was: the
+ * world seed wrote fractional scores and times. A fraction refused by one
+ * column failed the whole move of an event's runs, so every number going into
+ * a row is rounded, and a run or seat missing what its row needs is left out.
+ */
+function whole(n: unknown): number {
+  const v = Math.round(Number(n))
+  return Number.isFinite(v) ? v : 0
+}
+
+function seatValues(tournamentId: string, p: TournamentPlayer): typeof tournamentPlayers.$inferInsert | null {
+  if (!p || typeof p.id !== 'string' || !p.id) return null
+  return {
+    tournamentId,
+    id: p.id,
+    name: typeof p.name === 'string' && p.name ? p.name : 'PLAYER',
+    joinedAt: whole(p.joinedAt),
+    accountId: typeof p.accountId === 'string' && p.accountId ? p.accountId : null,
+  }
+}
+
+function runValues(tournamentId: string, id: string, sc: TournamentScore): typeof tournamentScores.$inferInsert | null {
+  if (!sc || typeof sc.playerId !== 'string' || !sc.playerId || typeof sc.game !== 'string' || !sc.game) return null
+  return {
+    id,
+    tournamentId,
+    playerId: sc.playerId,
+    game: sc.game,
+    score: whole(sc.score),
+    at: whole(sc.at),
+    attempt: sc.attempt == null ? null : whole(sc.attempt),
+    matchId: sc.matchId == null ? null : String(sc.matchId),
+  }
+}
+
 function chunks<T>(list: T[], size = 500): T[][] {
   const out: T[][] = []
   for (let i = 0; i < list.length; i += size) out.push(list.slice(i, i + size))
@@ -859,10 +895,8 @@ async function writeEventNow(id: string) {
     seatIds.add(p.id)
     const row = playerRow(p)
     if (was.players.get(p.id) === row) continue
-    seats.push({
-      row,
-      values: { tournamentId: id, id: p.id, name: p.name, joinedAt: p.joinedAt, accountId: p.accountId ?? null },
-    })
+    const values = seatValues(id, p)
+    if (values) seats.push({ row, values })
   }
   const leftSeats = [...was.players.keys()].filter((pid) => !seatIds.has(pid))
   // New runs by id; every run compared only after a change made inside one (a merge).
@@ -876,20 +910,8 @@ async function writeEventNow(id: string) {
     else if (!everyRun) continue
     const row = scoreRow(sc)
     if (had === row) continue
-    runs.push({
-      id: sc.id,
-      row,
-      values: {
-        id: sc.id,
-        tournamentId: id,
-        playerId: sc.playerId,
-        game: sc.game,
-        score: sc.score,
-        at: sc.at,
-        attempt: sc.attempt ?? null,
-        matchId: sc.matchId ?? null,
-      },
-    })
+    const values = runValues(id, sc.id, sc)
+    if (values) runs.push({ id: sc.id, row, values })
   }
   let goneRuns: string[] = []
   if (was.scores.size + newRuns !== t.scores.length) {
@@ -989,36 +1011,15 @@ async function moveRowsOut(row: { id: string; data: unknown; hash: string }) {
   const players = Array.isArray(data.players) ? data.players : []
   const scores = Array.isArray(data.scores) ? data.scores : []
   await db().transaction(async (tx) => {
-    for (const part of chunks(players)) {
-      await tx
-        .insert(tournamentPlayers)
-        .values(
-          part.map((p) => ({
-            tournamentId: row.id,
-            id: p.id,
-            name: p.name,
-            joinedAt: Number(p.joinedAt) || 0,
-            accountId: p.accountId ?? null,
-          })),
-        )
-        .onConflictDoNothing()
+    const seats = players.map((p) => seatValues(row.id, p)).filter((v) => v != null)
+    for (const part of chunks(seats)) {
+      await tx.insert(tournamentPlayers).values(part).onConflictDoNothing()
     }
-    for (const part of chunks(scores)) {
-      await tx
-        .insert(tournamentScores)
-        .values(
-          part.map((sc) => ({
-            id: sc.id ?? legacyScoreId(row.id, sc),
-            tournamentId: row.id,
-            playerId: sc.playerId,
-            game: sc.game,
-            score: sc.score,
-            at: sc.at,
-            attempt: sc.attempt ?? null,
-            matchId: sc.matchId ?? null,
-          })),
-        )
-        .onConflictDoNothing()
+    const runs = scores
+      .map((sc) => runValues(row.id, sc?.id ?? legacyScoreId(row.id, sc), sc))
+      .filter((v) => v != null)
+    for (const part of chunks(runs)) {
+      await tx.insert(tournamentScores).values(part).onConflictDoNothing()
     }
     await tx
       .update(tournamentsTable)
@@ -1038,10 +1039,18 @@ async function readEvents(ids?: string[]): Promise<{ events: Tournament[]; hashe
   let rows = ids ? await select().where(inArray(tournamentsTable.id, ids)) : await select()
   const old = rows.filter((r) => carriesRows(r.data))
   if (old.length) {
-    for (const r of old) await moveRowsOut(r)
+    let moved = 0
+    for (const r of old) {
+      try {
+        await moveRowsOut(r)
+        moved++
+      } catch (err) {
+        console.error(`[events] moving ${r.id}'s roster and runs into their tables failed:`, err)
+      }
+    }
     const again = await select().where(inArray(tournamentsTable.id, old.map((r) => r.id)))
     rows = [...rows.filter((r) => !carriesRows(r.data)), ...again]
-    console.log(`[events] moved the roster and runs of ${old.length} events into their tables`)
+    console.log(`[events] moved the roster and runs of ${moved} of ${old.length} events into their tables`)
   }
   const players = ids
     ? await db()
@@ -1077,9 +1086,21 @@ async function readEvents(ids?: string[]): Promise<{ events: Tournament[]; hashe
   const hashes = new Map<string, string>()
   const events: Tournament[] = []
   for (const r of rows) {
-    // Some old-style rows can still be carrying theirs, if they changed as they were moved.
-    if (carriesRows(r.data)) continue
     const raw = r.data as Tournament
+    if (carriesRows(raw)) {
+      // Still carrying its roster and runs (its move failed, or it changed as it was
+      // moved): read from its JSON as before, with none of it counted as written,
+      // so its next write puts it all in the tables and takes it out of the JSON.
+      const t = normalizeTournament({
+        ...raw,
+        players: [...(seatsOf.get(r.id) ?? []), ...(Array.isArray(raw.players) ? raw.players : [])],
+        scores: [...(runsOf.get(r.id) ?? []), ...(Array.isArray(raw.scores) ? raw.scores : [])],
+      })
+      events.push(t)
+      hashes.set(r.id, r.hash)
+      written.set(t.id, { meta: '', players: new Map(), scores: new Map(), inPlace: inPlaceChanges })
+      continue
+    }
     const t = normalizeTournament({ ...raw, players: seatsOf.get(r.id) ?? [], scores: runsOf.get(r.id) ?? [] })
     events.push(t)
     hashes.set(r.id, r.hash)

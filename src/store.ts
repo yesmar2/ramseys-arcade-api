@@ -186,8 +186,13 @@ export async function replaceGameBoard(game: GameSlug, entries: LeaderboardEntry
   })
 }
 
+/** Board order: the higher score first, and of two equal ones, the earlier. */
+function boardOrder(a: LeaderboardEntry, b: LeaderboardEntry) {
+  return b.score - a.score || a.at - b.at
+}
+
 function sortByScore(entries: LeaderboardEntry[]) {
-  return [...entries].sort((a, b) => b.score - a.score || a.at - b.at)
+  return [...entries].sort(boardOrder)
 }
 
 function topBoard(entries: LeaderboardEntry[], limit = BOARD_PAGE) {
@@ -200,12 +205,16 @@ type Ymd = { y: number; m: number; d: number; weekday: string }
  * Calendar maths in the board's time zone is the hot loop of every board:
  * each period filter asks what day a score landed on, for every score. A
  * fresh Intl formatter per call cost more than the query did, so there is
- * one formatter per zone, and each timestamp's answer is kept — scores
- * never move, and there are only a few thousand of them.
+ * one formatter per zone, and each answer is kept per quarter hour: every
+ * zone's offset, and so its midnight, falls on a quarter hour, so every
+ * moment in one has the same date. Kept per timestamp instead, the answers
+ * outgrew the cache at a few hundred thousand scores, and a week's standings
+ * cost a formatter call per score, a second and a half a request.
  */
 const formatters = new Map<string, Intl.DateTimeFormat>()
 const ymdCache = new Map<number, Ymd>()
 const YMD_CACHE_MAX = 50_000
+const QUARTER_HOUR_MS = 15 * 60_000
 
 function formatterFor(timeZone: string) {
   let fmt = formatters.get(timeZone)
@@ -223,8 +232,9 @@ function formatterFor(timeZone: string) {
 }
 
 function ymdInTz(ms: number, timeZone = BOARD_TZ): Ymd {
+  const quarter = Math.floor(ms / QUARTER_HOUR_MS)
   if (timeZone === BOARD_TZ) {
-    const hit = ymdCache.get(ms)
+    const hit = ymdCache.get(quarter)
     if (hit) return hit
   }
   const parts = formatterFor(timeZone).formatToParts(new Date(ms))
@@ -237,7 +247,7 @@ function ymdInTz(ms: number, timeZone = BOARD_TZ): Ymd {
   }
   if (timeZone === BOARD_TZ) {
     if (ymdCache.size >= YMD_CACHE_MAX) ymdCache.clear()
-    ymdCache.set(ms, out)
+    ymdCache.set(quarter, out)
   }
   return out
 }
@@ -392,26 +402,69 @@ export function filterByClosedPeriod(
 }
 
 /*
- * Score history, read once and kept for a moment.
+ * Score history, read once and kept current.
  *
  * Every board, rank, and summary starts from a game's full history, and the
- * global rank needs all twelve. Each was its own round trip to the database
+ * standings need all of them. Each was its own round trip to the database
  * — about a tenth of a second each on Neon — so one rankings page cost a
- * couple of seconds before it drew anything. The whole table is a few
- * thousand rows: load it in one query, hand out per-game slices, and throw
- * it away after a short while or as soon as anything writes.
+ * couple of seconds before it drew anything. So the whole table is loaded in
+ * one query, in board order, and handed out per game.
+ *
+ * A saved score is put into its place in that copy as it lands. It used to
+ * throw the copy away instead, so every save cost a read of every score ever
+ * saved: fine at a few thousand, and at a few hundred thousand the reads
+ * queued behind each other until nothing answered. The copy is still read
+ * again every ten minutes, in case a script changed the table underneath,
+ * and at once when something rewrites scores wholesale (invalidateHistoryCache).
  */
 const HISTORY_TTL_MS = 10 * 60_000
-let historyCache: { at: number; byGame: Map<string, LeaderboardEntry[]> } | null = null
-let historyLoading: Promise<Map<string, LeaderboardEntry[]>> | null = null
+
+/** One reading of the table, numbered so a view knows which reading it was drawn from. */
+type HistoryCopy = { at: number; epoch: number; byGame: Map<string, LeaderboardEntry[]> }
+
+let historyCache: HistoryCopy | null = null
+let historyLoading: Promise<HistoryCopy> | null = null
+let historyEpoch = 0
+/** Counts wholesale rewrites: a reading begun before one is handed out but not kept. */
+let historyInvalidations = 0
+/** Scores saved while a reading was under way: put into the new copy when it lands. */
+let savedDuringLoad: { game: string; entry: LeaderboardEntry }[] = []
+/** Moves each time a game takes a score in place; a view of that game is redrawn when it does. */
+const gameVersions = new Map<string, number>()
 
 export function invalidateHistoryCache() {
   historyCache = null
+  historyInvalidations++
 }
 
-async function loadHistory(): Promise<Map<string, LeaderboardEntry[]>> {
-  if (historyCache && Date.now() - historyCache.at < HISTORY_TTL_MS) return historyCache.byGame
+/** Put a score into a list already in board order, after any it ties with exactly. */
+function insertInOrder(list: LeaderboardEntry[], entry: LeaderboardEntry) {
+  let lo = 0
+  let hi = list.length
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1
+    if (boardOrder(list[mid], entry) <= 0) lo = mid + 1
+    else hi = mid
+  }
+  list.splice(lo, 0, entry)
+}
+
+/** A score just written to the table, put into the history in place. */
+function rememberScore(game: string, entry: LeaderboardEntry) {
+  if (historyLoading) savedDuringLoad.push({ game, entry })
+  if (historyCache) {
+    const list = historyCache.byGame.get(game) ?? []
+    insertInOrder(list, entry)
+    historyCache.byGame.set(game, list)
+  }
+  gameVersions.set(game, (gameVersions.get(game) ?? 0) + 1)
+}
+
+async function loadCopy(): Promise<HistoryCopy> {
+  if (historyCache && Date.now() - historyCache.at < HISTORY_TTL_MS) return historyCache
   if (historyLoading) return historyLoading
+  savedDuringLoad = []
+  const invalidationsAtStart = historyInvalidations
   historyLoading = (async () => {
     const rows = await db()
       .select()
@@ -423,17 +476,84 @@ async function loadHistory(): Promise<Map<string, LeaderboardEntry[]>> {
       list.push(rowToEntry(row))
       byGame.set(row.game, list)
     }
-    historyCache = { at: Date.now(), byGame }
-    return byGame
+    // A score saved while the table was being read may or may not be in what came back.
+    for (const { game, entry } of savedDuringLoad) {
+      const list = byGame.get(game) ?? []
+      if (!list.some((e) => e.id === entry.id)) insertInOrder(list, entry)
+      byGame.set(game, list)
+    }
+    savedDuringLoad = []
+    const copy: HistoryCopy = { at: Date.now(), epoch: ++historyEpoch, byGame }
+    // Rewritten wholesale while this was reading: good enough to answer with, not to keep.
+    if (invalidationsAtStart === historyInvalidations) historyCache = copy
+    return copy
   })().finally(() => {
     historyLoading = null
   })
   return historyLoading
 }
 
+async function loadHistory(): Promise<Map<string, LeaderboardEntry[]>> {
+  return (await loadCopy()).byGame
+}
+
 async function historyFor(game: GameSlug): Promise<LeaderboardEntry[]> {
   const byGame = await loadHistory()
   return byGame.get(game) ?? []
+}
+
+/*
+ * A game's board for one period, drawn once and kept until the game takes a
+ * score, the history is read again, or the period moves on. The history is in
+ * board order, so a period's board is a filter of it, never a sort; with it
+ * comes where each player's best run sits, which is what a player's rank and
+ * the standings are read from. Before this, every board, rank and summary
+ * filtered and sorted every score of every game it touched, per request.
+ */
+type PoolView = {
+  epoch: number
+  version: number
+  window: string
+  entries: LeaderboardEntry[]
+  /** Each player's best run: its index in entries. Players come in the order they first appear, best first. */
+  bestAt: Map<string, number>
+  /** The place of the player whose best run is at each index, or 0: kept flat, it costs four bytes a run. */
+  placeAt: Int32Array
+  /** How many players are on it: the field a place is out of. */
+  players: number
+}
+
+const poolViews = new Map<string, PoolView>()
+
+/** What a period's board covers from now: a new day moves the daily and weekly ones, a new month the monthly. */
+function periodWindow(period: Period, now: number): string {
+  if (period === 'all') return 'all'
+  if (period === 'monthly') return String(monthKey(now))
+  return String(keyOf(now))
+}
+
+async function poolView(game: GameSlug, period: Period, now = Date.now()): Promise<PoolView> {
+  const copy = await loadCopy()
+  const history = copy.byGame.get(game) ?? []
+  const epoch = copy.epoch
+  const version = gameVersions.get(game) ?? 0
+  const window = periodWindow(period, now)
+  const key = `${game}:${period}`
+  const hit = poolViews.get(key)
+  if (hit && hit.epoch === epoch && hit.version === version && hit.window === window) return hit
+  const entries = period === 'all' ? history.slice() : filterByPeriod(history, period, now)
+  const bestAt = new Map<string, number>()
+  const placeAt = new Int32Array(entries.length)
+  let players = 0
+  for (let i = 0; i < entries.length; i++) {
+    const name = entries[i].name
+    if (bestAt.has(name)) continue
+    bestAt.set(name, i)
+    placeAt[i] = ++players
+  }
+  const view: PoolView = { epoch, version, window, entries, bestAt, placeAt, players }
+  poolViews.set(key, view)
+  return view
 }
 
 export async function getClosedBoard(
@@ -451,10 +571,7 @@ export async function getBoard(
   scope?: NameScope,
   limit = BOARD_PAGE,
 ): Promise<LeaderboardEntry[]> {
-  return topBoard(
-    filterByNames(filterByPeriod(await historyFor(game), period, now), scope),
-    limit,
-  )
+  return filterByNames((await poolView(game, period, now)).entries, scope).slice(0, limit)
 }
 
 /**
@@ -472,9 +589,7 @@ export async function getBoardPage(
   const now = opts.now ?? Date.now()
   const offset = Math.max(0, Math.floor(opts.offset ?? 0))
   const limit = Math.max(1, Math.floor(opts.limit ?? BOARD_PAGE))
-  const pool = sortByScore(
-    filterByNames(filterByPeriod(await historyFor(game), period, now), opts.scope),
-  )
+  const pool = filterByNames((await poolView(game, period, now)).entries, opts.scope)
   return { entries: pool.slice(offset, offset + limit), total: pool.length }
 }
 
@@ -523,13 +638,14 @@ export async function bestForName(
 ): Promise<YouEntry | null> {
   const cleaned = name.trim().slice(0, 12).toUpperCase()
   if (!cleaned) return null
-  const pool = sortByScore(
-    filterByNames(filterByPeriod(await historyFor(game), period, now), scope),
-  )
-  const mine = pool.filter((e) => e.name === cleaned)
-  if (!mine.length) return null
-  const best = mine[0]
-  return { ...best, rank: pool.findIndex((e) => e.id === best.id) + 1 }
+  const view = await poolView(game, period, now)
+  if (!scope) {
+    const at = view.bestAt.get(cleaned)
+    return at == null ? null : { ...view.entries[at], rank: at + 1 }
+  }
+  const pool = filterByNames(view.entries, scope)
+  const at = pool.findIndex((e) => e.name === cleaned)
+  return at < 0 ? null : { ...pool[at], rank: at + 1 }
 }
 
 export async function bestsForName(
@@ -545,6 +661,14 @@ export async function bestsForName(
   }
   return out
 }
+
+/**
+ * Ties in the standings go to the name first in the alphabet. One collator,
+ * made once, sorts the same as localeCompare with no locale given, which built
+ * its rules afresh each call: most of a standings sort's time at twenty
+ * thousand players.
+ */
+const nameOrder = new Intl.Collator()
 
 /** Placement points from a full-field place: 1st ≈ 100, last ≈ 1, scales with N. */
 export function placePoints(place: number, fieldSize: number): number {
@@ -585,9 +709,10 @@ async function periodPlacements(
   now = Date.now(),
   scope?: NameScope,
 ): Promise<{ name: string; place: number }[]> {
-  return placementsFromPool(
-    sortByScore(filterByNames(filterByPeriod(await historyFor(game), period, now), scope)),
-  )
+  const view = await poolView(game, period, now)
+  if (scope) return placementsFromPool(filterByNames(view.entries, scope))
+  let place = 0
+  return Array.from(view.bestAt.keys(), (name) => ({ name, place: ++place }))
 }
 
 async function closedPeriodPlacements(
@@ -627,7 +752,7 @@ async function aggregateGlobalRanks(
     .sort((a, b) => {
       if (b.score !== a.score) return b.score - a.score
       if (b.games !== a.games) return b.games - a.games
-      return a.name.localeCompare(b.name)
+      return nameOrder.compare(a.name, b.name)
     })
 
   return ranked.map((row, i) => ({
@@ -639,12 +764,182 @@ async function aggregateGlobalRanks(
   }))
 }
 
+/*
+ * The standings for one period, kept and brought up to date a game at a time.
+ *
+ * Adding up every player's points from every game on every request was the
+ * slowest thing the API did: at twenty thousand players, a quarter of a
+ * second of work per request, which a few dozen people browsing turned into a
+ * queue that never cleared. Now each game's places are counted in once, and
+ * when a game takes a score only that game's places are taken out and counted
+ * in again, then the players are put in order: at most half a second behind
+ * for anyone browsing, and never behind for the player who just saved (see
+ * STANDINGS_SETTLE_MS).
+ *
+ * Only each player's total is kept. Where they placed on each game is read
+ * off that game's board when a line is asked for, a handful at a time; kept
+ * for everyone, it was most of the API's memory.
+ */
+type StandingsView = {
+  epoch: number
+  window: string
+  /** When the boards it was counted from were read. */
+  asOf: number
+  /** The board each game's places were counted from. */
+  counted: Map<GameSlug, PoolView>
+  tallies: Map<string, { score: number; games: number }>
+  /** Players in standings order, with the totals they were put in order by. */
+  order: { name: string; score: number; games: number }[] | null
+  /** Each player's index in order. */
+  index: Map<string, number>
+}
+
+const standingsViews = new Map<Period, StandingsView>()
+
+/** Count one game's places into the tallies, or (sign -1) take them back out. */
+function countPlaces(view: StandingsView, pool: PoolView, sign: 1 | -1) {
+  for (const [name, at] of pool.bestAt) {
+    const points = placePoints(pool.placeAt[at], pool.players)
+    if (points <= 0) continue
+    const row = view.tallies.get(name)
+    if (sign > 0) {
+      if (row) {
+        row.score += points
+        row.games += 1
+      } else {
+        view.tallies.set(name, { score: points, games: 1 })
+      }
+    } else if (row) {
+      row.score -= points
+      row.games -= 1
+      if (row.games <= 0) view.tallies.delete(name)
+    }
+  }
+}
+
+function orderTallies(view: StandingsView) {
+  const order = Array.from(view.tallies, ([name, { score, games }]) => ({ name, score, games }))
+  order.sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score
+    if (b.games !== a.games) return b.games - a.games
+    return nameOrder.compare(a.name, b.name)
+  })
+  view.order = order
+  view.index = new Map(order.map((row, i) => [row.name, i]))
+}
+
+/** The line at one place in the standings, with where the player placed on each game. */
+function standingAt(view: StandingsView, i: number): GlobalRankEntry {
+  const row = view.order![i]
+  const byGame: Partial<Record<GameSlug, GlobalGamePlace>> = {}
+  for (const game of ALLOWED_GAMES) {
+    const pool = view.counted.get(game)
+    const at = pool?.bestAt.get(row.name)
+    if (!pool || at == null) continue
+    const place = pool.placeAt[at]
+    byGame[game] = { place, points: placePoints(place, pool.players), total: pool.players }
+  }
+  return { name: row.name, rank: i + 1, score: row.score, games: row.games, byGame }
+}
+
+/*
+ * Counting a game in again and putting twenty thousand players in order takes
+ * a few tens of milliseconds, and every save calls for it. So the standings
+ * stand for half a second after each count: saves inside it share the next
+ * one. The player who just saved is never shown the count from before their
+ * save; they wait for the next, at most that half second.
+ */
+const STANDINGS_SETTLE_MS = 500
+/** When each player last saved a score, for "is this count from after my save?" */
+const savedAt = new Map<string, number>()
+const standingsRefresh = new Map<Period, Promise<StandingsView>>()
+
+function noteSave(name: string) {
+  if (savedAt.size >= 100_000) savedAt.clear()
+  savedAt.set(name, Date.now())
+}
+
+async function refreshStandings(period: Period, now: number): Promise<StandingsView> {
+  const asOf = Date.now()
+  // Every game's board first. Reading one can land a new copy of the history,
+  // and places from two copies mustn't be added together, so read again then.
+  let pools: PoolView[] = []
+  for (let attempt = 0; attempt < 3; attempt++) {
+    pools = []
+    for (const game of ALLOWED_GAMES) pools.push(await poolView(game, period, now))
+    if (pools.every((pool) => pool.epoch === pools[0].epoch)) break
+  }
+  const epoch = pools[0]?.epoch ?? 0
+  const window = periodWindow(period, now)
+  let view = standingsViews.get(period)
+  if (!view || view.epoch !== epoch || view.window !== window) {
+    view = { epoch, window, asOf, counted: new Map(), tallies: new Map(), order: null, index: new Map() }
+    standingsViews.set(period, view)
+  }
+  ALLOWED_GAMES.forEach((game, i) => {
+    const pool = pools[i]
+    const had = view.counted.get(game)
+    if (had === pool) return
+    if (had) countPlaces(view, had, -1)
+    countPlaces(view, pool, 1)
+    view.counted.set(game, pool)
+    view.order = null
+  })
+  if (!view.order) orderTallies(view)
+  view.asOf = asOf
+  return view
+}
+
+/** The standings for a period; `forName` asks for a count from after that player's last save. */
+async function standingsView(period: Period, now: number, forName?: string): Promise<StandingsView> {
+  const mine = forName ? (savedAt.get(forName) ?? 0) : 0
+  for (let round = 0; round < 3; round++) {
+    const view = standingsViews.get(period)
+    const current = view?.order && view.window === periodWindow(period, now)
+    if (view && current && view.asOf > mine && Date.now() - view.asOf < STANDINGS_SETTLE_MS) return view
+    // Just saved: wait out the moment, so saves close together share one count.
+    if (view && current && mine >= view.asOf) {
+      const wait = STANDINGS_SETTLE_MS - (Date.now() - view.asOf)
+      if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait))
+    }
+    let pending = standingsRefresh.get(period)
+    if (!pending) {
+      pending = refreshStandings(period, now).finally(() => standingsRefresh.delete(period))
+      standingsRefresh.set(period, pending)
+    }
+    const fresh = await pending
+    if (fresh.asOf > mine) return fresh
+  }
+  return refreshStandings(period, now)
+}
+
 export async function globalRanks(
   period: Period = 'all',
   now = Date.now(),
   scope?: NameScope,
 ): Promise<GlobalRankEntry[]> {
-  return aggregateGlobalRanks((game) => periodPlacements(game, period, now, scope))
+  if (scope) return aggregateGlobalRanks((game) => periodPlacements(game, period, now, scope))
+  const view = await standingsView(period, now)
+  return view.order!.map((_, i) => standingAt(view, i))
+}
+
+/** One page of the standings, and how many players they run to. */
+export async function globalRanksPage(
+  period: Period,
+  offset: number,
+  limit: number,
+  now = Date.now(),
+  scope?: NameScope,
+): Promise<{ total: number; entries: GlobalRankEntry[] }> {
+  if (scope) {
+    const all = await globalRanks(period, now, scope)
+    return { total: all.length, entries: all.slice(offset, offset + limit) }
+  }
+  const view = await standingsView(period, now)
+  const total = view.order!.length
+  const entries: GlobalRankEntry[] = []
+  for (let i = Math.max(0, offset); i < Math.min(total, offset + limit); i++) entries.push(standingAt(view, i))
+  return { total, entries }
 }
 
 /** Global ranks for a completed weekly or monthly period. */
@@ -669,36 +964,30 @@ export async function rankForName(
   nearby: GlobalRankEntry[]
 }> {
   const cleaned = name.trim().slice(0, 12).toUpperCase()
-  const all = await globalRanks(period, now, scope)
-  if (!cleaned) {
+  const nobody = (totalPlayers: number) => ({ rank: null, score: 0, totalPlayers, byGame: {}, nearby: [] })
+  if (scope) {
+    const all = await globalRanks(period, now, scope)
+    const me = cleaned ? all.find((row) => row.name === cleaned) : undefined
+    if (!me) return nobody(all.length)
+    const idx = me.rank - 1
     return {
-      rank: null,
-      score: 0,
+      rank: me.rank,
+      score: me.score,
       totalPlayers: all.length,
-      byGame: {},
-      nearby: [],
+      byGame: me.byGame,
+      nearby: all.slice(Math.max(0, idx - neighborRadius), Math.min(all.length, idx + neighborRadius + 1)),
     }
   }
-  const me = all.find((row) => row.name === cleaned)
-  if (!me) {
-    return {
-      rank: null,
-      score: 0,
-      totalPlayers: all.length,
-      byGame: {},
-      nearby: [],
-    }
+  const view = await standingsView(period, now, cleaned || undefined)
+  const total = view.order!.length
+  const idx = cleaned ? view.index.get(cleaned) : undefined
+  if (idx == null) return nobody(total)
+  const me = standingAt(view, idx)
+  const nearby: GlobalRankEntry[] = []
+  for (let i = Math.max(0, idx - neighborRadius); i < Math.min(total, idx + neighborRadius + 1); i++) {
+    nearby.push(i === idx ? me : standingAt(view, i))
   }
-  const idx = me.rank - 1
-  const start = Math.max(0, idx - neighborRadius)
-  const end = Math.min(all.length, idx + neighborRadius + 1)
-  return {
-    rank: me.rank,
-    score: me.score,
-    totalPlayers: all.length,
-    byGame: me.byGame,
-    nearby: all.slice(start, end),
-  }
+  return { rank: me.rank, score: me.score, totalPlayers: total, byGame: me.byGame, nearby }
 }
 
 export async function qualifies(
@@ -732,9 +1021,16 @@ export async function rankForScore(
   now = Date.now(),
 ): Promise<number | null> {
   if (score <= 0) return null
-  const pool = sortByScore(filterByPeriod(await historyFor(game), period, now))
-  const better = pool.filter((e) => e.score > score).length
-  return better + 1
+  // The board is in score order, highest first: count the scores above this one by halving.
+  const { entries } = await poolView(game, period, now)
+  let lo = 0
+  let hi = entries.length
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1
+    if (entries[mid].score > score) lo = mid + 1
+    else hi = mid
+  }
+  return lo + 1
 }
 
 export async function ranksForScore(
@@ -798,9 +1094,9 @@ export async function addScore(
    * Every score is kept. This used to prune to the top 500 per game and drop
    * anything older than 100 days, which made sense when the store was a JSON
    * file rewritten in full on every write — it is a table now, and a rank
-   * only means something if the field behind it is real.
+   * only means something if the field behind it is real. Once written, it
+   * goes into the history in place (rememberScore): no reading it all back.
    */
-  invalidateHistoryCache()
   await db().insert(leaderboardScores).values({
     id: entry.id,
     game,
@@ -813,12 +1109,13 @@ export async function addScore(
     ipHash: audit.ipHash ?? null,
     userAgent: audit.userAgent?.slice(0, 256) ?? null,
   })
+  rememberScore(game, entry)
+  noteSave(cleaned)
 
-  const next = await historyFor(game)
   const ranks: Partial<Record<Period, number>> = {}
   for (const period of PERIODS) {
-    const pool = sortByScore(filterByPeriod(next, period, now))
-    const index = pool.findIndex((e) => e.id === entry.id)
+    const { entries } = await poolView(game, period, now)
+    const index = entries.findIndex((e) => e.id === entry.id)
     if (index !== -1) ranks[period] = index + 1
   }
 

@@ -20,7 +20,7 @@ import {
   boardsSummaryForPeriod,
   getBoard,
   getBoardPage,
-  globalRanks,
+  globalRanksPage,
   isPeriod,
   qualifies,
   qualifiesAny,
@@ -96,12 +96,12 @@ leaderboardsRouter.get('/rank', async (req, res) => {
     return
   }
   const { limit, offset } = pageParams(req.query, 50)
-  const all = await globalRanks(period, Date.now(), scope)
+  const page = await globalRanksPage(period, offset, limit, Date.now(), scope)
   res.json({
     period,
     offset,
-    totalPlayers: all.length,
-    entries: await withAvatarIds(all.slice(offset, offset + limit)),
+    totalPlayers: page.total,
+    entries: await withAvatarIds(page.entries),
   })
 })
 

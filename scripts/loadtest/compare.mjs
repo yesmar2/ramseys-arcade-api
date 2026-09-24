@@ -21,7 +21,27 @@ const name = () =>
       ? 'LW' + String(Math.floor(rand() * WRITERS)).padStart(5, '0')
       : 'LT' + String(Math.floor(rand() ** 1.6 * 20000) + 1).padStart(5, '0')
 
+// Each game's record books, as the new server lists them.
+const BOOKS = {}
+for (const game of GAMES) {
+  const body = await (await fetch(`${NEW}/records/${game}?period=all`)).json()
+  BOOKS[game] = (body.records ?? []).map((r) => r.id)
+}
+const RECORDS = arg('records', 'mixed') // 'only' for record queries alone
+
+function recordQuery() {
+  const p = pick(PERIODS)
+  const g = pick(GAMES.filter((game) => BOOKS[game]?.length))
+  switch (Math.floor(rand() * 4)) {
+    case 0: return `/records/site${rand() < 0.7 ? `?name=${name()}` : ''}`
+    case 1: return `/records/${g}?period=${p}${rand() < 0.6 ? `&name=${name()}` : ''}`
+    case 2: return `/records/${g}/${pick(BOOKS[g])}?period=${p}&limit=${pick([1, 10, 100])}&offset=${pick([0, 0, 10])}${rand() < 0.6 ? `&name=${name()}` : ''}`
+    default: return `/records/${g}/${pick(BOOKS[g])}?period=all&name=${name()}&limit=1`
+  }
+}
+
 function query() {
+  if (RECORDS === 'only' || (RECORDS === 'mixed' && rand() < 0.4)) return recordQuery()
   const p = pick(PERIODS)
   const g = pick(GAMES)
   switch (Math.floor(rand() * 7)) {

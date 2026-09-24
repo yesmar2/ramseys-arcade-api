@@ -1,5 +1,5 @@
 // Load test for the arcade API: a crowd of virtual players browsing boards and saving scores.
-// Usage: node load.mjs --users 200 --seconds 60 --writers 100 [--base http://127.0.0.1:8796]
+// Usage: node load.mjs --users 200 --seconds 60 --writers 100 [--base http://127.0.0.1:8796] [--mix browse|report]
 // Throwaway database only. Prints per-request latency percentiles, errors and the server's memory.
 import { execSync } from 'node:child_process'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
@@ -93,21 +93,41 @@ async function accounts(count) {
 
 /* ---------- what a player does ---------- */
 
+// Each game's record books, read from the API once: id and whether lower is better.
+const BOOKS = {}
+async function learnBooks() {
+  for (const game of GAMES) {
+    const res = await fetch(`${BASE}/records/${game}?period=all`)
+    const body = await res.json()
+    BOOKS[game] = (body.records ?? []).map((r) => ({ id: r.id, lower: r.direction === 'lower' }))
+  }
+}
+
 // Reading: the home page, a game's page, the boards, a profile.
 async function browse() {
   const name = player()
   const game = pick(GAMES)
   const period = pick(PERIODS)
   const r = Math.random()
-  if (r < 0.3) {
+  if (r < 0.2) {
+    // Home: the standings strip, the site's records and one game's book.
     await Promise.all([
-      call('GET summary', `/leaderboards/summary?period=${period}`),
-      call('GET rank', `/leaderboards/rank?period=${period}&name=${name}`),
+      call('GET summary', `/leaderboards/summary?period=${period}&limit=3`),
+      call('GET rank', `/leaderboards/rank?period=${period}&limit=5`),
+      call('GET site records', `/records/site?name=${name}`),
+      call('GET record book', `/records/${game}?period=all`),
+    ])
+  } else if (r < 0.35) {
+    // A game's page: its board, your bests, its record book with you in it.
+    await Promise.all([
+      call('GET board', `/leaderboards/${game}?period=${period}&limit=100&name=${name}`),
+      call('GET bests', `/leaderboards/bests?name=${name}`),
+      call('GET record book', `/records/${game}?period=all&name=${name}`),
     ])
   } else if (r < 0.6) {
     await Promise.all([
-      call('GET board', `/leaderboards/${game}?period=${period}&limit=25&name=${name}`),
-      call('GET bests', `/leaderboards/bests?name=${name}`),
+      call('GET summary', `/leaderboards/summary?period=${period}`),
+      call('GET rank', `/leaderboards/rank?period=${period}&name=${name}`),
     ])
   } else if (r < 0.85) {
     await call('GET board', `/leaderboards/${game}?period=${period}&limit=25`)
@@ -116,19 +136,33 @@ async function browse() {
   }
 }
 
-// Saving a run the way the end-of-run card does: the save, then the board and the standings read back.
+// A run the way a game and its end card make one: records during it, the save, then the card's reads.
 async function playRun(account) {
   const game = pick(Object.keys(TOPS))
+  const auth = { 'content-type': 'application/json', authorization: `Bearer ${account.token}` }
+  const books = BOOKS[game] ?? []
+  const posted = []
+  for (let i = 0; i < 2 && books.length; i++) {
+    const book = pick(books)
+    const value = book.lower ? 5000 + Math.floor(Math.random() * 120000) : 2 + Math.floor(Math.random() ** 2 * 60)
+    await call('POST record', `/records/${game}/${book.id}`, {
+      method: 'POST',
+      headers: auth,
+      body: JSON.stringify({ name: account.name, score: value, device: 'desktop' }),
+    })
+    posted.push(book.id)
+  }
   const score = Math.max(1, Math.floor(Math.random() ** 2 * TOPS[game]))
   const saved = await call('POST save', `/leaderboards/${game}`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', authorization: `Bearer ${account.token}` },
+    headers: auth,
     body: JSON.stringify({ name: account.name, score, device: 'desktop' }),
   })
   if (!saved) return
   await Promise.all([
     call('GET board', `/leaderboards/${game}?period=weekly&limit=500&name=${account.name}`),
     call('GET rank', `/leaderboards/rank?period=weekly&name=${account.name}`),
+    ...posted.map((id) => call('GET record', `/records/${game}/${id}?period=all&name=${account.name}&limit=1`)),
   ])
 }
 
@@ -136,6 +170,7 @@ async function playRun(account) {
 
 const pid = serverPid()
 const writers = WRITERS ? await accounts(WRITERS) : []
+await learnBooks()
 console.log(`base ${BASE} · server pid ${pid} · ${USERS} browsing · ${writers.length} saving · ${SECONDS}s`)
 const rss = []
 const end = Date.now() + SECONDS * 1000

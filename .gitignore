@@ -18,3 +18,7 @@ pruned-records-*.json
 backups/
 # Throwaway sessions the load test makes on its own database (scripts/loadtest).
 scripts/loadtest/accounts.json
+# CPU profiles and their triggers (scripts/loadtest/profile-hook.mjs).
+scripts/loadtest/*.cpuprofile
+scripts/loadtest/profile.start
+scripts/loadtest/profile.stop

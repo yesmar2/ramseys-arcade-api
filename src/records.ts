@@ -1,6 +1,6 @@
-import { eq } from 'drizzle-orm'
+import { and, desc, eq, inArray } from 'drizzle-orm'
 import { db } from './db/client.js'
-import { recordScores } from './db/schema.js'
+import { leaderboardScores, recordScores } from './db/schema.js'
 import { getClaim } from './names.js'
 import { notify } from './notifications.js'
 import { clock, gameLabel, spanWords } from './words.js'
@@ -11,7 +11,6 @@ import {
   isDeviceType,
   legacyGameSlugs,
   periodWindow,
-  playerRuns,
   previousBoardDateKey,
   resolveGameSlug,
   type DeviceType,
@@ -858,12 +857,18 @@ export type CrossRunStreakHit = {
   totalEntries: number
 }
 
-/** A player's runs on a game, newest first: from the history the boards keep, not another query per save. */
 async function playerRunHistory(
   game: GameSlug,
   name: string,
 ): Promise<{ score: number; at: number }[]> {
-  return playerRuns(game, name)
+  return db()
+    .select({
+      score: leaderboardScores.score,
+      at: leaderboardScores.at,
+    })
+    .from(leaderboardScores)
+    .where(and(eq(leaderboardScores.game, game), eq(leaderboardScores.name, name)))
+    .orderBy(desc(leaderboardScores.at))
 }
 
 /** Consecutive calendar days (BOARD_TZ) ending today that include at least one run. */

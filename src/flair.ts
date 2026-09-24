@@ -88,6 +88,7 @@ export async function flairFor(rawName: string, now = Date.now()): Promise<Flair
   const bestWeek = weekly.length ? Math.min(...weekly) : null
   const bestMonth = monthly.length ? Math.min(...monthly) : null
   const events = trophies.filter((t) => t.period === 'event').length
+  const sets = trophies.filter((t) => t.period === 'hunt').length
   const games = new Set(runs.map((r) => r.game)).size
   const streak = bestStreak(runs.map((r) => boardDateKey(r.at)))
 
@@ -115,6 +116,8 @@ export async function flairFor(rawName: string, now = Date.now()): Promise<Flair
         return { id, earned: streak >= STREAK_FOR_PIN, best: streak }
       case 'crown':
         return { id, earned: bestMonth === 1, best: bestMonth }
+      case 'bugnet':
+        return { id, earned: sets > 0, best: sets }
       default: {
         const place = standing.byGame[id as GameSlug]?.place ?? null
         return { id, earned: place != null && place <= TOP_FOR_PIN, best: place }

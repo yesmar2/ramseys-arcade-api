@@ -564,6 +564,12 @@ export const bugHuntFinds = pgTable(
     bug: text('bug').notNull(),
     spot: text('spot').notNull(),
     foundAt: bigint('found_at', { mode: 'number' }).notNull(),
+    /**
+     * Toward a month's set: the API was told on the find's own day, and it
+     * names that day's bug. A backlog sent up later still fills a player's
+     * collection, but it never puts a set on the shelf.
+     */
+    counted: boolean('counted').notNull().default(false),
   },
   (t) => [primaryKey({ columns: [t.accountId, t.day] }), index('bug_hunt_day_idx').on(t.day, t.foundAt)],
 )

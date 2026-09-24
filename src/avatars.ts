@@ -64,7 +64,7 @@ export const AVATAR_GAME_PINS = [
 ] as const
 
 /** Worn on the badge's edge, for what you've done. */
-export const AVATAR_PINS = ['welcome', 'games', 'streak', 'crown', ...AVATAR_GAME_PINS] as const
+export const AVATAR_PINS = ['welcome', 'games', 'streak', 'crown', 'bugnet', ...AVATAR_GAME_PINS] as const
 export type AvatarPin = (typeof AVATAR_PINS)[number]
 
 /** Palette size. Indices are what get saved, so this only ever grows. */

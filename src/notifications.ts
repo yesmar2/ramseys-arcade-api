@@ -60,7 +60,7 @@ export type NotificationMeta = {
   eventId?: string
   matchId?: string
   /** The trophy it announces. */
-  trophy?: { period: 'weekly' | 'monthly' | 'event'; rank: number }
+  trophy?: { period: 'weekly' | 'monthly' | 'event' | 'hunt'; rank: number }
   /** Flair it unlocked, for the row to offer to put on. */
   ring?: string
   pin?: string

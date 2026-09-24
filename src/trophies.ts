@@ -1,4 +1,4 @@
-import { and, count, desc, eq, inArray } from 'drizzle-orm'
+import { and, count, desc, eq, inArray, ne } from 'drizzle-orm'
 import { db } from './db/client.js'
 import { getClaim } from './names.js'
 import { notify } from './notifications.js'
@@ -11,7 +11,8 @@ import {
 } from './store.js'
 import { ordinal, pts } from './words.js'
 
-export type TrophyPeriod = 'weekly' | 'monthly' | 'event'
+/** `hunt`: every bug of a month's bug hunt caught, one award a month (periodKey YYYYMM). */
+export type TrophyPeriod = 'weekly' | 'monthly' | 'event' | 'hunt'
 export const MAX_TROPHY_RANK = 10
 
 export type TrophyAward = {
@@ -89,7 +90,7 @@ async function setCursor(next: { weeklyInitialized: boolean; monthlyInitialized:
 
 /** Board trophies only — event wins are awarded directly, not by period. */
 async function awardClosedPeriod(
-  period: Exclude<TrophyPeriod, 'event'>,
+  period: Exclude<TrophyPeriod, 'event' | 'hunt'>,
   periodKey: number,
   now: number,
   /** Tell the players: only for the period that just closed, never a backfill. */
@@ -247,7 +248,7 @@ let ensuring: Promise<void> | null = null
  */
 const settledPeriods = new Set<string>()
 
-async function awardsGiven(period: Exclude<TrophyPeriod, 'event'>, periodKey: number): Promise<number> {
+async function awardsGiven(period: Exclude<TrophyPeriod, 'event' | 'hunt'>, periodKey: number): Promise<number> {
   const rows = await db()
     .select({ n: count() })
     .from(trophyAwards)
@@ -330,9 +331,11 @@ export async function trophiesForName(name: string): Promise<TrophyAward[]> {
 
 export async function recentTrophies(limit = 20): Promise<TrophyAward[]> {
   const capped = Math.min(50, Math.max(1, Math.floor(limit)) || 20)
+  // The boards' feed is places and wins; a bug hunt set is a player's own.
   const rows = await db()
     .select()
     .from(trophyAwards)
+    .where(ne(trophyAwards.period, 'hunt'))
     .orderBy(desc(trophyAwards.awardedAt), trophyAwards.rank)
     .limit(capped)
   return rows.map(rowToAward)
@@ -363,6 +366,8 @@ export type TrophySummary = {
   topTen: number
   /** Events won, counted separately from the rolling board trophies. */
   events: number
+  /** Full months of the bug hunt. */
+  sets: number
 }
 
 /**
@@ -438,16 +443,73 @@ async function notifyEventWin(name: string, eventTitle: string, eventId: string)
 
 export type TrophyCount = Pick<TrophySummary, 'total' | 'podium'>
 
+/**
+ * A month of the bug hunt caught in full: all twelve bugs, each on its own
+ * day. The trophy goes on the shelf of the tag the account plays as, and the
+ * inbox says so. The first set ever also unlocks the bug net pin.
+ */
+export async function awardHuntSet(opts: {
+  accountId: string
+  name: string
+  /** YYYYMM of the set. */
+  periodKey: number
+  /** How many finds went into it. */
+  finds: number
+  awardedAt: number
+}): Promise<{ created: boolean; firstSet: boolean }> {
+  const name = opts.name.trim().slice(0, 12).toUpperCase()
+  if (!name) return { created: false, firstSet: false }
+  const before = await db()
+    .select({ periodKey: trophyAwards.periodKey })
+    .from(trophyAwards)
+    .where(and(eq(trophyAwards.period, 'hunt'), eq(trophyAwards.accountId, opts.accountId)))
+  if (before.some((b) => b.periodKey === opts.periodKey)) return { created: false, firstSet: false }
+  const inserted = await db()
+    .insert(trophyAwards)
+    .values({
+      id: awardId('hunt', opts.periodKey, name),
+      period: 'hunt',
+      periodKey: opts.periodKey,
+      name,
+      rank: 1,
+      score: 12,
+      games: Math.max(0, Math.floor(opts.finds)),
+      accountId: opts.accountId,
+      awardedAt: opts.awardedAt,
+    })
+    .onConflictDoNothing()
+    .returning({ id: trophyAwards.id })
+  if (!inserted.length) return { created: false, firstSet: false }
+  const firstSet = before.length === 0
+  const month = monthName(opts.periodKey)
+  await notify({
+    accountId: opts.accountId,
+    kind: 'trophy',
+    title: `You caught ${month}’s full set`,
+    body: firstSet
+      ? 'All twelve bugs in the hunt. The set is on your shelf, and the bug net pin is yours to wear.'
+      : 'All twelve bugs in the hunt. The set is on your shelf.',
+    href: '/rank/all?focus=trophies',
+    meta: { trophy: { period: 'hunt', rank: 1 }, ...(firstSet ? { pin: 'bugnet' } : {}) },
+    digestKey: `trophy:hunt:${opts.periodKey}`,
+    once: true,
+    now: opts.awardedAt,
+  }).catch(() => undefined)
+  return { created: true, firstSet }
+}
+
 function summarizeAwards(awards: TrophyAward[]): TrophySummary {
   let podium = 0
   let topTen = 0
   let events = 0
+  let sets = 0
   for (const award of awards) {
     if (award.period === 'event') events++
+    else if (award.period === 'hunt') sets++
     else if (award.rank <= 3) podium++
     else topTen++
   }
-  return { total: awards.length, podium, topTen, events }
+  return { total: awards.length, podium, topTen, events, sets }
 }
 
 export async function trophySummaryForName(name: string): Promise<TrophySummary> {
@@ -467,7 +529,7 @@ export async function trophySummariesForNames(
   for (const award of rows) {
     const row = out[award.name] ?? { total: 0, podium: 0 }
     row.total++
-    if (award.period !== 'event' && award.rank <= 3) row.podium++
+    if (award.period !== 'event' && award.period !== 'hunt' && award.rank <= 3) row.podium++
     out[award.name] = row
   }
   return out

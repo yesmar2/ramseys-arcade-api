@@ -27,9 +27,11 @@ function ensurePool() {
     idle_timeout: 20,
     connect_timeout: 30,
     prepare: false,
-    debug: () => {
+    debug: (_connection, query) => {
       const stats = queryStats.getStore()
       if (stats) stats.queries++
+      // LOG_SQL=1 prints every query, to see which ones a request makes.
+      if (process.env.LOG_SQL === '1') console.log(`[sql] ${String(query).replace(/\s+/g, ' ').slice(0, 160)}`)
     },
   })
   return sqlClient

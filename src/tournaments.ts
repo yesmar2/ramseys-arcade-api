@@ -496,6 +496,8 @@ type EventIndex = {
   /** Player id → game → how many runs, the best, and their sum. */
   byPlayer: Map<string, Map<GameSlug, { runs: number; best: number; sum: number }>>
   standings: StandingRow[] | null
+  /** The roster's tags, made on first ask. */
+  names: Set<string> | null
 }
 
 const eventIndexes = new WeakMap<Tournament, EventIndex>()
@@ -544,9 +546,33 @@ function eventIndex(t: Tournament): EventIndex {
     inPlace: inPlaceChanges,
     byPlayer,
     standings: null,
+    names: null,
   }
   eventIndexes.set(normalized, index)
   return index
+}
+
+/** Whether a tag is on an event's roster: a set look-up, not a pass over the roster. */
+function hasPlayerNamed(t: Tournament, name: string): boolean {
+  const index = eventIndex(t)
+  index.names ??= new Set(index.players.map((p) => p.name))
+  return index.names.has(name)
+}
+
+/** Each tag's place in a standings list, worked out once per list. */
+const standingPlaces = new WeakMap<StandingRow[], Map<string, number>>()
+
+/** Where a tag stands among those who have played, or -1. */
+function standingIndexOf(standings: StandingRow[], name: string): number {
+  let places = standingPlaces.get(standings)
+  if (!places) {
+    places = new Map()
+    standings.forEach((row, i) => {
+      if (row.gamesPlayed > 0 && !places!.has(row.name)) places!.set(row.name, i)
+    })
+    standingPlaces.set(standings, places)
+  }
+  return places.get(name) ?? -1
 }
 
 function playerAttempts(t: Tournament, playerId: string, game: GameSlug): number {
@@ -1058,10 +1084,12 @@ function publicPodium(t: Tournament, now: number, standings?: StandingRow[]): Po
     })
     return runnerUp ? [seat(fin.winnerId, 1), seat(runnerUp, 2)] : [seat(fin.winnerId, 1)]
   }
-  return (standings ?? computeStandings(t))
-    .filter((row) => row.gamesPlayed > 0)
-    .slice(0, 3)
-    .map((row, i) => ({
+  const podium: StandingRow[] = []
+  for (const row of standings ?? computeStandings(t)) {
+    if (row.gamesPlayed > 0) podium.push(row)
+    if (podium.length === 3) break
+  }
+  return podium.map((row, i) => ({
       place: i + 1,
       name: row.name,
       points: row.totalPoints,
@@ -1284,7 +1312,7 @@ export async function listTournaments(
   } else if (filter === 'joined') {
     if (!cleanedPlayer) return []
     list = store.tournaments
-      .filter((t) => normalizeTournament(t).players.some((p) => p.name === cleanedPlayer))
+      .filter((t) => hasPlayerNamed(t, cleanedPlayer))
       .map((t) => publicTournament(t, now, standingsOf))
   } else {
     // "All" is everything this viewer may see: public events, plus the private
@@ -1295,7 +1323,7 @@ export async function listTournaments(
         const t = normalizeTournament(raw)
         if ((t.visibility ?? 'public') !== 'private') return true
         if (accountId && t.createdBy?.accountId === accountId) return true
-        if (cleanedPlayer && t.players.some((p) => p.name === cleanedPlayer)) return true
+        if (cleanedPlayer && hasPlayerNamed(t, cleanedPlayer)) return true
         return false
       })
       .map((t) => publicTournament(t, now, standingsOf))
@@ -1308,9 +1336,7 @@ export async function listTournaments(
    */
   const joinedIds = new Set(
     cleanedPlayer
-      ? store.tournaments
-          .filter((t) => normalizeTournament(t).players.some((p) => p.name === cleanedPlayer))
-          .map((t) => t.id)
+      ? store.tournaments.filter((t) => hasPlayerNamed(t, cleanedPlayer)).map((t) => t.id)
       : [],
   )
   if (cleanedPlayer) {
@@ -1323,7 +1349,7 @@ export async function listTournaments(
       // Same reason as the podium: a bracket has no score-ranked standing.
       if (resolveKind(t) === 'bracket') return { ...row, joined }
       const standings = standingsOf(t)
-      const idx = standings.findIndex((r) => r.name === cleanedPlayer && r.gamesPlayed > 0)
+      const idx = standingIndexOf(standings, cleanedPlayer)
       return idx === -1
         ? { ...row, joined }
         : { ...row, joined, yourPlace: idx + 1, yourPoints: standings[idx]!.totalPoints }

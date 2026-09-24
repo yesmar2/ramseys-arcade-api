@@ -336,33 +336,54 @@ export function inPeriod(at: number, period: Period, now = Date.now()): boolean 
   return key >= start && key <= keyOf(now)
 }
 
+/*
+ * The first moment of a board day. Every zone's offset is a whole number of
+ * quarter hours, so its midnight falls on a quarter hour, and within fifteen
+ * hours of midnight UTC on the same date: a binary search over those quarter
+ * hours finds it, each step a cached day lookup.
+ */
+const dayStarts = new Map<number, number>()
+
+function dayStartMs(key: number): number {
+  const hit = dayStarts.get(key)
+  if (hit !== undefined) return hit
+  const midnightUtc = Date.UTC(Math.floor(key / 10_000), Math.floor((key % 10_000) / 100) - 1, key % 100)
+  let lo = Math.floor((midnightUtc - 15 * 3600_000) / QUARTER_HOUR_MS)
+  let hi = Math.ceil((midnightUtc + 15 * 3600_000) / QUARTER_HOUR_MS)
+  while (lo < hi) {
+    const mid = Math.floor((lo + hi) / 2)
+    if (keyOf(mid * QUARTER_HOUR_MS) < key) lo = mid + 1
+    else hi = mid
+  }
+  if (dayStarts.size >= 1000) dayStarts.clear()
+  dayStarts.set(key, lo * QUARTER_HOUR_MS)
+  return lo * QUARTER_HOUR_MS
+}
+
+/** A period's span as timestamps, from its first moment up to (not including) the first after it. */
+function periodSpan(period: Exclude<Period, 'all'>, now: number): [number, number] {
+  const today = keyOf(now)
+  const tomorrow = dayStartMs(addDaysToDateKey(today, 1))
+  if (period === 'daily') return [dayStartMs(today), tomorrow]
+  // Monday through today in BOARD_TZ.
+  if (period === 'weekly') return [dayStartMs(weekStartKey(now)), tomorrow]
+  const { y, m } = ymdInTz(now)
+  return [dayStartMs(dateKey(y, m, 1)), dayStartMs(m === 12 ? dateKey(y + 1, 1, 1) : dateKey(y, m + 1, 1))]
+}
+
+/*
+ * A period's runs: a comparison of two timestamps per run, where it used to
+ * be a day lookup per run. The same days either way: a day's first moment is
+ * exactly where its day key begins.
+ */
 export function filterByPeriod(
   entries: LeaderboardEntry[],
   period: Period,
   now = Date.now(),
 ): LeaderboardEntry[] {
   if (period === 'all') return entries
-
-  if (period === 'daily') {
-    const today = keyOf(now)
-    return entries.filter((e) => keyOf(e.at) === today)
-  }
-
-  if (period === 'monthly') {
-    const { y, m } = ymdInTz(now)
-    return entries.filter((e) => {
-      const p = ymdInTz(e.at)
-      return p.y === y && p.m === m
-    })
-  }
-
-  // weekly — Monday through today in BOARD_TZ
-  const start = weekStartKey(now)
-  const today = keyOf(now)
-  return entries.filter((e) => {
-    const k = keyOf(e.at)
-    return k >= start && k <= today
-  })
+  const [from, to] = periodSpan(period, now)
+  return entries.filter((e) => e.at >= from && e.at < to)
 }
 
 export function monthKey(ms: number) {
@@ -437,6 +458,39 @@ export function invalidateHistoryCache() {
   historyInvalidations++
 }
 
+/*
+ * Every tag gets a number once, and every run in the history carries its
+ * player (under a symbol: never in a run's JSON), so a board view finds each
+ * player's best run with a stamp and a typed array rather than a look-up by
+ * name per run. A board is redrawn on every save to its game, and hashing
+ * every name on it was most of what a save cost.
+ */
+type PlayerRef = { pid: number; stamp: number }
+const PLAYER = Symbol('player')
+type HistoryRun = LeaderboardEntry & { [PLAYER]?: PlayerRef }
+const playerRefs = new Map<string, PlayerRef>()
+/** Moves once per view drawn: a player whose stamp is this view's has been counted in it. */
+let viewStamp = 0
+
+function playerRef(name: string): PlayerRef {
+  let ref = playerRefs.get(name)
+  if (!ref) {
+    ref = { pid: playerRefs.size, stamp: 0 }
+    playerRefs.set(name, ref)
+  }
+  return ref
+}
+
+/** A run going into the history, tagged with its player. */
+function withPlayer(entry: LeaderboardEntry): LeaderboardEntry {
+  ;(entry as HistoryRun)[PLAYER] ??= playerRef(entry.name)
+  return entry
+}
+
+function refOf(entry: LeaderboardEntry): PlayerRef {
+  return (entry as HistoryRun)[PLAYER] ?? playerRef(entry.name)
+}
+
 /** Put a score into a list already in board order, after any it ties with exactly. */
 function insertInOrder(list: LeaderboardEntry[], entry: LeaderboardEntry) {
   let lo = 0
@@ -449,8 +503,24 @@ function insertInOrder(list: LeaderboardEntry[], entry: LeaderboardEntry) {
   list.splice(lo, 0, entry)
 }
 
+/** Where a run sits in a list in board order: a binary search to its place, not a scan for its id. */
+function indexOfRun(list: LeaderboardEntry[], entry: LeaderboardEntry): number {
+  let lo = 0
+  let hi = list.length
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1
+    if (boardOrder(list[mid], entry) < 0) lo = mid + 1
+    else hi = mid
+  }
+  for (let i = lo; i < list.length && boardOrder(list[i], entry) === 0; i++) {
+    if (list[i].id === entry.id) return i
+  }
+  return -1
+}
+
 /** A score just written to the table, put into the history in place. */
 function rememberScore(game: string, entry: LeaderboardEntry) {
+  withPlayer(entry)
   if (historyLoading) savedDuringLoad.push({ game, entry })
   if (historyCache) {
     const list = historyCache.byGame.get(game) ?? []
@@ -473,7 +543,7 @@ async function loadCopy(): Promise<HistoryCopy> {
     const byGame = new Map<string, LeaderboardEntry[]>()
     for (const row of rows) {
       const list = byGame.get(row.game) ?? []
-      list.push(rowToEntry(row))
+      list.push(withPlayer(rowToEntry(row)))
       byGame.set(row.game, list)
     }
     // A score saved while the table was being read may or may not be in what came back.
@@ -506,6 +576,21 @@ export async function allScores(): Promise<ReadonlyMap<string, readonly Leaderbo
   return loadHistory()
 }
 
+/**
+ * One player's runs on one game, newest first: read from the history, where
+ * each run knows its player, rather than from the table on every save.
+ */
+export async function playerRuns(game: GameSlug, name: string): Promise<{ score: number; at: number }[]> {
+  const list = (await loadHistory()).get(game) ?? []
+  const ref = playerRefs.get(name)
+  if (!ref) return []
+  const runs: { score: number; at: number }[] = []
+  for (const e of list) {
+    if ((e as HistoryRun)[PLAYER] === ref) runs.push({ score: e.score, at: e.at })
+  }
+  return runs.sort((a, b) => b.at - a.at)
+}
+
 async function historyFor(game: GameSlug): Promise<LeaderboardEntry[]> {
   const byGame = await loadHistory()
   return byGame.get(game) ?? []
@@ -524,8 +609,8 @@ type PoolView = {
   version: number
   window: string
   entries: LeaderboardEntry[]
-  /** Each player's best run: its index in entries. Players come in the order they first appear, best first. */
-  bestAt: Map<string, number>
+  /** Each player's best run, by their number (playerRef): its index in entries, plus one; 0 if not on it. */
+  bestIndex: Int32Array
   /** The place of the player whose best run is at each index, or 0: kept flat, it costs four bytes a run. */
   placeAt: Int32Array
   /** How many players are on it: the field a place is out of. */
@@ -551,18 +636,37 @@ async function poolView(game: GameSlug, period: Period, now = Date.now()): Promi
   const hit = poolViews.get(key)
   if (hit && hit.epoch === epoch && hit.version === version && hit.window === window) return hit
   const entries = period === 'all' ? history.slice() : filterByPeriod(history, period, now)
-  const bestAt = new Map<string, number>()
+  // Board order, so a player's first run here is their best.
+  const stamp = ++viewStamp
+  let bestIndex = new Int32Array(playerRefs.size)
   const placeAt = new Int32Array(entries.length)
   let players = 0
   for (let i = 0; i < entries.length; i++) {
-    const name = entries[i].name
-    if (bestAt.has(name)) continue
-    bestAt.set(name, i)
+    const ref = refOf(entries[i])
+    if (ref.stamp === stamp) continue
+    ref.stamp = stamp
+    if (ref.pid >= bestIndex.length) {
+      const grown = new Int32Array(playerRefs.size)
+      grown.set(bestIndex)
+      bestIndex = grown
+    }
+    bestIndex[ref.pid] = i + 1
     placeAt[i] = ++players
   }
-  const view: PoolView = { epoch, version, window, entries, bestAt, placeAt, players }
+  const view: PoolView = { epoch, version, window, entries, bestIndex, placeAt, players }
   poolViews.set(key, view)
   return view
+}
+
+/** Where a player's best run sits in a view, or -1. */
+function bestIndexOf(view: PoolView, ref: PlayerRef | undefined): number {
+  if (!ref || ref.pid >= view.bestIndex.length) return -1
+  return view.bestIndex[ref.pid] - 1
+}
+
+/** The same, by tag. */
+function bestIndexOfName(view: PoolView, name: string): number {
+  return bestIndexOf(view, playerRefs.get(name))
 }
 
 export async function getClosedBoard(
@@ -649,8 +753,8 @@ export async function bestForName(
   if (!cleaned) return null
   const view = await poolView(game, period, now)
   if (!scope) {
-    const at = view.bestAt.get(cleaned)
-    return at == null ? null : { ...view.entries[at], rank: at + 1 }
+    const at = bestIndexOfName(view, cleaned)
+    return at < 0 ? null : { ...view.entries[at], rank: at + 1 }
   }
   const pool = filterByNames(view.entries, scope)
   const at = pool.findIndex((e) => e.name === cleaned)
@@ -720,8 +824,12 @@ async function periodPlacements(
 ): Promise<{ name: string; place: number }[]> {
   const view = await poolView(game, period, now)
   if (scope) return placementsFromPool(filterByNames(view.entries, scope))
-  let place = 0
-  return Array.from(view.bestAt.keys(), (name) => ({ name, place: ++place }))
+  const out: { name: string; place: number }[] = []
+  for (let i = 0; i < view.entries.length; i++) {
+    const place = view.placeAt[i]
+    if (place) out.push({ name: view.entries[i].name, place })
+  }
+  return out
 }
 
 async function closedPeriodPlacements(
@@ -817,8 +925,11 @@ function standingOrder(a: StandingRow, b: StandingRow) {
 
 /** Count one game's places into the tallies, or (sign -1) take them back out. */
 function countPlaces(view: StandingsView, pool: PoolView, sign: 1 | -1) {
-  for (const [name, at] of pool.bestAt) {
-    const points = placePoints(pool.placeAt[at], pool.players)
+  for (let i = 0; i < pool.entries.length; i++) {
+    const place = pool.placeAt[i]
+    if (!place) continue
+    const name = pool.entries[i].name
+    const points = placePoints(place, pool.players)
     if (points <= 0) continue
     const row = view.tallies.get(name)
     if (sign > 0) {
@@ -853,15 +964,18 @@ function countPlaces(view: StandingsView, pool: PoolView, sign: 1 | -1) {
 function recountPlaces(view: StandingsView, had: PoolView, pool: PoolView, moved: Set<StandingRow>): boolean {
   const changes: { name: string; points: number; was: number }[] = []
   let kept = 0
-  for (const [name, at] of pool.bestAt) {
-    const points = placePoints(pool.placeAt[at], pool.players)
-    const hadAt = had.bestAt.get(name)
+  for (let i = 0; i < pool.entries.length; i++) {
+    const place = pool.placeAt[i]
+    if (!place) continue
+    const entry = pool.entries[i]
+    const points = placePoints(place, pool.players)
+    const hadAt = bestIndexOf(had, refOf(entry))
     let was = 0
-    if (hadAt != null) {
+    if (hadAt >= 0) {
       kept++
       was = placePoints(had.placeAt[hadAt], had.players)
     }
-    if (points !== was) changes.push({ name, points, was })
+    if (points !== was) changes.push({ name: entry.name, points, was })
   }
   if (kept !== had.players) return false
   for (const { name, points, was } of changes) {
@@ -921,10 +1035,12 @@ function reorderStandings(view: StandingsView, moved: Set<StandingRow>) {
 function standingAt(view: StandingsView, i: number): GlobalRankEntry {
   const row = view.order[i]
   const byGame: Partial<Record<GameSlug, GlobalGamePlace>> = {}
+  const ref = playerRefs.get(row.name)
   for (const game of ALLOWED_GAMES) {
     const pool = view.counted.get(game)
-    const at = pool?.bestAt.get(row.name)
-    if (!pool || at == null) continue
+    if (!pool) continue
+    const at = bestIndexOf(pool, ref)
+    if (at < 0) continue
     const place = pool.placeAt[at]
     byGame[game] = { place, points: placePoints(place, pool.players), total: pool.players }
   }
@@ -1212,7 +1328,7 @@ export async function addScore(
   const ranks: Partial<Record<Period, number>> = {}
   for (const period of PERIODS) {
     const { entries } = await poolView(game, period, now)
-    const index = entries.findIndex((e) => e.id === entry.id)
+    const index = indexOfRun(entries, entry)
     if (index !== -1) ranks[period] = index + 1
   }
 

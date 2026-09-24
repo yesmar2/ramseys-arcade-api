@@ -196,13 +196,23 @@ export async function verifyMagicLink(token: string): Promise<{
 
 /*
  * Nearly every request carries a session token, and looking it up is two
- * round trips before any work starts. Remember the answer for a minute;
- * logging out drops it.
+ * round trips before any work starts. Remember the answer for five minutes,
+ * never past the session's own end; logging out drops it. The most recently
+ * seen fifty thousand are kept: the cache used to be thrown away whole at
+ * five thousand, sending every signed-in player's next request to the
+ * database at once. Requests with the same token at the same moment share
+ * one look-up.
  */
-const SESSION_CACHE_TTL_MS = 60_000
-const sessionCache = new Map<string, { at: number; account: Account | null }>()
+const SESSION_CACHE_TTL_MS = 5 * 60_000
+const SESSION_CACHE_MAX = 50_000
+type SessionAnswer = { account: Account | null; expiresAt: number }
+const sessionCache = new Map<string, SessionAnswer & { at: number }>()
+const sessionLookups = new Map<string, Promise<SessionAnswer>>()
+/** Moves on every log-out, so a look-up begun before one isn't kept after it. */
+let sessionDrops = 0
 
 export function invalidateSessionCache(token?: string) {
+  sessionDrops++
   if (token) sessionCache.delete(token)
   else sessionCache.clear()
 }
@@ -212,27 +222,45 @@ export async function resolveSession(
 ): Promise<Account | null> {
   if (!sessionToken) return null
   const hit = sessionCache.get(sessionToken)
-  if (hit && Date.now() - hit.at < SESSION_CACHE_TTL_MS) return hit.account
-  const account = await resolveSessionFromDb(sessionToken)
-  if (sessionCache.size > 5_000) sessionCache.clear()
-  sessionCache.set(sessionToken, { at: Date.now(), account })
-  return account
+  const now = Date.now()
+  if (hit && now - hit.at < SESSION_CACHE_TTL_MS && now < hit.expiresAt) {
+    // Seen again: to the back of the line, which is the last to go.
+    sessionCache.delete(sessionToken)
+    sessionCache.set(sessionToken, hit)
+    return hit.account
+  }
+  const dropsAtStart = sessionDrops
+  let lookup = sessionLookups.get(sessionToken)
+  if (!lookup) {
+    lookup = resolveSessionFromDb(sessionToken).finally(() => sessionLookups.delete(sessionToken))
+    sessionLookups.set(sessionToken, lookup)
+  }
+  const answer = await lookup
+  if (dropsAtStart === sessionDrops) {
+    sessionCache.delete(sessionToken)
+    sessionCache.set(sessionToken, { ...answer, at: Date.now() })
+    while (sessionCache.size > SESSION_CACHE_MAX) {
+      sessionCache.delete(sessionCache.keys().next().value as string)
+    }
+  }
+  return answer.account
 }
 
-async function resolveSessionFromDb(sessionToken: string): Promise<Account | null> {
+async function resolveSessionFromDb(sessionToken: string): Promise<SessionAnswer> {
   const rows = await db()
     .select()
     .from(sessions)
     .where(eq(sessions.token, sessionToken))
     .limit(1)
   const session = rows[0]
-  if (!session) return null
+  // No such session: an answer too, worth remembering for as long as any.
+  if (!session) return { account: null, expiresAt: Number.POSITIVE_INFINITY }
   if (session.expiresAt < Date.now()) {
     await db().delete(sessions).where(eq(sessions.token, sessionToken))
-    return null
+    return { account: null, expiresAt: Number.POSITIVE_INFINITY }
   }
   const account = await getAccount(session.accountId)
-  return account ? publicAccount(account) : null
+  return { account: account ? publicAccount(account) : null, expiresAt: session.expiresAt }
 }
 
 export async function logoutSession(sessionToken: string | null | undefined) {

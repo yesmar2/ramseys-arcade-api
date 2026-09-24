@@ -1,5 +1,5 @@
 import crypto from 'node:crypto'
-import { eq } from 'drizzle-orm'
+import { eq, inArray } from 'drizzle-orm'
 import { db } from './db/client.js'
 import { nameClaims } from './db/schema.js'
 import { renamePlayerAcrossGroups } from './groups.js'
@@ -52,35 +52,85 @@ export async function getClaim(name: string): Promise<NameClaim | null> {
 
 /*
  * Every board, roster and profile response looks up avatars by tag, and a
- * request could spend a dozen round trips on that alone. The claims table
- * is a couple of hundred rows: read it once, keep it for a minute, and drop
- * it whenever this module writes a claim. Writes still read the database
- * directly through getClaim, so ownership checks are never stale.
+ * request could spend a dozen round trips on that alone. So the claims table
+ * is read once and kept, by tag and by account, and a claim this process
+ * writes is read back into it on its own (refreshClaims). It used to be
+ * dropped whole at every claim written, so each new player sent the next
+ * request to read every tag on the site again. It is still read again every
+ * ten minutes, for scripts. Writes read the database directly through
+ * getClaim, so ownership checks are never stale.
  */
 type ClaimRow = typeof nameClaims.$inferSelect
-const CLAIMS_TTL_MS = 60_000
-let claimsCache: { at: number; byName: Map<string, ClaimRow> } | null = null
-let claimsLoading: Promise<Map<string, ClaimRow>> | null = null
+const CLAIMS_TTL_MS = 10 * 60_000
+type Claims = { at: number; byName: Map<string, ClaimRow>; byAccount: Map<string, ClaimRow[]> }
+let claimsCache: Claims | null = null
+let claimsLoading: Promise<Claims> | null = null
+/** Tags written while the table was being read: read again once it lands. */
+let changedDuringLoad = new Set<string>()
 
 export function invalidateClaimCache() {
   claimsCache = null
 }
 
-async function loadClaims(): Promise<Map<string, ClaimRow>> {
-  if (claimsCache && Date.now() - claimsCache.at < CLAIMS_TTL_MS) return claimsCache.byName
+function addToAccount(copy: Claims, row: ClaimRow) {
+  if (!row.accountId) return
+  const list = copy.byAccount.get(row.accountId)
+  if (list) list.push(row)
+  else copy.byAccount.set(row.accountId, [row])
+}
+
+function dropFromAccount(copy: Claims, row: ClaimRow) {
+  if (!row.accountId) return
+  const list = copy.byAccount.get(row.accountId)?.filter((r) => r.name !== row.name)
+  if (list?.length) copy.byAccount.set(row.accountId, list)
+  else copy.byAccount.delete(row.accountId)
+}
+
+async function loadClaimsCopy(): Promise<Claims> {
+  if (claimsCache && Date.now() - claimsCache.at < CLAIMS_TTL_MS) return claimsCache
   if (claimsLoading) return claimsLoading
-  claimsLoading = db()
-    .select()
-    .from(nameClaims)
-    .then((rows) => {
-      const byName = new Map(rows.map((r) => [r.name, r] as const))
-      claimsCache = { at: Date.now(), byName }
-      return byName
-    })
-    .finally(() => {
-      claimsLoading = null
-    })
+  changedDuringLoad = new Set()
+  claimsLoading = (async () => {
+    const rows = await db().select().from(nameClaims)
+    const copy: Claims = { at: Date.now(), byName: new Map(), byAccount: new Map() }
+    for (const row of rows) {
+      copy.byName.set(row.name, row)
+      addToAccount(copy, row)
+    }
+    claimsCache = copy
+    // A claim written while the table was being read may or may not be in what came back.
+    if (changedDuringLoad.size) await refreshClaims([...changedDuringLoad])
+    return copy
+  })().finally(() => {
+    claimsLoading = null
+  })
   return claimsLoading
+}
+
+async function loadClaims(): Promise<Map<string, ClaimRow>> {
+  return (await loadClaimsCopy()).byName
+}
+
+/** Claims just written: their rows read back into the cache, or dropped from it if they're gone. */
+export async function refreshClaims(names: string[]) {
+  if (!names.length) return
+  if (claimsLoading) for (const name of names) changedDuringLoad.add(name)
+  const copy = claimsCache
+  if (!copy) return
+  const rows = await db().select().from(nameClaims).where(inArray(nameClaims.name, names))
+  if (claimsCache !== copy) return
+  const found = new Map(rows.map((r) => [r.name, r] as const))
+  for (const name of names) {
+    const was = copy.byName.get(name)
+    if (was) dropFromAccount(copy, was)
+    const row = found.get(name)
+    if (row) {
+      copy.byName.set(name, row)
+      addToAccount(copy, row)
+    } else {
+      copy.byName.delete(name)
+    }
+  }
 }
 
 /** Local/dev only. Production Render sets NODE_ENV=production. */
@@ -161,8 +211,8 @@ async function releaseOtherAccountNames(
   for (const row of owned) {
     if (row.name === keepName) continue
     released.push(row.name)
-    invalidateClaimCache()
     await db().delete(nameClaims).where(eq(nameClaims.name, row.name))
+    await refreshClaims([row.name])
   }
   return released
 }
@@ -216,7 +266,6 @@ export async function assertCanUseName(
     const next: NameClaim = { token: mintToken(), claimedAt: Date.now() }
     next.accountId = accountId
     await releaseAndMigrateAccountNames(accountId, cleaned)
-    invalidateClaimCache()
     await db().insert(nameClaims).values({
       name: cleaned,
       token: next.token,
@@ -224,6 +273,7 @@ export async function assertCanUseName(
       accountId: next.accountId ?? null,
       avatarId: null,
     })
+    await refreshClaims([cleaned])
     return { name: cleaned, token: next.token, created: true }
   }
 
@@ -233,11 +283,11 @@ export async function assertCanUseName(
   if (tokenOk || accountOk) {
     if (accountId && tokenOk && !existing.accountId) {
       await releaseAndMigrateAccountNames(accountId, cleaned)
-      invalidateClaimCache()
       await db()
         .update(nameClaims)
         .set({ accountId })
         .where(eq(nameClaims.name, cleaned))
+      await refreshClaims([cleaned])
     }
     return { name: cleaned, token: existing.token, created: false }
   }
@@ -323,7 +373,6 @@ export async function renameGamerTag(
 
   await migratePlayerScores(from, to)
 
-  invalidateClaimCache()
   if (fromAvatar) {
     const toRow = await getClaim(to)
     if (toRow && !toRow.avatarId) {
@@ -334,6 +383,7 @@ export async function renameGamerTag(
     }
   }
   await db().delete(nameClaims).where(eq(nameClaims.name, from))
+  await refreshClaims([from, to])
 
   const migratedFrom = [from]
   if (auth.accountId) {
@@ -404,7 +454,6 @@ export async function linkNameToAccount(
   let created = false
   let token: string
 
-  invalidateClaimCache()
   if (!existing) {
     token = mintToken()
     await db().insert(nameClaims).values({
@@ -446,6 +495,7 @@ export async function linkNameToAccount(
     )
   }
 
+  await refreshClaims([cleaned])
   const previousNames = await releaseAndMigrateAccountNames(accountId, cleaned)
 
   return { name: cleaned, token, created, previousNames }
@@ -477,7 +527,7 @@ export async function namesOwnedByAccount(
   if (!accountId) return []
   // The common case — one tag per account — is answered from the cache. An
   // account holding several tags is reconciled through the database.
-  const cached = [...(await loadClaims()).values()].filter((r) => r.accountId === accountId)
+  const cached = (await loadClaimsCopy()).byAccount.get(accountId) ?? []
   const rows = cached.length <= 1 ? cached : await reconcileAccountNames(accountId)
   const result: { name: string; token: string; avatarId: AvatarId }[] = []
   for (const row of rows) {
@@ -537,10 +587,10 @@ export async function setNameAvatar(
       code: 'NAME_UNCLAIMED',
     })
   }
-  invalidateClaimCache()
   await db()
     .update(nameClaims)
     .set({ avatarId })
     .where(eq(nameClaims.name, cleaned))
+  await refreshClaims([cleaned])
   return { name: cleaned, avatarId, token: claim.token }
 }

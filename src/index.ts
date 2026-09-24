@@ -21,6 +21,7 @@ import { invitesRouter } from './invitesRoutes.js'
 import { tournamentsRouter } from './tournamentsRoutes.js'
 import { notificationsRouter } from './notificationsRoutes.js'
 import { challengesRouter } from './challengesRoutes.js'
+import { bugHuntRouter } from './bugHuntRoutes.js'
 import { publicVapidKey } from './push.js'
 import { statsRouter } from './statsRoutes.js'
 import { trophiesRouter } from './trophiesRoutes.js'
@@ -163,6 +164,7 @@ async function main() {
   app.use('/notifications', notificationsRouter)
   app.use('/challenges', challengesRouter)
   app.use('/stats', statsRouter)
+  app.use('/hunt', bugHuntRouter)
 
   logDbTarget()
 

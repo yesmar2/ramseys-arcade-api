@@ -546,3 +546,24 @@ export const leases = pgTable('leases', {
   holder: text('holder').notNull(),
   until: bigint('until', { mode: 'number' }).notNull(),
 })
+
+/**
+ * The daily bug hunt: a row for each day a player caught that day's bug.
+ * Which bug, and where it hid, are the site's to pick (lib/bugHunt.ts there);
+ * this keeps the finds, so a streak and a collection follow the player to any
+ * device, and a day can say how many caught its bug.
+ */
+export const bugHuntFinds = pgTable(
+  'bug_hunt_finds',
+  {
+    accountId: text('account_id')
+      .notNull()
+      .references(() => accounts.id, { onDelete: 'cascade' }),
+    /** The day on the boards' clock, YYYY-MM-DD. */
+    day: text('day').notNull(),
+    bug: text('bug').notNull(),
+    spot: text('spot').notNull(),
+    foundAt: bigint('found_at', { mode: 'number' }).notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.accountId, t.day] }), index('bug_hunt_day_idx').on(t.day, t.foundAt)],
+)

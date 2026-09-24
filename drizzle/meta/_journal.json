@@ -85,6 +85,13 @@
       "when": 1790280675000,
       "tag": "0011_change_feed",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1790285956468,
+      "tag": "0012_bug_hunt",
+      "breakpoints": true
     }
   ]
 }

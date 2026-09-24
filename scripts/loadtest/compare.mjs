@@ -28,6 +28,26 @@ for (const game of GAMES) {
   BOOKS[game] = (body.records ?? []).map((r) => r.id)
 }
 const RECORDS = arg('records', 'mixed') // 'only' for record queries alone
+const EVENTS_MODE = arg('events', 'none') // 'only' for event queries alone, 'mixed' for some
+// The events on now, and a few names from their rosters to ask as.
+const EVENT_LIST = (await (await fetch(`${NEW}/tournaments`)).json()).tournaments ?? []
+const EVENT_NAMES = []
+for (const t of EVENT_LIST.filter((e) => e.official).slice(0, 2)) {
+  const detail = await (await fetch(`${NEW}/tournaments/${t.id}`)).json()
+  for (let i = 0; i < 20 && detail.players?.length; i++) EVENT_NAMES.push(pick(detail.players).name)
+}
+
+function eventQuery() {
+  const t = pick(EVENT_LIST)
+  const who = EVENT_NAMES.length && rand() < 0.7 ? pick(EVENT_NAMES) : name()
+  switch (Math.floor(rand() * 5)) {
+    case 0: return `/tournaments${rand() < 0.7 ? `?playerName=${who}` : ''}`
+    case 1: return `/tournaments?source=joined&playerName=${who}`
+    case 2: return `/tournaments/active-for/${pick(t?.games ?? GAMES)}`
+    case 3: return `/tournaments/${t.id}?playerName=${who}&game=${pick(t.games)}`
+    default: return `/tournaments/${t.id}`
+  }
+}
 
 function recordQuery() {
   const p = pick(PERIODS)
@@ -41,6 +61,7 @@ function recordQuery() {
 }
 
 function query() {
+  if (EVENT_LIST.length && (EVENTS_MODE === 'only' || (EVENTS_MODE === 'mixed' && rand() < 0.3))) return eventQuery()
   if (RECORDS === 'only' || (RECORDS === 'mixed' && rand() < 0.4)) return recordQuery()
   const p = pick(PERIODS)
   const g = pick(GAMES)

@@ -70,6 +70,21 @@ async function expirePending(now = Date.now()) {
     .where(and(eq(friendRequests.status, 'pending'), lt(friendRequests.expiresAt, now)))
 }
 
+/*
+ * Every read already leaves out a request past its time (isExpired), so
+ * marking them revoked is housekeeping: once a minute at most. It ran on
+ * every friends read, an update across every pending request on the site
+ * each time anyone's header looked.
+ */
+const EXPIRE_EVERY_MS = 60_000
+let expiredAt = 0
+
+function expirePendingNowAndThen(now = Date.now()) {
+  if (now - expiredAt < EXPIRE_EVERY_MS) return
+  expiredAt = now
+  void expirePending(now).catch((err: unknown) => console.warn('[friends] expiring requests failed:', err))
+}
+
 function canonicalPair(a: string, b: string): [string, string] {
   return a < b ? [a, b] : [b, a]
 }
@@ -199,7 +214,7 @@ export async function sendFriendRequest(
 }
 
 export async function listFriendRequests(accountId: string): Promise<PublicFriendRequest[]> {
-  await expirePending()
+  expirePendingNowAndThen()
   const rows = await db()
     .select()
     .from(friendRequests)

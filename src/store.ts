@@ -1,4 +1,4 @@
-import { asc, desc, eq } from 'drizzle-orm'
+import { asc, desc, eq, sql } from 'drizzle-orm'
 import { db } from './db/client.js'
 import { leaderboardScores } from './db/schema.js'
 
@@ -434,14 +434,70 @@ export function filterByClosedPeriod(
  * A saved score is put into its place in that copy as it lands. It used to
  * throw the copy away instead, so every save cost a read of every score ever
  * saved: fine at a few thousand, and at a few hundred thousand the reads
- * queued behind each other until nothing answered. The copy is still read
- * again every ten minutes, in case a script changed the table underneath,
- * and at once when something rewrites scores wholesale (invalidateHistoryCache).
+ * queued behind each other until nothing answered. It is read again at once
+ * when something rewrites scores wholesale (invalidateHistoryCache).
+ *
+ * Every ten minutes the copy is checked against the table, in case a script
+ * changed it underneath: how many rows, the sum of their scores and the
+ * newest, asked of the database in one small query and compared with the
+ * same three kept for the copy. Only if they differ is the table read again.
+ * It used to be read again whole every ten minutes, every score sent over the
+ * wire and every board and standing redrawn, for a table that hadn't changed.
  */
 const HISTORY_TTL_MS = 10 * 60_000
 
 /** One reading of the table, numbered so a view knows which reading it was drawn from. */
-type HistoryCopy = { at: number; epoch: number; byGame: Map<string, LeaderboardEntry[]> }
+type HistoryCopy = {
+  at: number
+  epoch: number
+  byGame: Map<string, LeaderboardEntry[]>
+  /** What the copy holds, to compare with the table: rows, the sum of their scores, the newest. */
+  rows: number
+  scoreSum: number
+  lastAt: number
+}
+
+/** Saves between writing their row and putting it in the copy, and how many have begun: a check can't tell those from a change. */
+let scoreWritesInFlight = 0
+let scoreWritesBegun = 0
+let historyCheck: Promise<void> | null = null
+let nextHistoryCheckAt = 0
+
+/** In the background, never in a request's way; again in five seconds if saves kept it from an answer. */
+function checkHistorySoon(copy: HistoryCopy) {
+  const now = Date.now()
+  if (historyCheck || now < nextHistoryCheckAt) return
+  nextHistoryCheckAt = now + 5_000
+  historyCheck = checkHistory(copy)
+    .catch((err: unknown) => console.warn('[history] checking the scores table failed:', err))
+    .finally(() => {
+      historyCheck = null
+    })
+}
+
+async function checkHistory(copy: HistoryCopy) {
+  if (scoreWritesInFlight > 0) return
+  const begun = scoreWritesBegun
+  const [table] = await db()
+    .select({
+      rows: sql<number>`count(*)::float8`,
+      scoreSum: sql<number>`coalesce(sum(${leaderboardScores.score}), 0)::float8`,
+      lastAt: sql<number>`coalesce(max(${leaderboardScores.at}), 0)::float8`,
+    })
+    .from(leaderboardScores)
+  if (historyCache !== copy || scoreWritesBegun !== begun || scoreWritesInFlight > 0) return
+  if (
+    table &&
+    Number(table.rows) === copy.rows &&
+    Number(table.scoreSum) === copy.scoreSum &&
+    Number(table.lastAt) === copy.lastAt
+  ) {
+    copy.at = Date.now()
+    return
+  }
+  console.log('[history] the scores table changed outside this process: reading it again')
+  invalidateHistoryCache()
+}
 
 let historyCache: HistoryCopy | null = null
 let historyLoading: Promise<HistoryCopy> | null = null
@@ -526,12 +582,18 @@ function rememberScore(game: string, entry: LeaderboardEntry) {
     const list = historyCache.byGame.get(game) ?? []
     insertInOrder(list, entry)
     historyCache.byGame.set(game, list)
+    historyCache.rows++
+    historyCache.scoreSum += entry.score
+    if (entry.at > historyCache.lastAt) historyCache.lastAt = entry.at
   }
   gameVersions.set(game, (gameVersions.get(game) ?? 0) + 1)
 }
 
 async function loadCopy(): Promise<HistoryCopy> {
-  if (historyCache && Date.now() - historyCache.at < HISTORY_TTL_MS) return historyCache
+  if (historyCache) {
+    if (Date.now() - historyCache.at >= HISTORY_TTL_MS) checkHistorySoon(historyCache)
+    return historyCache
+  }
   if (historyLoading) return historyLoading
   savedDuringLoad = []
   const invalidationsAtStart = historyInvalidations
@@ -541,19 +603,39 @@ async function loadCopy(): Promise<HistoryCopy> {
       .from(leaderboardScores)
       .orderBy(desc(leaderboardScores.score), asc(leaderboardScores.at))
     const byGame = new Map<string, LeaderboardEntry[]>()
+    let count = 0
+    let scoreSum = 0
+    let lastAt = 0
+    const counted = (entry: LeaderboardEntry) => {
+      count++
+      scoreSum += entry.score
+      if (entry.at > lastAt) lastAt = entry.at
+    }
     for (const row of rows) {
       const list = byGame.get(row.game) ?? []
-      list.push(withPlayer(rowToEntry(row)))
+      const entry = withPlayer(rowToEntry(row))
+      list.push(entry)
+      counted(entry)
       byGame.set(row.game, list)
     }
     // A score saved while the table was being read may or may not be in what came back.
     for (const { game, entry } of savedDuringLoad) {
       const list = byGame.get(game) ?? []
-      if (!list.some((e) => e.id === entry.id)) insertInOrder(list, entry)
+      if (!list.some((e) => e.id === entry.id)) {
+        insertInOrder(list, entry)
+        counted(entry)
+      }
       byGame.set(game, list)
     }
     savedDuringLoad = []
-    const copy: HistoryCopy = { at: Date.now(), epoch: ++historyEpoch, byGame }
+    const copy: HistoryCopy = {
+      at: Date.now(),
+      epoch: ++historyEpoch,
+      byGame,
+      rows: count,
+      scoreSum,
+      lastAt,
+    }
     // Rewritten wholesale while this was reading: good enough to answer with, not to keep.
     if (invalidationsAtStart === historyInvalidations) historyCache = copy
     return copy
@@ -1310,19 +1392,26 @@ export async function addScore(
    * only means something if the field behind it is real. Once written, it
    * goes into the history in place (rememberScore): no reading it all back.
    */
-  await db().insert(leaderboardScores).values({
-    id: entry.id,
-    game,
-    name: entry.name,
-    score: entry.score,
-    at: entry.at,
-    device: entry.device,
-    runId: audit.runId ?? null,
-    durationMs: audit.durationMs ?? null,
-    ipHash: audit.ipHash ?? null,
-    userAgent: audit.userAgent?.slice(0, 256) ?? null,
-  })
-  rememberScore(game, entry)
+  // Written and in the copy, or neither, before a check of the table may count it (checkHistory).
+  scoreWritesInFlight++
+  scoreWritesBegun++
+  try {
+    await db().insert(leaderboardScores).values({
+      id: entry.id,
+      game,
+      name: entry.name,
+      score: entry.score,
+      at: entry.at,
+      device: entry.device,
+      runId: audit.runId ?? null,
+      durationMs: audit.durationMs ?? null,
+      ipHash: audit.ipHash ?? null,
+      userAgent: audit.userAgent?.slice(0, 256) ?? null,
+    })
+    rememberScore(game, entry)
+  } finally {
+    scoreWritesInFlight--
+  }
   noteSave(cleaned)
 
   const ranks: Partial<Record<Period, number>> = {}

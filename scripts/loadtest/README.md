@@ -15,7 +15,8 @@ A crowd on a throwaway database, to see where the API gives out before real play
 6. **Same answers as before?** Run the committed code from a worktree on port 8797, then `node scripts/loadtest/compare.mjs --count 250` sends both the same requests and compares every answer; `--records only` or `--records mixed` takes in the record books, `--events only` or `--events mixed` the events (slow against code from before ac1a90a, which took seconds an event request). `writes.mjs` saves a batch through one server. Restart the other afterwards, so it reads fresh, and compare again.
 7. **The standings, patched as saves land, against a count from scratch**: `npx tsx scripts/loadtest/standings-check.ts 40` saves 40 runs (new players, new bests, runs that aren't, new tops) and compares every period's standings after each one.
 8. **A period's runs, by timestamps, against the day keys**: `npx tsx scripts/loadtest/period-check.ts` compares the boards' period filter with `inPeriod` on real runs and on runs a millisecond either side of every quarter hour through both daylight-saving changes, month ends and a year end.
-9. **Which queries a request makes**: `LOG_SQL=1` prints every query the API sends; `LOG_REQUESTS=1` prints each request with its time and query count.
+9. **The ten-minute look at the tables**: `LOG_SQL=1 npx tsx scripts/loadtest/history-check.ts` moves the clock on and shows the score and record copies kept after one small query when nothing changed, and the tables read again when a row was added outside the API.
+10. **Which queries a request makes**: `LOG_SQL=1` prints every query the API sends; `LOG_REQUESTS=1` prints each request with its time and query count.
 
 Stop with `pg_ctl -D <scratch>/pgdata stop -m fast` and delete the folder.
 

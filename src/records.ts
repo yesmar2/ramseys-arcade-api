@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm'
+import { eq, sql } from 'drizzle-orm'
 import { db } from './db/client.js'
 import { recordScores } from './db/schema.js'
 import { getClaim } from './names.js'
@@ -441,13 +441,64 @@ function recordOrder(direction: RecordDirection) {
  * history in store.ts, and for the same reason. A new record goes into its
  * place in the copy as it lands. It used to throw the copy away, and games
  * post records all through a run, so under a crowd nearly every book read
- * waited on the whole record table being read again. The copy is still read
- * again every ten minutes, in case a script changed the table, and at once
- * when something rewrites records wholesale (invalidateRecordHistoryCache).
+ * waited on the whole record table being read again. It is read again at
+ * once when something rewrites records wholesale (invalidateRecordHistoryCache),
+ * and checked against the table every ten minutes, as the score history is:
+ * rows, their sum and the newest, compared with the copy's, and the table read
+ * again only if they differ, as a script cleaning up bad records would make them.
  */
 const HISTORY_TTL_MS = 10 * 60_000
 
-type RecordCopy = { at: number; epoch: number; byKey: Map<string, RecordEntry[]> }
+type RecordCopy = {
+  at: number
+  epoch: number
+  byKey: Map<string, RecordEntry[]>
+  /** What the copy holds, to compare with the table: rows, the sum of their scores, the newest. */
+  rows: number
+  scoreSum: number
+  lastAt: number
+}
+
+/** Records between writing their row and putting it in the copy, and how many have begun. */
+let recordWritesInFlight = 0
+let recordWritesBegun = 0
+let historyCheck: Promise<void> | null = null
+let nextHistoryCheckAt = 0
+
+function checkRecordsSoon(copy: RecordCopy) {
+  const now = Date.now()
+  if (historyCheck || now < nextHistoryCheckAt) return
+  nextHistoryCheckAt = now + 5_000
+  historyCheck = checkRecords(copy)
+    .catch((err: unknown) => console.warn('[records] checking the records table failed:', err))
+    .finally(() => {
+      historyCheck = null
+    })
+}
+
+async function checkRecords(copy: RecordCopy) {
+  if (recordWritesInFlight > 0) return
+  const begun = recordWritesBegun
+  const [table] = await db()
+    .select({
+      rows: sql<number>`count(*)::float8`,
+      scoreSum: sql<number>`coalesce(sum(${recordScores.score}), 0)::float8`,
+      lastAt: sql<number>`coalesce(max(${recordScores.at}), 0)::float8`,
+    })
+    .from(recordScores)
+  if (historyCache !== copy || recordWritesBegun !== begun || recordWritesInFlight > 0) return
+  if (
+    table &&
+    Number(table.rows) === copy.rows &&
+    Number(table.scoreSum) === copy.scoreSum &&
+    Number(table.lastAt) === copy.lastAt
+  ) {
+    copy.at = Date.now()
+    return
+  }
+  console.log('[records] the records table changed outside this process: reading it again')
+  invalidateRecordHistoryCache()
+}
 
 let historyCache: RecordCopy | null = null
 let historyLoading: Promise<RecordCopy> | null = null
@@ -465,27 +516,43 @@ export function invalidateRecordHistoryCache() {
 }
 
 async function loadRecordCopy(): Promise<RecordCopy> {
-  if (historyCache && Date.now() - historyCache.at < HISTORY_TTL_MS) return historyCache
+  if (historyCache) {
+    if (Date.now() - historyCache.at >= HISTORY_TTL_MS) checkRecordsSoon(historyCache)
+    return historyCache
+  }
   if (historyLoading) return historyLoading
   savedDuringLoad = []
   const invalidationsAtStart = historyInvalidations
   historyLoading = (async () => {
     const rows = await db().select().from(recordScores)
     const byKey = new Map<string, RecordEntry[]>()
+    let count = 0
+    let scoreSum = 0
+    let lastAt = 0
+    const counted = (entry: RecordEntry) => {
+      count++
+      scoreSum += entry.score
+      if (entry.at > lastAt) lastAt = entry.at
+    }
     for (const row of rows) {
       const key = `${row.game}::${row.recordId}`
       const list = byKey.get(key) ?? []
-      list.push(rowToEntry(row))
+      const entry = rowToEntry(row)
+      list.push(entry)
+      counted(entry)
       byKey.set(key, list)
     }
     // A record saved while the table was being read may or may not be in what came back.
     for (const { key, entry } of savedDuringLoad) {
       const list = byKey.get(key) ?? []
-      if (!list.some((e) => e.id === entry.id)) list.push(entry)
+      if (!list.some((e) => e.id === entry.id)) {
+        list.push(entry)
+        counted(entry)
+      }
       byKey.set(key, list)
     }
     savedDuringLoad = []
-    const copy: RecordCopy = { at: Date.now(), epoch: ++historyEpoch, byKey }
+    const copy: RecordCopy = { at: Date.now(), epoch: ++historyEpoch, byKey, rows: count, scoreSum, lastAt }
     // Rewritten wholesale while this was reading: good enough to answer with, not to keep.
     if (invalidationsAtStart === historyInvalidations) historyCache = copy
     return copy
@@ -527,6 +594,9 @@ function rememberRecord(game: GameSlug, recordId: string, def: RecordDef, entry:
     const list = historyCache.byKey.get(key) ?? []
     list.push(entry)
     historyCache.byKey.set(key, list)
+    historyCache.rows++
+    historyCache.scoreSum += entry.score
+    if (entry.at > historyCache.lastAt) historyCache.lastAt = entry.at
     // The sorted book, if it is drawn from this copy and current, takes the run in its place.
     const book = bookViews.get(key)
     if (book && book.epoch === historyCache.epoch && book.version === version) {
@@ -819,16 +889,23 @@ export async function addRecord(
    * written, the run goes into the history in place (rememberRecord): no
    * reading the whole table back.
    */
-  await db().insert(recordScores).values({
-    id: entry.id,
-    game,
-    recordId,
-    name: entry.name,
-    score: entry.score,
-    at: entry.at,
-    device: entry.device,
-  })
-  rememberRecord(game, recordId, def, entry)
+  // Written and in the copy, or neither, before a check of the table may count it (checkRecords).
+  recordWritesInFlight++
+  recordWritesBegun++
+  try {
+    await db().insert(recordScores).values({
+      id: entry.id,
+      game,
+      recordId,
+      name: entry.name,
+      score: entry.score,
+      at: entry.at,
+      device: entry.device,
+    })
+    rememberRecord(game, recordId, def, entry)
+  } finally {
+    recordWritesInFlight--
+  }
 
   const leader = (await boardView(game, recordId, def, 'all')).ranked[0] ?? null
   await notifyRecordTaken(game, recordId, def, priorLeader, cleaned, leader, now)

@@ -1,7 +1,7 @@
 import { and, eq, lt, or } from 'drizzle-orm'
 import { db } from './db/client.js'
 import { friendRequests, friendships } from './db/schema.js'
-import { notify } from './notifications.js'
+import { notify, resolveNotification, withdrawNotification } from './notifications.js'
 import { cleanPlayerName, getClaim, namesOwnedByAccount, resolveAvatarId } from './names.js'
 import type { AvatarId } from './avatars.js'
 
@@ -154,17 +154,10 @@ export async function sendFriendRequest(
 
   const reverse = await findPendingRequest(toAccountId, fromAccountId)
   if (reverse) {
+    // Asking someone who already asked you is a yes to their request.
     await setRequestStatus(reverse.id, 'accepted')
     await createFriendship(fromAccountId, toAccountId, now)
-    const fromNameNow = await displayNameFor(fromAccountId)
-    await notify({
-      accountId: toAccountId,
-      kind: 'friend-accepted',
-      title: `${fromNameNow} added you back`,
-      body: 'You are now friends.',
-      href: '#/friends',
-      now,
-    }).catch(() => undefined)
+    await tellFriendsNow(reverse, await displayNameFor(fromAccountId), now)
     return { status: 'accepted' }
   }
 
@@ -192,9 +185,11 @@ export async function sendFriendRequest(
     accountId: toAccountId,
     kind: 'friend-request',
     title: `${fromName} wants to be friends`,
-    href: '#/friends',
+    // The row answers the request itself; the link is to who's asking.
+    href: cardHref(fromName),
+    meta: { actor: fromName },
     // One row per sender, however many times they ask.
-    digestKey: `friend-request:${fromAccountId}`,
+    digestKey: requestKey(fromAccountId),
     now,
   }).catch(() => undefined)
   return {
@@ -250,19 +245,46 @@ async function loadPendingRequest(id: string, now: number): Promise<FriendReques
   return row
 }
 
+function requestKey(fromAccountId: string) {
+  return `friend-request:${fromAccountId}`
+}
+
+/** A player's card: where "see who this is" goes. */
+function cardHref(name: string) {
+  return `/rank/${encodeURIComponent(name)}/week`
+}
+
+/**
+ * A request was accepted. The sender hears so, and the inbox row that asked
+ * the other player turns into the news that they're friends now.
+ */
+async function tellFriendsNow(request: FriendRequestRow, acceptedBy: string, now: number) {
+  const sender = request.fromName ?? (await displayNameFor(request.fromAccountId))
+  // The sender is the one who has been waiting to hear back.
+  await notify({
+    accountId: request.fromAccountId,
+    kind: 'friend-accepted',
+    title: `${acceptedBy} accepted your friend request`,
+    body: 'See how you compare on their card.',
+    href: cardHref(acceptedBy),
+    meta: { actor: acceptedBy },
+    digestKey: `friend-accepted:${request.toAccountId}`,
+    now,
+  }).catch(() => undefined)
+  await resolveNotification(
+    request.toAccountId,
+    requestKey(request.fromAccountId),
+    { title: `You and ${sender} are friends`, body: null, href: cardHref(sender), meta: { actor: sender } },
+    now,
+  ).catch(() => undefined)
+}
+
 export async function acceptFriendRequest(id: string, accountId: string, now = Date.now()) {
   const row = await loadPendingRequest(id, now)
   if (row.toAccountId !== accountId) fail('Not allowed', 403, 'FORBIDDEN')
   await setRequestStatus(id, 'accepted')
   await createFriendship(row.fromAccountId, row.toAccountId, now)
-  // The sender is the one who has been waiting to hear back.
-  await notify({
-    accountId: row.fromAccountId,
-    kind: 'friend-accepted',
-    title: `${row.toName ?? 'They'} accepted your friend request`,
-    href: '#/friends',
-    now,
-  }).catch(() => undefined)
+  await tellFriendsNow(row, row.toName ?? (await displayNameFor(row.toAccountId)), now)
   return { accountId: row.fromAccountId, name: row.fromName ?? 'PLAYER' }
 }
 
@@ -270,12 +292,15 @@ export async function declineFriendRequest(id: string, accountId: string, now = 
   const row = await loadPendingRequest(id, now)
   if (row.toAccountId !== accountId) fail('Not allowed', 403, 'FORBIDDEN')
   await setRequestStatus(id, 'declined')
+  // Nothing left to answer, and nobody needs reminding they said no.
+  await withdrawNotification(row.toAccountId, requestKey(row.fromAccountId)).catch(() => undefined)
 }
 
 export async function cancelFriendRequest(id: string, accountId: string, now = Date.now()) {
   const row = await loadPendingRequest(id, now)
   if (row.fromAccountId !== accountId) fail('Not allowed', 403, 'FORBIDDEN')
   await setRequestStatus(id, 'revoked')
+  await withdrawNotification(row.toAccountId, requestKey(row.fromAccountId)).catch(() => undefined)
 }
 
 export async function removeFriend(accountId: string, otherAccountId: string) {

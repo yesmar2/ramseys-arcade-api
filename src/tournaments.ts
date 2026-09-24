@@ -12,6 +12,7 @@ import {
   earliestOpenMatchDeadline,
   bestInMatch,
   finalMatch,
+  orderedMatches,
   playerNameFor,
   findOpenMatch,
   isBracketSize,
@@ -28,9 +29,11 @@ import {
   type TournamentBracket,
   type TournamentKind,
 } from './bracket.js'
-import { withAvatarIds } from './names.js'
+import { getClaim, withAvatarIds } from './names.js'
+import { notify, type NotificationMeta } from './notifications.js'
 import { awardEventWin } from './trophies.js'
 import { ALLOWED_GAMES, BOARD_TZ, canonicalizeGameSlug, isAllowedGame, resolveGameSlug, type GameSlug } from './store.js'
+import { GAME_LABELS, ordinal, pts, scoreWords } from './words.js'
 
 export type { TournamentKind } from './bracket.js'
 export type { PublicBracket, PublicBracketMatch, PublicBracketSide } from './bracket.js'
@@ -216,25 +219,7 @@ type Store = { tournaments: Tournament[] }
 
 type Ymd = { y: number; m: number; d: number; weekday: string }
 
-export const GAME_LABELS: Record<GameSlug, string> = {
-  barrage: 'Barrage',
-  frenzy: 'Frenzy',
-  stacker: 'Stacker',
-  patriot: 'Patriot',
-  snake: 'Snake',
-  pop: 'Pop',
-  centroid: 'Centroid',
-  asteroids: 'Asteroids',
-  simon: 'Simon',
-  crosswalk: 'Crosswalk',
-  spotter: 'Spotter',
-  pellets: 'Pellets',
-  findbug: 'Find the Bug',
-  crumbtrail: 'Crumbtrail',
-  bop: 'Bop',
-  putt: 'Putt',
-  fireflies: 'Fireflies',
-}
+export { GAME_LABELS }
 
 function ymdInTz(ms: number, timeZone = BOARD_TZ): Ymd {
   const parts = new Intl.DateTimeFormat('en-US', {
@@ -928,23 +913,27 @@ function publicTournament(
 }
 
 /*
- * Awarded lazily, because an event ends on a clock nobody is watching: a
- * bracket resolves when its round times out, which happens on whoever loads
- * the page next. Insert is a no-op once the trophy exists, and the in-process
- * set keeps a busy list from retrying every read.
+ * Awarded when the sweep, or anyone loading the events, finds an event over.
+ * Insert is a no-op once the trophy exists, and the in-process set keeps a
+ * busy list from retrying every read.
  */
 const awardedEvents = new Set<string>()
+
+/** An event's result is news for a day or so; older ones found after a restart stay unsaid. */
+const RESULT_NEWS_MS = 36 * 60 * 60 * 1000
 
 async function awardEndedEventTrophies(store: Store, now: number) {
   const pending: Promise<unknown>[] = []
   for (const raw of store.tournaments) {
     if (awardedEvents.has(raw.id)) continue
     const t = normalizeTournament(raw)
-    const winner = tournamentWinner(t, now)
+    if (tournamentStatus(t, now) !== 'ended') continue
+    const standings = computeStandings(t)
+    const winner = tournamentWinner(t, now, resolveKind(t) === 'bracket' ? undefined : standings)
     if (!winner) continue
     awardedEvents.add(t.id)
     const { y, m, d } = ymdInTz(t.startsAt)
-    const top = computeStandings(t).find((row) => row.name === winner)
+    const top = standings.find((row) => row.name === winner)
     pending.push(
       awardEventWin({
         eventId: t.id,
@@ -956,8 +945,110 @@ async function awardEndedEventTrophies(store: Store, now: number) {
         awardedAt: now,
       }).catch(() => false),
     )
+    // A big field is a lot of rows to file; nobody's page load waits for them.
+    if (now - t.endsAt < RESULT_NEWS_MS) {
+      void tellEventResults(t, winner, standings, now).catch((err: unknown) => {
+        console.warn(`[events] results for ${t.id} failed:`, err)
+      })
+    }
   }
   if (pending.length) await Promise.all(pending)
+}
+
+async function seatAccount(t: Tournament, playerId: string): Promise<string | null> {
+  const seat = t.players.find((p) => p.id === playerId)
+  if (!seat) return null
+  if (seat.accountId) return seat.accountId
+  return (await getClaim(seat.name))?.accountId ?? null
+}
+
+/**
+ * Tell everyone who played how an event they didn't win came out. The winner
+ * hears from their trophy. A daily is played by many and ends every day, so
+ * only its podium hears about it.
+ */
+async function tellEventResults(t: Tournament, winner: string, standings: StandingRow[], now: number) {
+  const href = `/tournaments/${t.id}`
+  const tell = async (playerId: string, title: string, body: string, meta: NotificationMeta) => {
+    const accountId = await seatAccount(t, playerId)
+    if (!accountId) return
+    await notify({
+      accountId,
+      kind: 'event-result',
+      title,
+      body,
+      href,
+      meta: { eventId: t.id, ...meta },
+      digestKey: `event-result:${t.id}`,
+      once: true,
+      now,
+    })
+  }
+
+  if (resolveKind(t) === 'bracket') {
+    const fin = finalMatch(t)
+    const runnerUp = fin?.playerIds.find((id) => id && id !== fin.winnerId) ?? null
+    const field = t.players.length
+    const order = orderedMatches(t)
+    for (const seat of t.players) {
+      if (seat.name === winner) continue
+      if (seat.id === runnerUp) {
+        await tell(seat.id, `You finished 2nd in ${t.title}`, `${winner} won the final.`, { place: 2, field })
+        continue
+      }
+      // The last match they were in is the one that put them out.
+      const last = [...order].reverse().find((m) => m.playerIds.includes(seat.id) && m.winnerId)
+      if (!last || last.winnerId === seat.id) continue
+      const by = playerNameFor(t, last.winnerId!)
+      await tell(seat.id, `${t.title} is over`, `${winner} won it. You went out to ${by}.`, { field })
+    }
+    return
+  }
+
+  const field = standings.filter((row) => row.gamesPlayed > 0)
+  const top = field[0]
+  if (!top) return
+  const single = t.games.length === 1 ? t.games[0]! : null
+  const said = (row: StandingRow) => {
+    if (!single) return pts(row.totalPoints)
+    const score = row.byGame[single]?.score
+    return score != null ? scoreWords(single, score) : pts(row.totalPoints)
+  }
+  for (const [i, row] of field.entries()) {
+    const place = i + 1
+    if (row.name === winner) continue
+    if (t.cadence === 'daily' && place > 3) break
+    await tell(
+      row.playerId,
+      `You finished ${ordinal(place)} in ${t.title}`,
+      `${said(row)}, out of ${field.length} ${field.length === 1 ? 'player' : 'players'}. ${top.name} won with ${said(top)}.`,
+      { place, field: field.length, ...(single ? { game: single } : {}) },
+    )
+  }
+}
+
+/**
+ * Let time pass for events nobody is looking at: a bracket's rounds time out
+ * and the next ones open, finished events hand out trophies and results, and
+ * match alerts reach the players who need them. Runs on the sweep's timer and
+ * after a bracket score, instead of waiting for someone to open a page.
+ */
+export async function sweepTournaments(now = Date.now(), only?: string) {
+  const store = await ensureStore(now)
+  let changed = false
+  for (const raw of store.tournaments) {
+    if (only && raw.id !== only) continue
+    const t = normalizeTournament(raw)
+    if (resolveKind(t) !== 'bracket' || !t.bracket?.lockedAt || bracketHasChampion(t)) continue
+    if (syncBracketClock(t, now)) {
+      putTournament(store, t)
+      changed = true
+    }
+  }
+  if (changed) await writeStore(store)
+  await awardEndedEventTrophies(store, now)
+  const events = store.tournaments.map(normalizeTournament).filter((t) => !only || t.id === only)
+  await fileMatchAlerts(events, now)
 }
 
 export type TournamentListFilter = 'all' | 'official' | 'mine' | 'joined'
@@ -975,8 +1066,8 @@ export async function listTournaments(
   playerName?: string,
 ) {
   const store = await ensureStore(now)
+  // Match alerts are the sweep's job; a trophy is worth handing out on sight.
   await awardEndedEventTrophies(store, now)
-  await fileMatchAlerts(store.tournaments.map(normalizeTournament), now)
   const cleanedPlayer = playerName ? cleanName(playerName) : ''
   const standingsOf = standingsMemo()
   let list = store.tournaments.map((t) => publicTournament(t, now, standingsOf))
@@ -1813,13 +1904,21 @@ export async function submitTournamentScore(
     }
   }
 
+  const tournament = (await getTournamentDetail(id, now, {
+    ...detailAccessOpts(access),
+    playerName: cleaned,
+    game,
+    accountId: access.accountId,
+  }))!
+  // The run may have settled a match: clear its alerts and tell whoever is up next.
+  if (resolveKind(t) === 'bracket') {
+    void sweepTournaments(Date.now(), id).catch((err: unknown) => {
+      console.warn(`[events] sweep after a score on ${id} failed:`, err)
+    })
+  }
+
   return {
-    tournament: (await getTournamentDetail(id, now, {
-      ...detailAccessOpts(access),
-      playerName: cleaned,
-      game,
-      accountId: access.accountId,
-    }))!,
+    tournament,
     accepted: true,
     best: Math.max(prevBest, score),
     improved,

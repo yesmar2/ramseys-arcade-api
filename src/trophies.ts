@@ -9,6 +9,7 @@ import {
   monthKey,
   weekStartKey,
 } from './store.js'
+import { ordinal, pts } from './words.js'
 
 export type TrophyPeriod = 'weekly' | 'monthly' | 'event'
 export const MAX_TROPHY_RANK = 10
@@ -91,6 +92,8 @@ async function awardClosedPeriod(
   period: Exclude<TrophyPeriod, 'event'>,
   periodKey: number,
   now: number,
+  /** Tell the players: only for the period that just closed, never a backfill. */
+  announce = false,
 ): Promise<boolean> {
   const ranked = (await globalRanksForClosedPeriod(period, periodKey)).slice(0, MAX_TROPHY_RANK)
   if (ranked.length === 0) return false
@@ -121,8 +124,56 @@ async function awardClosedPeriod(
       awardedAt: now,
     })
     changed = true
+    if (announce && accountId) {
+      await notifyPlace(accountId, { id, period, periodKey, name: row.name, rank: row.rank, score: row.score }).catch(
+        (err: unknown) => console.warn(`[trophies] telling ${row.name} about ${id} failed:`, err),
+      )
+    }
   }
   return changed
+}
+
+const METALS = ['gold', 'silver', 'bronze'] as const
+
+function monthName(periodKey: number): string {
+  const y = Math.floor(periodKey / 100)
+  const m = periodKey % 100
+  return new Date(Date.UTC(y, m - 1, 15)).toLocaleDateString('en-US', { month: 'long', timeZone: 'UTC' })
+}
+
+/**
+ * A week or a month finished in the arcade's top ten: what landed on the
+ * shelf, and the ring or pin it unlocked if this is the first time.
+ */
+async function notifyPlace(
+  accountId: string,
+  award: { id: string; period: 'weekly' | 'monthly'; periodKey: number; name: string; rank: number; score: number },
+) {
+  const before = (await trophiesForName(award.name)).filter((t) => t.id !== award.id && t.period === award.period)
+  const bestBefore = before.length ? Math.min(...before.map((t) => t.rank)) : Infinity
+  const metal = award.rank <= 3 ? METALS[award.rank - 1] : null
+  const prize = metal
+    ? `The ${metal} ${award.period === 'weekly' ? 'medal' : 'cup'} is on your shelf`
+    : 'A rosette is on your shelf'
+  // Rings go with a week's podium, the crown pin with winning a month; each is news only the first time.
+  const ring = award.period === 'weekly' && metal && award.rank < bestBefore ? metal : undefined
+  const pin = award.period === 'monthly' && award.rank === 1 && bestBefore > 1 ? 'crown' : undefined
+  const unlock = ring ? `, and the ${ring} ring is yours to wear` : pin ? ', and the crown pin is yours to wear' : ''
+  const when = award.period === 'weekly' ? 'last week' : `in ${monthName(award.periodKey)}`
+  await notify({
+    accountId,
+    kind: 'trophy',
+    title: `You finished ${ordinal(award.rank)} in the arcade ${when}`,
+    body: `${pts(award.score)}. ${prize}${unlock}.`,
+    href: '/rank/all?focus=trophies',
+    meta: {
+      trophy: { period: award.period, rank: award.rank },
+      ...(ring ? { ring } : {}),
+      ...(pin ? { pin } : {}),
+    },
+    digestKey: `trophy:${award.period}:${award.periodKey}`,
+    once: true,
+  })
 }
 
 function addDaysToDateKey(key: number, days: number) {
@@ -196,12 +247,13 @@ export async function ensurePeriodTrophies(now = Date.now()) {
     const weekCount = cursor.weeklyInitialized ? 1 : 8
     const monthCount = cursor.monthlyInitialized ? 1 : 6
 
+    // Only the period that just closed is news; a backfill is not.
     for (const weekKey of listWeekKeysBefore(now, weekCount)) {
-      await awardClosedPeriod('weekly', weekKey, now)
+      await awardClosedPeriod('weekly', weekKey, now, weekKey === previousWeekStart(now))
     }
 
     for (const monthKeyVal of listMonthKeysBefore(now, monthCount)) {
-      await awardClosedPeriod('monthly', monthKeyVal, now)
+      await awardClosedPeriod('monthly', monthKeyVal, now, monthKeyVal === previousMonthKey(now))
     }
 
     await setCursor({ weeklyInitialized: true, monthlyInitialized: true })
@@ -311,19 +363,26 @@ export async function awardEventWin(opts: {
  * Congratulate the winner in the inbox.
  *
  * Inbox only. Winning is good news that keeps, and the player almost always
- * just watched it happen on the bracket page anyway.
+ * just watched it happen on the bracket page anyway. A first win also
+ * unlocks the laurel ring, which the row offers to put on.
  */
 async function notifyEventWin(name: string, eventTitle: string, eventId: string) {
   try {
     const claim = await getClaim(name)
     if (!claim?.accountId) return
+    const wins = (await trophiesForName(name)).filter((t) => t.period === 'event')
+    const first = wins.length <= 1
     await notify({
       accountId: claim.accountId,
       kind: 'trophy',
       title: `You won ${eventTitle}`,
-      body: 'A trophy has been added to your case.',
-      href: '#/rank',
+      body: first
+        ? 'The cup is on your shelf, and the laurel ring is yours to wear.'
+        : 'The cup is on your shelf.',
+      href: '/rank/all?focus=trophies',
+      meta: { trophy: { period: 'event', rank: 1 }, eventId, ...(first ? { ring: 'laurel' } : {}) },
       digestKey: `trophy:${eventId}`,
+      once: true,
     })
   } catch {
     // The trophy is already recorded; the note about it is a nicety.

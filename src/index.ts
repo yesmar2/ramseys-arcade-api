@@ -27,6 +27,7 @@ import { trophiesRouter } from './trophiesRoutes.js'
 import { checkDbHealth, queryStats } from './db/client.js'
 import { runMigrations } from './db/migrate.js'
 import { migrateStrideToCrosswalk } from './migrateStrideToCrosswalk.js'
+import { lastSweptAt, startSweeping } from './sweep.js'
 
 /** Load .env into process.env when present (does not override existing vars). */
 function loadDotEnv() {
@@ -124,6 +125,8 @@ async function main() {
       // Whether VAPID is configured here. Without it the opt-in is hidden in
       // the app, which is otherwise indistinguishable from the feature missing.
       push: Boolean(publicVapidKey()),
+      // When match alerts, results and held pushes were last seen to; null until the first sweep.
+      sweptAt: lastSweptAt(),
       ...(dbHealth.error ? { error: dbHealth.error } : {}),
     })
   })
@@ -172,6 +175,7 @@ async function main() {
   app.listen(PORT, HOST, () => {
     console.log(`Skermix API listening on http://${HOST}:${PORT}`)
   })
+  startSweeping()
 }
 
 main().catch((err) => {

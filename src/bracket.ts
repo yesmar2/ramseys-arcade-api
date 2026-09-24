@@ -690,7 +690,7 @@ export function resolveMatchIfReady(
 /** Cascade order: winners, then losers, then the grand final. */
 const SIDE_ORDER: Record<BracketSide, number> = { wb: 0, lb: 1, gf: 2 }
 
-function orderedMatches(t: Tournament): BracketMatch[] {
+export function orderedMatches(t: Tournament): BracketMatch[] {
   return [...(t.bracket?.matches ?? [])].sort(
     (a, b) =>
       SIDE_ORDER[matchSide(a)] - SIDE_ORDER[matchSide(b)] ||

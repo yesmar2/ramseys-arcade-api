@@ -2,7 +2,8 @@ import { and, desc, eq, inArray } from 'drizzle-orm'
 import { db } from './db/client.js'
 import { leaderboardScores, recordScores } from './db/schema.js'
 import { getClaim } from './names.js'
-import { dayKey, notify } from './notifications.js'
+import { notify } from './notifications.js'
+import { clock, gameLabel, spanWords } from './words.js'
 import {
   ALLOWED_GAMES,
   boardDateKey,
@@ -863,12 +864,9 @@ export {
   CROSSWALK_ROW_MILESTONE_STEP,
 }
 
-/** `crumbtrail` -> `Crumbtrail`, for a notification body. */
-function titleCase(slug: string): string {
-  return slug
-    .split('-')
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(' ')
+/** A record's value the way its book prints it: 47.5s for a clock, 23 for a count. */
+function recordValue(def: RecordDef, value: number): string {
+  return def.unit === 'ms' ? clock(value) : value.toLocaleString('en-US')
 }
 
 /**
@@ -879,6 +877,9 @@ function titleCase(slug: string): string {
  * across 65 boards; "you are no longer the record holder" fires only when a
  * player's own standing changed, which is bounded by the handful of boards
  * anyone actually leads.
+ *
+ * One row per record: losing three in a day is three rows, each naming who
+ * took it and by how much, rather than one row named after the last.
  *
  * Inbox only — never pushed. The record will still be gone when they next open
  * the app, so there is nothing here worth a buzz.
@@ -903,10 +904,10 @@ async function notifyRecordTaken(
       accountId: claim.accountId,
       kind: 'record-lost',
       title: `${taker} took your ${def.label} record`,
-      body: `${titleCase(game)} · ${def.label}`,
-      href: `#/records/${game}/${recordId}/all`,
-      // One row a day however many boards they lose; the count carries the rest.
-      digestKey: `record-lost:${dayKey(now)}`,
+      body: `${gameLabel(game)}, ${recordValue(def, leader.score)} to your ${recordValue(def, priorLeader.score)}. You held it for ${spanWords(now - priorLeader.at)}.`,
+      href: `/records/${game}/${recordId}/all`,
+      meta: { actor: taker, game, playHref: `/games/${game}/play` },
+      digestKey: `record-lost:${game}:${recordId}`,
       now,
     })
   } catch {

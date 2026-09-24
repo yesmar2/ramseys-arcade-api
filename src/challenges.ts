@@ -3,10 +3,9 @@ import { and, eq } from 'drizzle-orm'
 import { db } from './db/client.js'
 import { challengeResults, challenges, leaderboardScores } from './db/schema.js'
 import { notify } from './notifications.js'
-import { sendPush } from './push.js'
-import { TIME_SCORE_BASE, TIME_SCORED_GAMES } from './scoreLimits.js'
+import { fileAndPush } from './push.js'
 import type { GameSlug } from './store.js'
-import { GAME_LABELS } from './tournaments.js'
+import { gameLabel, gapWords, isTime, scoreFigure, scoreWords } from './words.js'
 
 /**
  * Challenges: one saved run, sent to a friend to beat.
@@ -33,43 +32,6 @@ function newChallengeId(): string {
 
 export function isChallengeId(id: string): boolean {
   return /^[A-Za-z0-9]{4,16}$/.test(id)
-}
-
-/* ---------- words, for the challenger's inbox ---------- */
-
-const UNITS: Partial<Record<GameSlug, [string, string]>> = {
-  crosswalk: ['row', 'rows'],
-  stacker: ['block', 'blocks'],
-  simon: ['round', 'rounds'],
-  fireflies: ['note', 'notes'],
-}
-
-function isTime(game: GameSlug) {
-  return TIME_SCORED_GAMES.has(game)
-}
-
-/** A time the way the site prints one: 47.5s, or 1:02.3 past a minute. */
-function clock(ms: number): string {
-  const total = Math.max(0, ms) / 1000
-  const m = Math.floor(total / 60)
-  const s = total - m * 60
-  return m > 0 ? `${m}:${s.toFixed(1).padStart(4, '0')}` : `${s.toFixed(1)}s`
-}
-
-/** A score as the board shows it: 447, 14,310, 47.5s. */
-export function scoreFigure(game: GameSlug, score: number): string {
-  return isTime(game) ? clock(TIME_SCORE_BASE - score) : score.toLocaleString('en-US')
-}
-
-/** A gap between two scores in the game's own terms: 6 rows, 1 point, 0.4s. */
-function gapWords(game: GameSlug, gap: number): string {
-  if (isTime(game)) return `${(gap / 1000).toFixed(1)}s`
-  const [one, many] = UNITS[game] ?? ['point', 'points']
-  return `${gap.toLocaleString('en-US')} ${gap === 1 ? one : many}`
-}
-
-function gameLabel(game: GameSlug): string {
-  return GAME_LABELS[game] ?? game
 }
 
 /* ---------- making and reading ---------- */
@@ -219,15 +181,21 @@ async function tellChallenger(
 ) {
   const game = run.game
   const set = scoreFigure(game, challenge.score)
+  const meta = { actor: run.name, game }
   if (what.won) {
     // Once a win: a later, higher win is still the same news.
     if (!what.firstWin) return
-    const title = `${run.name} beat your ${set} on ${gameLabel(game)}`
-    const body = `with ${scoreFigure(game, run.score)}. Take it back?`
-    const href = what.replyId ? `/c/${game}/${what.replyId}` : `/games/${game}/play`
-    const key = `challenge-beaten:${challenge.id}:${run.name}`
-    await notify({ accountId: challenge.accountId, kind: 'challenge-beaten', title, body, href, digestKey: key, now })
-    await sendPush(challenge.accountId, { kind: 'challenge-beaten', title, body, href, dedupeKey: key }, now)
+    await fileAndPush({
+      accountId: challenge.accountId,
+      kind: 'challenge-beaten',
+      title: `${run.name} beat your ${scoreWords(game, challenge.score)} on ${gameLabel(game)}`,
+      body: `With ${scoreWords(game, run.score)}. Your turn.`,
+      // Their winning run, sent back as a challenge: the target is already set.
+      href: what.replyId ? `/c/${game}/${what.replyId}` : `/games/${game}/play`,
+      meta,
+      digestKey: `challenge-beaten:${challenge.id}:${run.name}`,
+      now,
+    })
     return
   }
   // A try that fell short is worth a line, once for each time they get closer.
@@ -240,6 +208,7 @@ async function tellChallenger(
     title: `${run.name} took your challenge on ${gameLabel(game)}`,
     body: `${scoreFigure(game, run.score)}, ${gapWords(game, challenge.score - run.score)} ${short} your ${set}.`,
     href: `/games/${game}`,
+    meta,
     digestKey: `challenge-taken:${challenge.id}:${run.name}`,
     now,
   })

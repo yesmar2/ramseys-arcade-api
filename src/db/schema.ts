@@ -352,8 +352,9 @@ export const appMeta = pgTable('app_meta', {
  * In-app notification inbox.
  *
  * Everything the arcade wants to tell a player lands here; only a small subset
- * is ever also pushed to a device. `digestKey` collapses repeats — losing five
- * records in a day is one row that counts to five, not five rows.
+ * is ever also pushed to a device. `digestKey` names the thing a row is about
+ * (one match, one record, one friend), so telling someone again updates their
+ * row rather than stacking another.
  */
 export const notifications = pgTable(
   'notifications',
@@ -372,6 +373,12 @@ export const notifications = pgTable(
     createdAt: bigint('created_at', { mode: 'number' }).notNull(),
     updatedAt: bigint('updated_at', { mode: 'number' }).notNull(),
     readAt: bigint('read_at', { mode: 'number' }),
+    /** Who and what it's about, for the inbox to draw: see `NotificationMeta`. */
+    meta: jsonb('meta'),
+    /** Set once there is nothing left to do about it, like a request answered. */
+    resolvedAt: bigint('resolved_at', { mode: 'number' }),
+    /** When it went to the player's devices; unset while a push is held. */
+    pushedAt: bigint('pushed_at', { mode: 'number' }),
   },
   (t) => [
     index('notif_account_idx').on(t.accountId, t.updatedAt),

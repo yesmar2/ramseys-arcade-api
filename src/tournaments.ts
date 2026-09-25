@@ -2232,8 +2232,8 @@ export async function getTournamentDetail(
     : t.players.filter((p) => p.name === you || (opts?.playerId != null && p.id === opts.playerId))
   return {
     ...publicTournament(t, now),
-    // The whole roster, or for a big event the viewer's own seat.
-    players: seats.map((p) => ({ id: p.id, name: p.name, joinedAt: p.joinedAt })),
+    // The whole roster, or for a big event the viewer's own seat, each with the badge they made.
+    players: await withAvatarIds(seats.map((p) => ({ id: p.id, name: p.name, joinedAt: p.joinedAt }))),
     // Each row with its place in the whole field.
     standings: await withAvatarIds(shown.map((i) => ({ ...standings[i]!, place: i + 1 }))),
     standingsTotal: standings.length,

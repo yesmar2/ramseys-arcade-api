@@ -1,7 +1,7 @@
 import { and, eq, inArray, lt } from 'drizzle-orm'
 import { db } from './db/client.js'
 import { directedInvites } from './db/schema.js'
-import { cleanPlayerName, getClaim, namesOwnedByAccount } from './names.js'
+import { cleanPlayerName, getClaim, namesOwnedByAccount, withAvatarIds } from './names.js'
 import {
   canInviteToGroup,
   getGroup,
@@ -41,6 +41,8 @@ export type PublicInvite = {
   targetName: string
   fromName: string | null
   toName: string
+  /** The invitee's badge, where a list shows who they are. */
+  toAvatarId?: string
   status: InviteStatus
   createdAt: number
   expiresAt: number
@@ -186,11 +188,13 @@ export async function listTournamentInvitesForHost(
     .where(and(eq(directedInvites.kind, 'tournament'), eq(directedInvites.targetId, targetId)))
   const joined = new Set(t.players.map((p) => p.name))
 
-  return rows
+  const waiting = rows
     .map(rowToInvite)
     .filter((row) => row.status === 'pending' && !isExpired(row, now) && !joined.has(row.toName))
     .sort((a, b) => b.createdAt - a.createdAt)
     .map(publicInvite)
+  const badges = await withAvatarIds(waiting.map((i) => ({ name: i.toName })))
+  return waiting.map((i, k) => ({ ...i, toAvatarId: badges[k]?.avatarId }))
 }
 
 /** Drop pending directed invites once an event has no open seats. */

@@ -15,7 +15,7 @@ function newRunId() {
  * that a stockpile of ids cannot be banked for later. A run left open past this
  * is simply not redeemable — the player starts a new one.
  */
-const RUN_TTL_MS = 6 * 60 * 60 * 1000
+export const RUN_TTL_MS = 6 * 60 * 60 * 1000
 
 /** Spent and expired rows are swept opportunistically, on roughly 1 start in 50. */
 const SWEEP_ODDS = 0.02
@@ -66,7 +66,12 @@ export async function peekRun(
   return { ok: true, startedAt: run.startedAt, elapsedMs: now - run.startedAt }
 }
 
-export type RunSurface = 'leaderboard' | 'tournament'
+/**
+ * What a run is cashed in for: the board, an event, or (as a binding rather
+ * than a payout) the try in an event it was opened for, with the event and the
+ * try in its ref.
+ */
+export type RunSurface = 'leaderboard' | 'tournament' | 'attempt'
 
 /**
  * Cash a run in for one surface. False means it already has been.
@@ -87,6 +92,16 @@ export async function claimRun(
     .onConflictDoNothing()
     .returning({ runId: runClaims.runId })
   return claimed.length > 0
+}
+
+/** What a run was claimed for on one surface, if it was: the claim's ref. */
+export async function runClaimRef(runId: string, surface: RunSurface): Promise<string | null> {
+  const [row] = await db()
+    .select({ ref: runClaims.ref })
+    .from(runClaims)
+    .where(and(eq(runClaims.runId, runId), eq(runClaims.surface, surface)))
+    .limit(1)
+  return row?.ref ?? null
 }
 
 /** Drop rows no submission can still reference. */

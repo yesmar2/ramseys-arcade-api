@@ -33,6 +33,7 @@ import {
 } from './bracket.js'
 import { getClaim, namesOwnedByAccount, withAvatarIds } from './names.js'
 import { notify, type NotificationMeta } from './notifications.js'
+import { RUN_TTL_MS } from './runs.js'
 import { awardEventWin } from './trophies.js'
 import { ALLOWED_GAMES, BOARD_TZ, canonicalizeGameSlug, isAllowedGame, resolveGameSlug, type GameSlug } from './store.js'
 import { GAME_LABELS, ordinal, pts, scoreWords } from './words.js'
@@ -51,7 +52,7 @@ const EVENT_GAMES = ALLOWED_GAMES.filter((g) => g !== 'crosswalk' && g !== 'spot
 const RETIRED_GAMES: ReadonlySet<GameSlug> = new Set<GameSlug>(['simon'])
 
 export type TournamentStatus = 'upcoming' | 'active' | 'ended'
-export type TournamentCadence = 'daily' | 'weekly'
+export type TournamentCadence = 'daily' | 'weekly' | 'oneshot'
 export type TournamentFormat =
   | 'open'
   | 'place-points'
@@ -451,13 +452,17 @@ export function isTournamentRosterFull(t: Tournament): boolean {
   return normalizeTournament(t).players.length >= cap
 }
 
-function playerFinishedAllGames(t: Tournament, playerId: string): boolean {
+function playerFinishedAllGames(t: Tournament, playerId: string, now: number): boolean {
   const normalized = normalizeTournament(t)
   const format = resolveFormat(normalized)
   const maxAttempts = getMaxAttempts(normalized)
   if (format === 'open' || !Number.isFinite(maxAttempts)) return false
   for (const game of normalized.games) {
-    if (playerAttempts(normalized, playerId, game) < maxAttempts) return false
+    const row = eventIndex(normalized).byPlayer.get(playerId)?.get(game)
+    // A try whose run is still going isn't finished; one whose run is too old to score now never will be.
+    const stale = row != null && row.pendingAt > 0 && now - row.pendingAt > RUN_TTL_MS
+    const done = row ? (stale ? row.runs : row.scored) : 0
+    if (done < maxAttempts) return false
   }
   return true
 }
@@ -469,14 +474,16 @@ function rosterReadyForAutoEnd(t: Tournament): boolean {
   return normalized.players.length > 0
 }
 
-function allPlayersFinishedAttempts(t: Tournament): boolean {
+function allPlayersFinishedAttempts(t: Tournament, now: number): boolean {
   const normalized = normalizeTournament(t)
+  // The arcade's own events run to the calendar: everyone who has played so far is not everyone.
+  if (normalized.official) return false
   if (!rosterReadyForAutoEnd(normalized)) return false
-  return normalized.players.every((p) => playerFinishedAllGames(normalized, p.id))
+  return normalized.players.every((p) => playerFinishedAllGames(normalized, p.id, now))
 }
 
 function maybeEndWhenAllFinished(t: Tournament, now: number): boolean {
-  if (!allPlayersFinishedAttempts(t)) return false
+  if (!allPlayersFinishedAttempts(t, now)) return false
   t.endsAt = now
   return true
 }
@@ -500,8 +507,12 @@ type EventIndex = {
   games: GameSlug[]
   format: TournamentFormat
   inPlace: number
-  /** Player id → game → how many runs, the best, and their sum. */
-  byPlayer: Map<string, Map<GameSlug, { runs: number; best: number; sum: number }>>
+  /**
+   * Player id → game → how many runs (tries spent), how many of them have a
+   * score, the best and their sum, and when the newest try still waiting on
+   * its score began (0 when none is).
+   */
+  byPlayer: Map<string, Map<GameSlug, { runs: number; scored: number; best: number; sum: number; pendingAt: number }>>
   standings: StandingRow[] | null
   /** The roster's tags, made on first ask. */
   names: Set<string> | null
@@ -534,13 +545,26 @@ function eventIndex(t: Tournament): EventIndex {
       games = new Map()
       byPlayer.set(s.playerId, games)
     }
+    // A run with no score is a try whose run hasn't ended (or never will): spent, but not played.
+    const scored = s.score > 0
     const row = games.get(s.game)
     if (row) {
       row.runs++
-      row.sum += s.score
-      if (s.score > row.best) row.best = s.score
+      if (scored) {
+        row.scored++
+        row.sum += s.score
+        if (s.score > row.best) row.best = s.score
+      } else if (s.at > row.pendingAt) {
+        row.pendingAt = s.at
+      }
     } else {
-      games.set(s.game, { runs: 1, best: s.score, sum: s.score })
+      games.set(s.game, {
+        runs: 1,
+        scored: scored ? 1 : 0,
+        best: scored ? s.score : 0,
+        sum: scored ? s.score : 0,
+        pendingAt: scored ? 0 : s.at,
+      })
     }
   }
   const index: EventIndex = {
@@ -592,7 +616,7 @@ function aggregatePlayerGameScore(
   game: GameSlug,
 ): number | null {
   const row = eventIndex(t).byPlayer.get(playerId)?.get(game)
-  if (!row) return null
+  if (!row || row.scored === 0) return null
   return resolveFormat(t) === 'cumulative' ? row.sum : row.best
 }
 
@@ -650,22 +674,57 @@ export function buildWeeklyEvent(now = Date.now()): Tournament {
   }
 }
 
+/**
+ * One Shot: a game a day, never the daily's, and one try at it for everyone.
+ * The try is spent the moment its run starts, so there is no warming up on it.
+ */
+export function buildOneShotEvent(now = Date.now()): Tournament {
+  const { y, m, d } = ymdInTz(now)
+  const key = dateKey(y, m, d)
+  const next = addCalendarDays(y, m, d, 1)
+  const daily = pickGames(key, 1)[0]
+  const picks = pickGames(key * 31 + 7, 2)
+  const game = picks.find((g) => g !== daily) ?? picks[0]!
+  const label = gameLabel(game)
+  return {
+    id: `oneshot-${key}`,
+    title: `One Shot · ${label}`,
+    blurb: `One try at ${label}, the same for everyone. It counts the moment you start, so make it your best.`,
+    games: [game],
+    startsAt: zonedDateTimeToUtc(y, m, d, 0, 0),
+    endsAt: zonedDateTimeToUtc(next.y, next.m, next.d, 0, 0),
+    official: true,
+    cadence: 'oneshot',
+    format: 'single-run',
+    rules: { maxAttempts: 1 },
+    visibility: 'public',
+    createdBy: null,
+    players: [],
+    scores: [],
+  }
+}
+
 /** Keep a short history of ended cadence events; drop older ones. */
 function pruneCadenceHistory(store: Store): boolean {
   const keepDaily = 3
   const keepWeekly = 2
+  const keepOneShot = 3
   const dailies = store.tournaments
     .filter((t) => t.cadence === 'daily')
     .sort((a, b) => b.startsAt - a.startsAt)
   const weeklies = store.tournaments
     .filter((t) => t.cadence === 'weekly')
     .sort((a, b) => b.startsAt - a.startsAt)
+  const oneShots = store.tournaments
+    .filter((t) => t.cadence === 'oneshot')
+    .sort((a, b) => b.startsAt - a.startsAt)
   const keep = new Set([
     ...dailies.slice(0, keepDaily).map((t) => t.id),
     ...weeklies.slice(0, keepWeekly).map((t) => t.id),
+    ...oneShots.slice(0, keepOneShot).map((t) => t.id),
   ])
   const next = store.tournaments.filter((t) => {
-    if (t.cadence !== 'daily' && t.cadence !== 'weekly') return true
+    if (t.cadence !== 'daily' && t.cadence !== 'weekly' && t.cadence !== 'oneshot') return true
     return keep.has(t.id)
   })
   if (next.length === store.tournaments.length) return false
@@ -690,10 +749,11 @@ function upsertRollingEvent(store: Store, next: Tournament): boolean {
   return true
 }
 
-/** Ensure current daily + weekly official events exist (ET calendar). */
+/** Ensure the current daily, One Shot and weekly official events exist (ET calendar). */
 function ensureRollingEvents(store: Store, now = Date.now()): boolean {
   let changed = false
   if (upsertRollingEvent(store, buildDailyEvent(now))) changed = true
+  if (upsertRollingEvent(store, buildOneShotEvent(now))) changed = true
   if (upsertRollingEvent(store, buildWeeklyEvent(now))) changed = true
   if (pruneCadenceHistory(store)) changed = true
   return changed
@@ -711,14 +771,14 @@ function rollingEventsDue(store: Store, now = Date.now()): boolean {
   if (now < rollingCheckAt) return false
   const changed = ensureRollingEvents(store, now)
   const running = store.tournaments
-    .filter((t) => (t.cadence === 'daily' || t.cadence === 'weekly') && t.endsAt > now)
+    .filter((t) => (t.cadence === 'daily' || t.cadence === 'weekly' || t.cadence === 'oneshot') && t.endsAt > now)
     .map((t) => t.endsAt)
   rollingCheckAt = Math.min(now + 10 * 60_000, ...running)
   return changed
 }
 
 function emptyStore(now = Date.now()): Store {
-  return { tournaments: [buildDailyEvent(now), buildWeeklyEvent(now)] }
+  return { tournaments: [buildDailyEvent(now), buildOneShotEvent(now), buildWeeklyEvent(now)] }
 }
 
 /** An event's JSON: everything but its roster and runs, which have tables of their own. */
@@ -1499,7 +1559,7 @@ export function tournamentStatus(t: Tournament, now = Date.now()): TournamentSta
     return 'active'
   }
   if (now < normalized.startsAt) return 'upcoming'
-  if (allPlayersFinishedAttempts(normalized)) return 'ended'
+  if (allPlayersFinishedAttempts(normalized, now)) return 'ended'
   if (normalized.rules?.unlimitedDuration) return 'active'
   if (now > normalized.endsAt) return 'ended'
   return 'active'
@@ -1674,8 +1734,8 @@ async function seatAccount(t: Tournament, playerId: string): Promise<string | nu
 
 /**
  * Tell everyone who played how an event they didn't win came out. The winner
- * hears from their trophy. A daily is played by many and ends every day, so
- * only its podium hears about it.
+ * hears from their trophy. A daily or a One Shot is played by many and ends
+ * every day, so only its podium hears about it.
  */
 async function tellEventResults(t: Tournament, winner: string, standings: StandingRow[], now: number) {
   const href = `/tournaments/${t.id}`
@@ -1727,7 +1787,7 @@ async function tellEventResults(t: Tournament, winner: string, standings: Standi
   for (const [i, row] of field.entries()) {
     const place = i + 1
     if (row.name === winner) continue
-    if (t.cadence === 'daily' && place > 3) break
+    if ((t.cadence === 'daily' || t.cadence === 'oneshot') && place > 3) break
     await tell(
       row.playerId,
       `You finished ${ordinal(place)} in ${t.title}`,
@@ -1858,7 +1918,7 @@ export async function listTournaments(
     if (statusDiff !== 0) return statusDiff
     if (a.status === 'ended' && b.status === 'ended') return b.startsAt - a.startsAt
     const cadenceRank = (c: string | null | undefined) =>
-      c === 'daily' ? 0 : c === 'weekly' ? 1 : 2
+      c === 'daily' ? 0 : c === 'oneshot' ? 1 : c === 'weekly' ? 2 : 3
     const cadenceDiff = cadenceRank(a.cadence) - cadenceRank(b.cadence)
     if (cadenceDiff !== 0) return cadenceDiff
     return a.startsAt - b.startsAt
@@ -1938,7 +1998,7 @@ function countStandings(normalized: Tournament, index: EventIndex): StandingRow[
     const aggregated = new Map<string, number>()
     for (const p of normalized.players) {
       const runs = index.byPlayer.get(p.id)?.get(game)
-      if (runs) aggregated.set(p.id, format === 'cumulative' ? runs.sum : runs.best)
+      if (runs && runs.scored > 0) aggregated.set(p.id, format === 'cumulative' ? runs.sum : runs.best)
     }
 
     const ranked = [...aggregated.entries()].sort((a, b) => b[1] - a[1])
@@ -2664,6 +2724,94 @@ async function joinTournamentNow(
   }
 }
 
+/** Whether an event spends a try as its run starts: any event with a set number of tries, bar a bracket. */
+export function triesCountAtStart(t: Tournament): boolean {
+  const normalized = normalizeTournament(t)
+  return resolveKind(normalized) !== 'bracket' && Number.isFinite(getMaxAttempts(normalized))
+}
+
+export type TryStart = {
+  /** The try's run row, which the run opened for it is bound to. */
+  rowId: string
+  attempt: number
+  attemptsUsed: number
+  attemptsRemaining: number
+  maxAttempts: number
+}
+
+/**
+ * A try begins. In an event with a set number of tries a try is spent the
+ * moment its run starts, not when its score comes in, so a run going badly
+ * can't be quit to keep it. It goes down as a run with no score yet, which
+ * the score that ends the run fills in (submitTournamentScore); a run that
+ * never ends stays a spent try that scored nothing.
+ *
+ * Brackets still count a try when its score comes in: a match settles once
+ * both players have spent their tries, and a try still being played would
+ * settle it too soon.
+ */
+export async function startTournamentTry(
+  id: string,
+  name: string,
+  game: string,
+  now: number,
+  access: TournamentAccessOpts,
+): Promise<TryStart> {
+  return withEventLock(id, async () => {
+    const store = await ensureStore()
+    const raw = store.tournaments.find((x) => x.id === id)
+    if (!raw) throw Object.assign(new Error('Tournament not found'), { status: 404 })
+    const t = normalizeTournament(raw)
+    if (tournamentStatus(t, now) !== 'active') {
+      throw Object.assign(new Error('Tournament is not active'), { status: 409 })
+    }
+    if (!triesCountAtStart(t)) {
+      throw Object.assign(new Error('This event doesn’t count tries as they start'), {
+        status: 400,
+        code: 'TRIES_NOT_COUNTED',
+      })
+    }
+    const gameSlug = resolveGameSlug(game)
+    if (!gameSlug || !t.games.includes(gameSlug)) {
+      throw Object.assign(new Error('Game not in this tournament'), { status: 400 })
+    }
+    const cleaned = cleanName(name)
+    assertTournamentAccess(t, { ...access, playerName: cleaned })
+    let player = t.players.find((p) => p.name === cleaned)
+    if (!player) {
+      const cap = getMaxPlayers(t)
+      if (cap != null && t.players.length >= cap) {
+        throw Object.assign(new Error('This event is full'), { status: 409, code: 'EVENT_FULL' })
+      }
+      player = { id: uid(), name: cleaned, joinedAt: now }
+      t.players.push(player)
+    }
+    const maxAttempts = getMaxAttempts(t)
+    const used = playerAttempts(t, player.id, gameSlug)
+    if (used >= maxAttempts) {
+      throw Object.assign(new Error('No attempts remaining'), { status: 409, code: 'ATTEMPTS_EXHAUSTED' })
+    }
+    const row: TournamentScore = {
+      id: newScoreId(),
+      playerId: player.id,
+      game: gameSlug,
+      score: 0,
+      at: now,
+      attempt: used + 1,
+    }
+    t.scores.push(row)
+    putTournament(store, t)
+    await writeStore(store, [t])
+    return {
+      rowId: row.id!,
+      attempt: used + 1,
+      attemptsUsed: used + 1,
+      attemptsRemaining: Math.max(0, maxAttempts - used - 1),
+      maxAttempts,
+    }
+  })
+}
+
 export async function submitTournamentScore(
   id: string,
   name: string,
@@ -2671,8 +2819,10 @@ export async function submitTournamentScore(
   score: number,
   now = Date.now(),
   access: TournamentAccessOpts = {},
+  /** The try this score's run was opened for, when it was opened as one (startTournamentTry). */
+  tryRowId: string | null = null,
 ) {
-  return withEventLock(id, () => submitTournamentScoreNow(id, name, game, score, now, access))
+  return withEventLock(id, () => submitTournamentScoreNow(id, name, game, score, now, access, tryRowId))
 }
 
 async function submitTournamentScoreNow(
@@ -2682,6 +2832,7 @@ async function submitTournamentScoreNow(
   score: number,
   now: number,
   access: TournamentAccessOpts,
+  tryRowId: string | null,
 ): Promise<{
   tournament: Awaited<ReturnType<typeof getTournamentDetail>>
   accepted: boolean
@@ -2792,7 +2943,24 @@ async function submitTournamentScoreNow(
         .reduce((max, s) => Math.max(max, s.score), 0)
     : Math.max(0, eventIndex(t).byPlayer.get(player.id)?.get(gameSlug)?.best ?? 0)
 
-  if (format !== 'open' && used >= maxAttempts) {
+  /*
+   * Where tries count as they start, the try was spent when its run began and
+   * this score fills it in. Only the run opened for the try can: a run played
+   * anywhere else, or one begun before the try, has no try to fill.
+   */
+  const startedTry = triesCountAtStart(t)
+    ? t.scores.find(
+        (s) => tryRowId != null && s.id === tryRowId && s.playerId === player.id && s.game === gameSlug && s.score <= 0,
+      )
+    : undefined
+  if (triesCountAtStart(t) && !startedTry) {
+    throw Object.assign(new Error('Start a try from the event to play it'), {
+      status: 409,
+      code: 'TRY_NOT_STARTED',
+    })
+  }
+
+  if (!startedTry && format !== 'open' && used >= maxAttempts) {
     throw Object.assign(new Error('No attempts remaining'), {
       status: 409,
       code: 'ATTEMPTS_EXHAUSTED',
@@ -2801,7 +2969,18 @@ async function submitTournamentScoreNow(
 
   let improved = score > prevBest
 
-  if (format === 'open' && resolveKind(t) !== 'bracket') {
+  if (startedTry) {
+    // A row of its own for the score, in the try's place: the writer sends new rows and drops gone ones.
+    t.scores = t.scores.filter((s) => s !== startedTry)
+    t.scores.push({
+      id: newScoreId(),
+      playerId: player.id,
+      game: gameSlug,
+      score,
+      at: now,
+      attempt: startedTry.attempt ?? used,
+    })
+  } else if (format === 'open' && resolveKind(t) !== 'bracket') {
     if (score > prevBest) {
       t.scores = t.scores.filter((s) => !(s.playerId === player.id && s.game === gameSlug))
       t.scores.push({
@@ -2834,7 +3013,7 @@ async function submitTournamentScoreNow(
   putTournament(store, t)
   await writeStore(store, [t])
 
-  const attemptsUsed = format === 'open' && resolveKind(t) !== 'bracket' ? used : used + 1
+  const attemptsUsed = startedTry || (format === 'open' && resolveKind(t) !== 'bracket') ? used : used + 1
   const finiteMax = Number.isFinite(maxAttempts) ? maxAttempts : null
   let attemptsRemaining =
     finiteMax == null ? null : Math.max(0, finiteMax - attemptsUsed)

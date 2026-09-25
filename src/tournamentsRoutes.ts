@@ -5,7 +5,7 @@ import { isBanned } from './bans.js'
 import { planErrorFields } from './plans.js'
 import { assertCanUseName } from './names.js'
 import { takeToken } from './rateLimit.js'
-import { claimRun, peekRun } from './runs.js'
+import { claimRun, peekRun, runClaimRef, startRun } from './runs.js'
 import { checkScoreRate } from './scoreLimits.js'
 import { resolveGameSlug, type GameSlug } from './store.js'
 import {
@@ -16,6 +16,7 @@ import {
   listTournaments,
   renamePlayerAcrossTournaments,
   setTournamentMembersInvite,
+  startTournamentTry,
   submitTournamentScore,
   type CreateTournamentInput,
   type TournamentListFilter,
@@ -45,6 +46,16 @@ const scoreSchema = z.object({
   /** Optional until REQUIRE_RUN_TOKEN — older clients do not send one. */
   runId: z.string().min(1).max(64).optional(),
 })
+
+const trySchema = z.object({
+  name: nameSchema,
+  game: z.string().min(1),
+  token: tokenSchema,
+  invite: z.string().min(4).max(16).optional(),
+})
+
+/** A try a few seconds apart at most, sustained: an event has few tries to spend. */
+const TRY_START_LIMIT = { limit: 40, windowMs: 10 * 60 * 1000 }
 
 /*
  * One run fans out to every joined tournament that includes the game, so this
@@ -274,6 +285,65 @@ tournamentsRouter.post('/:id/join', async (req, res) => {
   }
 })
 
+/*
+ * A try begins, and the run it is played in with it. In an event with a set
+ * number of tries this is where one is spent: the run handed back is the only
+ * one whose score can fill the try, so a run played anywhere else can't stand
+ * in for it, and quitting a bad one doesn't give the try back.
+ */
+tournamentsRouter.post('/:id/attempts', async (req, res) => {
+  const parsed = trySchema.safeParse(req.body)
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Invalid body', details: parsed.error.flatten() })
+    return
+  }
+  try {
+    const account = await accountFromRequest(req)
+    if (!account) {
+      res.status(401).json({ error: 'Sign in to play this event', code: 'AUTH_REQUIRED' })
+      return
+    }
+    const gate = takeToken(`tournament-try:account:${account.id}`, TRY_START_LIMIT)
+    if (!gate.ok) {
+      res.setHeader('Retry-After', Math.ceil(gate.retryAfterMs / 1000))
+      res.status(429).json({ error: 'Too many tries too quickly', code: 'RATE_LIMITED' })
+      return
+    }
+    const game = resolveGameSlug(parsed.data.game)
+    if (!game) {
+      res.status(404).json({ error: 'Unknown game', code: 'UNKNOWN_GAME' })
+      return
+    }
+    const claim = await assertCanUseName(parsed.data.name, {
+      claimToken: parsed.data.token,
+      accountId: account.id,
+    })
+    if (await isBanned(claim.name, account.id)) {
+      res.status(403).json({ error: 'This tag cannot play events', code: 'NAME_BANNED' })
+      return
+    }
+    const started = await startTournamentTry(req.params.id, claim.name, game, Date.now(), {
+      inviteCode: parsed.data.invite,
+      accountId: account.id,
+    })
+    // The run, and the try it's for: its score fills that try and no other.
+    const ticket = await startRun(account.id, game)
+    await claimRun(ticket.runId, 'attempt', `${req.params.id}:${started.rowId}`)
+    res.status(201).json({
+      runId: ticket.runId,
+      startedAt: ticket.startedAt,
+      attempt: started.attempt,
+      attemptsUsed: started.attemptsUsed,
+      attemptsRemaining: started.attemptsRemaining,
+      maxAttempts: started.maxAttempts,
+      name: claim.name,
+      token: claim.token,
+    })
+  } catch (err) {
+    claimError(err, res)
+  }
+})
+
 tournamentsRouter.post('/:id/scores', async (req, res) => {
   const parsed = scoreSchema.safeParse(req.body)
   if (!parsed.success) {
@@ -332,6 +402,11 @@ tournamentsRouter.post('/:id/scores', async (req, res) => {
       return
     }
 
+    // A run opened as a try in this event fills that try.
+    const tryRef = runId ? await runClaimRef(runId, 'attempt') : null
+    const tryPrefix = `${req.params.id}:`
+    const tryRowId = tryRef?.startsWith(tryPrefix) ? tryRef.slice(tryPrefix.length) : null
+
     if (runId && !(await claimRun(runId, 'tournament', req.params.id))) {
       res.status(400).json({ error: RUN_ERRORS.USED, code: 'RUN_USED' })
       return
@@ -344,6 +419,7 @@ tournamentsRouter.post('/:id/scores', async (req, res) => {
       parsed.data.score,
       Date.now(),
       { inviteCode: parsed.data.invite, accountId: account.id },
+      tryRowId,
     )
     res.status(201).json({ ...result, name: claim.name, token: claim.token })
   } catch (err) {

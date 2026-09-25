@@ -94,8 +94,10 @@ recordsRouter.get('/site', async (req, res) => {
   try {
     const scope = await boardAccess(req)
     const name = typeof req.query.name === 'string' ? req.query.name : ''
+    // Each holder's avatar with them, so the house book shows faces, not just initials.
+    const boards = await siteRecords(scope)
     res.json({
-      boards: await siteRecords(scope),
+      boards: await Promise.all(boards.map(async (board) => ({ ...board, entries: await withAvatarIds(board.entries) }))),
       you: name ? await siteRecordStandingFor(name, scope) : null,
     })
   } catch (err) {

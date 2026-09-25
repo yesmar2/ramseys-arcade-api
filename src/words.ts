@@ -24,6 +24,7 @@ export const GAME_LABELS: Record<GameSlug, string> = {
   bop: 'Bop',
   putt: 'Putt',
   fireflies: 'Fireflies',
+  acechase: 'Ace Chase',
 }
 
 export function gameLabel(game: string): string {

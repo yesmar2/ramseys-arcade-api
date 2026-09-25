@@ -91,6 +91,12 @@ const SCORE_RULES: Record<GameSlug, ScoreRule> = {
    * watch, so no hand can go faster. These leave that bot under 60% of the cap.
    */
   fireflies: { kind: 'rate', floor: 20, perSecond: 3 },
+  /*
+   * Three holes at 1000 over the tries each took, so 3000 is the most any round can score. Each bullseye
+   * holds for its celebration (2.8s, not skippable), so even three first-try bulls with every flyover
+   * and putt skipped take about twelve seconds; past ten seconds this allows the full 3000.
+   */
+  acechase: { kind: 'rate', floor: 2000, perSecond: 100 },
   findbug: { kind: 'time' },
   spotter: { kind: 'time' },
 }

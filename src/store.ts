@@ -21,6 +21,7 @@ export const ALLOWED_GAMES = [
   'barrage',
   'frenzy',
   'fireflies',
+  'acechase',
 ] as const
 export type GameSlug = (typeof ALLOWED_GAMES)[number]
 
@@ -94,6 +95,7 @@ function emptyStore(): Store {
     barrage: [],
     frenzy: [],
     fireflies: [],
+    acechase: [],
   }
 }
 
@@ -144,6 +146,7 @@ export async function replaceAllBoards(next: Store) {
     barrage: Array.isArray(next.barrage) ? next.barrage : [],
     frenzy: Array.isArray(next.frenzy) ? next.frenzy : [],
     fireflies: Array.isArray(next.fireflies) ? next.fireflies : [],
+    acechase: Array.isArray(next.acechase) ? next.acechase : [],
   }
   await db().transaction(async (tx) => {
     await tx.delete(leaderboardScores)

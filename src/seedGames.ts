@@ -53,6 +53,7 @@ export const SEEDED_GAMES: readonly GameSlug[] = [
   'barrage',
   'frenzy',
   'fireflies',
+  'acechase',
 ]
 
 /* ---------- shapes ---------- */
@@ -323,6 +324,20 @@ const putt: Model = (q, rng) => {
   return finish('putt', rng, score, play, [])
 }
 
+/** Three holes; each pays 1000 over the tries it took to stop the ball on the bull. */
+const acechase: Model = (q, rng) => {
+  let score = 0
+  let tries = 0
+  for (let hole = 0; hole < 3; hole++) {
+    // A new player takes about nine tries to find a hole's numbers, a good one about two.
+    const t = Math.max(1, Math.round(lerp(9, 2.2, q) * Math.exp(gauss(rng) * 0.45)))
+    tries += t
+    score += Math.round(1000 / t)
+  }
+  const play = tries * between(rng, 14, 22) + 3 * between(rng, 4, 8)
+  return finish('acechase', rng, score, play, [])
+}
+
 const barrage: Model = (q, rng) => {
   const score = Math.max(50, Math.round(soften(curve(q, 850, 6500, 26_000) * luck(rng, 0.42), 50_000, 90_000)))
   const play = score / (lerp(38, 115, q) * between(rng, 0.85, 1.15))
@@ -413,6 +428,7 @@ const MODELS: Partial<Record<GameSlug, Model>> = {
   barrage,
   frenzy,
   fireflies,
+  acechase,
 }
 
 /** One run of `game` by a player whose ability in it is `q` today. */

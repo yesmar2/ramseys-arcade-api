@@ -42,7 +42,8 @@ export type { TournamentKind } from './bracket.js'
 export type { PublicBracket, PublicBracketMatch, PublicBracketSide } from './bracket.js'
 
 /** Games eligible for rolling daily/weekly events (excludes unfinished / non-event titles). */
-const EVENT_GAMES = ALLOWED_GAMES.filter((g) => g !== 'crosswalk' && g !== 'spotter')
+// Ace Chase is new: kept out of the events the API picks games for (and out of the pool's shuffle) until it has been played.
+const EVENT_GAMES = ALLOWED_GAMES.filter((g) => g !== 'crosswalk' && g !== 'spotter' && g !== 'acechase')
 
 /**
  * Games the site has retired: no new event picks one, but an event already

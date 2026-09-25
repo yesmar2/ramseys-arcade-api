@@ -31,7 +31,7 @@ import {
   type TournamentBracket,
   type TournamentKind,
 } from './bracket.js'
-import { getClaim, withAvatarIds } from './names.js'
+import { getClaim, namesOwnedByAccount, withAvatarIds } from './names.js'
 import { notify, type NotificationMeta } from './notifications.js'
 import { awardEventWin } from './trophies.js'
 import { ALLOWED_GAMES, BOARD_TZ, canonicalizeGameSlug, isAllowedGame, resolveGameSlug, type GameSlug } from './store.js'
@@ -156,6 +156,8 @@ export type Tournament = {
   visibility?: TournamentVisibility
   /** Required to access private events */
   inviteCode?: string | null
+  /** The host has let everyone holding a seat invite, not only themselves. */
+  membersInvite?: boolean
   players: TournamentPlayer[]
   scores: TournamentScore[]
   bracket?: TournamentBracket
@@ -2207,6 +2209,7 @@ export async function getTournamentDetail(
     playerStatus = getTournamentPlayerStatus(t, opts.playerName, detailGame, now)
   }
   const isHost = Boolean(opts?.accountId && t.createdBy?.accountId === opts.accountId)
+  const canInvite = await canInviteToEvent(t, opts?.accountId)
   const rosterFull = isTournamentRosterFull(t)
   const standings = computeStandings(t)
   const summary = summarizeStandings(t, standings)
@@ -2242,9 +2245,43 @@ export async function getTournamentDetail(
     bracket: publicBracket(t) ?? previewBracket(t),
     playerStatus,
     // Hide invite once every seat is filled — no more entries to recruit.
-    inviteCode: isHost && !rosterFull ? t.inviteCode ?? null : null,
+    inviteCode: canInvite && !rosterFull ? t.inviteCode ?? null : null,
     isHost,
+    membersInvite: Boolean(t.membersInvite),
+    canInvite,
   }
+}
+
+/**
+ * May this account hand out the event's invite? The host always; anyone
+ * holding a seat once the host has let them. The seat is found by account,
+ * or by a tag the account owns, never by a tag the caller names: the code is
+ * a way in.
+ */
+export async function canInviteToEvent(t: Tournament, accountId?: string): Promise<boolean> {
+  if (!accountId) return false
+  if (t.createdBy?.accountId === accountId) return true
+  if (!t.membersInvite) return false
+  if (t.players.some((p) => p.accountId === accountId)) return true
+  const owned = new Set((await namesOwnedByAccount(accountId)).map((n) => n.name))
+  return t.players.some((p) => owned.has(p.name))
+}
+
+/** The host lets everyone holding a seat invite, or takes it back. */
+export async function setTournamentMembersInvite(id: string, accountId: string, on: boolean, now = Date.now()) {
+  return withEventLock(id, async () => {
+    const store = await ensureStore()
+    const raw = store.tournaments.find((x) => x.id === id)
+    if (!raw) throw Object.assign(new Error('Event not found'), { status: 404, code: 'TOURNAMENT_NOT_FOUND' })
+    const t = normalizeTournament(raw)
+    if (t.createdBy?.accountId !== accountId) {
+      throw Object.assign(new Error('Only the host can choose who invites'), { status: 403, code: 'EVENT_FORBIDDEN' })
+    }
+    const next: Tournament = { ...t, membersInvite: on }
+    putTournament(store, next)
+    await writeStore(store, [next])
+    return getTournamentDetail(id, now, { accountId, locked: true })
+  })
 }
 
 export type CreateTournamentInput = {

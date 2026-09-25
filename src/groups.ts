@@ -24,6 +24,8 @@ export type Group = {
   inviteCode: string
   createdBy: { accountId: string }
   members: GroupMember[]
+  /** Everyone in it may invite, not only the host. */
+  membersInvite: boolean
 }
 
 export type GroupAccessOpts = {
@@ -109,6 +111,7 @@ async function loadAllGroupsFromDb(): Promise<Group[]> {
     inviteCode: g.inviteCode,
     createdBy: { accountId: g.createdByAccountId },
     members: byGroup.get(g.id) ?? [],
+    membersInvite: g.membersInvite,
   }))
 }
 
@@ -130,6 +133,19 @@ export async function isGroupMember(
 
 export function isGroupOwner(group: Group, accountId?: string): boolean {
   return Boolean(accountId && group.createdBy.accountId === accountId)
+}
+
+/**
+ * May this account hand out the group's invite? The host always; anyone in
+ * the group once the host has let them. Membership here is by the account's
+ * own tags, never a tag the caller names: the code is a way in.
+ */
+export async function canInviteToGroup(group: Group, accountId?: string): Promise<boolean> {
+  if (!accountId) return false
+  if (isGroupOwner(group, accountId)) return true
+  if (!group.membersInvite) return false
+  const owned = new Set(await accountNames(accountId))
+  return group.members.some((m) => owned.has(m.name))
 }
 
 async function canViewGroup(group: Group, opts: GroupAccessOpts = {}): Promise<boolean> {
@@ -194,9 +210,12 @@ export async function publicGroup(
   isMember: boolean
   ownerName: string | null
   inviteCode: string | null
+  membersInvite: boolean
+  canInvite: boolean
 }> {
   const owner = isGroupOwner(group, opts.accountId)
   const member = await isGroupMember(group, opts)
+  const canInvite = await canInviteToGroup(group, opts.accountId)
   return {
     id: group.id,
     name: group.name,
@@ -205,7 +224,9 @@ export async function publicGroup(
     isOwner: owner,
     isMember: member,
     ownerName: await groupOwnerName(group),
-    inviteCode: owner ? group.inviteCode : null,
+    inviteCode: canInvite ? group.inviteCode : null,
+    membersInvite: group.membersInvite,
+    canInvite,
   }
 }
 
@@ -221,6 +242,7 @@ export async function listGroupsFor(opts: GroupAccessOpts = {}) {
     const member = g.members.some((m) => names.has(m.name))
     const owner = isGroupOwner(g, opts.accountId)
     if (!member && !owner) continue
+    const canInvite = await canInviteToGroup(g, opts.accountId)
     out.push({
       id: g.id,
       name: g.name,
@@ -229,7 +251,9 @@ export async function listGroupsFor(opts: GroupAccessOpts = {}) {
       isOwner: owner,
       isMember: member,
       ownerName: await groupOwnerName(g),
-      inviteCode: owner ? g.inviteCode : null,
+      inviteCode: canInvite ? g.inviteCode : null,
+      membersInvite: g.membersInvite,
+      canInvite,
     })
   }
   return out
@@ -285,6 +309,7 @@ export async function createGroup(
     inviteCode: generateInviteCode(),
     createdBy: { accountId: creator.accountId },
     members,
+    membersInvite: false,
   }
 
   invalidateGroupsCache()
@@ -425,6 +450,18 @@ export async function transferGroup(id: string, accountId: string, rawName: stri
     .where(eq(groups.id, id))
   await groupsWritten()
   group.createdBy = { accountId: claim.accountId }
+  return publicGroup(group, { accountId })
+}
+
+/** The host lets everyone in the group invite, or takes it back. */
+export async function setGroupMembersInvite(id: string, accountId: string, on: boolean) {
+  const group = await getGroup(id)
+  if (!group) fail('Group not found', 404, 'GROUP_NOT_FOUND')
+  if (!isGroupOwner(group, accountId)) fail('Only the host can choose who invites', 403, 'GROUP_FORBIDDEN')
+  invalidateGroupsCache()
+  await db().update(groups).set({ membersInvite: on }).where(eq(groups.id, id))
+  await groupsWritten()
+  group.membersInvite = on
   return publicGroup(group, { accountId })
 }
 

@@ -13,6 +13,7 @@ import {
   listGroupsFor,
   renameGroup,
   rotateInvite,
+  setGroupMembersInvite,
   transferGroup,
 } from './groups.js'
 
@@ -48,6 +49,11 @@ const renameSchema = z.object({
 /** The member who should hold the group from now on. */
 const transferSchema = z.object({
   name: nameSchema,
+})
+
+/** Whether everyone in it may invite, or only the host. */
+const membersInviteSchema = z.object({
+  on: z.boolean(),
 })
 
 function claimError(err: unknown, res: import('express').Response) {
@@ -197,6 +203,25 @@ groupsRouter.post('/:id/transfer', async (req, res) => {
   }
   try {
     const group = await transferGroup(req.params.id, account.id, parsed.data.name)
+    res.json({ group })
+  } catch (err) {
+    claimError(err, res)
+  }
+})
+
+groupsRouter.post('/:id/members-invite', async (req, res) => {
+  const parsed = membersInviteSchema.safeParse(req.body)
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Invalid body', details: parsed.error.flatten() })
+    return
+  }
+  const account = await accountFromRequest(req)
+  if (!account) {
+    res.status(401).json({ error: 'Sign in as the owner' })
+    return
+  }
+  try {
+    const group = await setGroupMembersInvite(req.params.id, account.id, parsed.data.on)
     res.json({ group })
   } catch (err) {
     claimError(err, res)

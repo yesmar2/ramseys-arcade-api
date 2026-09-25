@@ -229,6 +229,8 @@ export const groups = pgTable(
     name: text('name').notNull(),
     inviteCode: text('invite_code').notNull().unique(),
     createdByAccountId: text('created_by_account_id').notNull(),
+    /** The host has let everyone in the group invite, not only themselves. */
+    membersInvite: boolean('members_invite').notNull().default(false),
   },
   (t) => [index('groups_creator_idx').on(t.createdByAccountId)],
 )

@@ -15,12 +15,18 @@ import {
   joinTournament,
   listTournaments,
   renamePlayerAcrossTournaments,
+  setTournamentMembersInvite,
   submitTournamentScore,
   type CreateTournamentInput,
   type TournamentListFilter,
 } from './tournaments.js'
 
 export const tournamentsRouter = Router()
+
+/** Whether everyone holding a seat may invite, or only the host. */
+const membersInviteSchema = z.object({
+  on: z.boolean(),
+})
 
 const nameSchema = z.string().min(1).max(12)
 const tokenSchema = z.string().min(1).max(128).optional()
@@ -215,6 +221,25 @@ tournamentsRouter.get('/:id/invites', async (req, res) => {
     const { listTournamentInvitesForHost } = await import('./invites.js')
     const invites = await listTournamentInvitesForHost(req.params.id, account.id)
     res.json({ invites })
+  } catch (err) {
+    claimError(err, res)
+  }
+})
+
+tournamentsRouter.post('/:id/members-invite', async (req, res) => {
+  const parsed = membersInviteSchema.safeParse(req.body)
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Invalid body', details: parsed.error.flatten() })
+    return
+  }
+  try {
+    const account = await accountFromRequest(req)
+    if (!account) {
+      res.status(401).json({ error: 'Sign in as the host', code: 'AUTH_REQUIRED' })
+      return
+    }
+    const tournament = await setTournamentMembersInvite(req.params.id, account.id, parsed.data.on)
+    res.json({ tournament })
   } catch (err) {
     claimError(err, res)
   }

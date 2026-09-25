@@ -99,6 +99,13 @@
       "when": 1790287008845,
       "tag": "0013_bug_hunt_counted",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1790345675559,
+      "tag": "0014_group_members_invite",
+      "breakpoints": true
     }
   ]
 }

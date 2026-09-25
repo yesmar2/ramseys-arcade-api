@@ -3,12 +3,13 @@ import { db } from './db/client.js'
 import { directedInvites } from './db/schema.js'
 import { cleanPlayerName, getClaim, namesOwnedByAccount } from './names.js'
 import {
+  canInviteToGroup,
   getGroup,
   isGroupMember,
-  isGroupOwner,
   joinGroup,
 } from './groups.js'
 import {
+  canInviteToEvent,
   getTournament,
   isTournamentRosterFull,
   joinTournament,
@@ -171,7 +172,8 @@ export async function listTournamentInvitesForHost(
       code: 'TOURNAMENT_NOT_FOUND',
     })
   }
-  if (!t.createdBy || t.createdBy.accountId !== accountId) {
+  // Whoever may invite sees who's been invited, so nobody asks the same friend twice.
+  if (!(await canInviteToEvent(t, accountId))) {
     throw Object.assign(new Error('Only the host can see invites'), {
       status: 403,
       code: 'EVENT_FORBIDDEN',
@@ -262,7 +264,7 @@ export async function createDirectedInvite(input: {
   if (input.kind === 'group') {
     const group = await getGroup(input.targetId)
     if (!group) fail('Group not found', 404, 'GROUP_NOT_FOUND')
-    if (!isGroupOwner(group, input.fromAccountId)) {
+    if (!(await canInviteToGroup(group, input.fromAccountId))) {
       fail('Only the group owner can invite', 403, 'GROUP_FORBIDDEN')
     }
     if (await isGroupMember(group, { playerName: toName })) {
@@ -273,7 +275,7 @@ export async function createDirectedInvite(input: {
   } else {
     const t = await getTournament(input.targetId)
     if (!t) fail('Event not found', 404, 'TOURNAMENT_NOT_FOUND')
-    if (!t.createdBy || t.createdBy.accountId !== input.fromAccountId) {
+    if (!(await canInviteToEvent(t, input.fromAccountId))) {
       fail('Only the host can invite', 403, 'EVENT_FORBIDDEN')
     }
     if ((t.visibility ?? 'public') !== 'private') {

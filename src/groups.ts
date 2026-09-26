@@ -2,6 +2,7 @@ import { and, eq } from 'drizzle-orm'
 import { db } from './db/client.js'
 import { groupMembers, groups } from './db/schema.js'
 import { getAccount } from './auth.js'
+import { assertAllowedName } from './nameFilter.js'
 import { cleanPlayerName, getClaim, namesOwnedByAccount, withAvatarIds } from './names.js'
 import { planDenied, planLimits, type AccountPlan } from './plans.js'
 import { announceRewrite, onRewrite } from './feed.js'
@@ -274,6 +275,7 @@ export async function createGroup(
 ) {
   const name = rawName.trim().slice(0, 32)
   if (name.length < 2) fail('Name must be at least 2 characters', 400)
+  assertAllowedName(name, 'group')
   const hosted = await db()
     .select()
     .from(groups)
@@ -411,6 +413,7 @@ export async function renameGroup(id: string, accountId: string, rawName: string
   if (!isGroupOwner(group, accountId)) fail('Only the owner can rename', 403)
   const name = rawName.trim().slice(0, 32)
   if (name.length < 2) fail('Name must be at least 2 characters', 400)
+  assertAllowedName(name, 'group')
   invalidateGroupsCache()
   await db().update(groups).set({ name }).where(eq(groups.id, id))
   await groupsWritten()

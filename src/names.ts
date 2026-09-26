@@ -4,6 +4,7 @@ import { db } from './db/client.js'
 import { nameClaims } from './db/schema.js'
 import { announce, onChange, onRewrite } from './feed.js'
 import { renamePlayerAcrossGroups } from './groups.js'
+import { assertAllowedName } from './nameFilter.js'
 import { renamePlayerAcrossLeaderboards } from './store.js'
 import { renamePlayerAcrossRecords } from './records.js'
 import { renamePlayerAcrossTournaments } from './tournaments.js'
@@ -275,6 +276,7 @@ export async function assertCanUseName(
         code: 'AUTH_REQUIRED',
       })
     }
+    assertAllowedName(cleaned, 'tag')
     const next: NameClaim = { token: mintToken(), claimedAt: Date.now() }
     next.accountId = accountId
     await releaseAndMigrateAccountNames(accountId, cleaned)
@@ -463,6 +465,8 @@ export async function linkNameToAccount(
   }
 
   const existing = await getClaim(cleaned)
+  // A tag this account doesn't hold yet: made new, or taken over from a device or an empty claim.
+  if (!existing || !existing.accountId) assertAllowedName(cleaned, 'tag')
   let created = false
   let token: string
 

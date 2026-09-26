@@ -31,6 +31,7 @@ import {
   type TournamentBracket,
   type TournamentKind,
 } from './bracket.js'
+import { assertAllowedName } from './nameFilter.js'
 import { getClaim, namesOwnedByAccount, withAvatarIds } from './names.js'
 import { notify, type NotificationMeta } from './notifications.js'
 import { RUN_TTL_MS } from './runs.js'
@@ -2378,6 +2379,8 @@ export async function createTournament(
   if (title.length < 3) {
     throw Object.assign(new Error('Title must be at least 3 characters'), { status: 400 })
   }
+  assertAllowedName(title, 'title')
+  if (input.blurb?.trim()) assertAllowedName(input.blurb, 'blurb')
 
   const kind: TournamentKind = input.kind === 'bracket' ? 'bracket' : 'scores'
   const elimination: Elimination =

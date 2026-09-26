@@ -53,6 +53,15 @@ const EVENT_GAMES = ALLOWED_GAMES.filter((g) => g !== 'crosswalk' && g !== 'spot
  */
 const RETIRED_GAMES: ReadonlySet<GameSlug> = new Set<GameSlug>(['simon'])
 
+/**
+ * Games the site is holding back to release after launch, one at a time (its
+ * on-deck games). Like a retired game, no new event picks one and none can be
+ * chosen for a new event, but an event already running with one keeps it, and
+ * its scores, until it ends. Take a game off this list the day the site
+ * releases it (its onDeck flag in the web's data/games.ts).
+ */
+const ON_DECK_GAMES: ReadonlySet<GameSlug> = new Set<GameSlug>(['asteroids', 'patriot', 'centroid', 'crumbtrail', 'bop', 'acechase'])
+
 export type TournamentStatus = 'upcoming' | 'active' | 'ended'
 export type TournamentCadence = 'daily' | 'weekly' | 'oneshot'
 export type TournamentFormat =
@@ -332,7 +341,7 @@ function mulberry32(seed: number) {
 
 function pickGames(seed: number, count: number): GameSlug[] {
   const rng = mulberry32(seed)
-  const pool = EVENT_GAMES.filter((g) => !RETIRED_GAMES.has(g))
+  const pool = EVENT_GAMES.filter((g) => !RETIRED_GAMES.has(g) && !ON_DECK_GAMES.has(g))
   for (let i = pool.length - 1; i > 0; i--) {
     const j = Math.floor(rng() * (i + 1))
     ;[pool[i], pool[j]] = [pool[j], pool[i]]
@@ -2454,7 +2463,7 @@ export async function createTournament(
   }
   if (
     !games.every(
-      (g) => isAllowedGame(g) && (EVENT_GAMES as readonly string[]).includes(g) && !RETIRED_GAMES.has(g),
+      (g) => isAllowedGame(g) && (EVENT_GAMES as readonly string[]).includes(g) && !RETIRED_GAMES.has(g) && !ON_DECK_GAMES.has(g),
     )
   ) {
     throw Object.assign(new Error('One or more games are not available for events'), { status: 400 })

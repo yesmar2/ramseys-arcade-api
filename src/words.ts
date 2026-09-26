@@ -44,17 +44,22 @@ export function isTime(game: GameSlug) {
   return TIME_SCORED_GAMES.has(game)
 }
 
-/** A time the way the site prints one: 47.5s, or 1:02.3 past a minute. */
-export function clock(ms: number): string {
-  const total = Math.max(0, ms) / 1000
+/** A lap is won by hundredths, so Hot Lap's times are printed to them; the other clocks to tenths. */
+function places(game: GameSlug) {
+  return game === 'hotlap' ? 2 : 1
+}
+
+/** A time the way the site prints one: 47.5s, or 1:02.3 past a minute; to the hundredth, 53.36s. */
+export function clock(ms: number, decimals = 1): string {
+  const total = decimals === 2 ? Math.round(Math.max(0, ms) / 10) / 100 : Math.max(0, ms) / 1000
   const m = Math.floor(total / 60)
   const s = total - m * 60
-  return m > 0 ? `${m}:${s.toFixed(1).padStart(4, '0')}` : `${s.toFixed(1)}s`
+  return m > 0 ? `${m}:${s.toFixed(decimals).padStart(decimals + 3, '0')}` : `${s.toFixed(decimals)}s`
 }
 
 /** A score as the board shows it: 447, 14,310, 47.5s. */
 export function scoreFigure(game: GameSlug, score: number): string {
-  return isTime(game) ? clock(TIME_SCORE_BASE - score) : score.toLocaleString('en-US')
+  return isTime(game) ? clock(TIME_SCORE_BASE - score, places(game)) : score.toLocaleString('en-US')
 }
 
 /** A score with its unit where the game has one: 447 rows, 14,310, 47.5s. */
@@ -67,7 +72,7 @@ export function scoreWords(game: GameSlug, score: number): string {
 
 /** A gap between two scores in the game's own terms: 6 rows, 1 point, 0.4s. */
 export function gapWords(game: GameSlug, gap: number): string {
-  if (isTime(game)) return `${(gap / 1000).toFixed(1)}s`
+  if (isTime(game)) return `${(gap / 1000).toFixed(places(game))}s`
   const [one, many] = UNITS[game] ?? ['point', 'points']
   return `${gap.toLocaleString('en-US')} ${gap === 1 ? one : many}`
 }

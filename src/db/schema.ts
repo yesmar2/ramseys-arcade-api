@@ -575,3 +575,26 @@ export const bugHuntFinds = pgTable(
   },
   (t) => [primaryKey({ columns: [t.accountId, t.day] }), index('bug_hunt_day_idx').on(t.day, t.foundAt)],
 )
+
+/**
+ * Ace Chase's Today's Hole: each account's result for a day, the tries its first bullseye took. The site
+ * builds the day's hole and plays it (games/acechase/daily.ts there); this keeps who got it and in how
+ * many, one result a day an account, the first one kept.
+ */
+export const dailyHoleResults = pgTable(
+  'daily_hole_results',
+  {
+    accountId: text('account_id')
+      .notNull()
+      .references(() => accounts.id, { onDelete: 'cascade' }),
+    /** The day on the boards' clock, YYYY-MM-DD. */
+    day: text('day').notNull(),
+    tries: integer('tries').notNull(),
+    /** Each try's end as a letter (b bull, i inner ring, o outer ring, x off them, l lost), for the day's share line. */
+    pattern: text('pattern').notNull(),
+    /** The tag it came in under, for the day's list; null for an account with no tag yet. */
+    name: text('name'),
+    solvedAt: bigint('solved_at', { mode: 'number' }).notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.accountId, t.day] }), index('daily_hole_day_idx').on(t.day, t.tries, t.solvedAt)],
+)

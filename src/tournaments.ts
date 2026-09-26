@@ -60,7 +60,8 @@ const RETIRED_GAMES: ReadonlySet<GameSlug> = new Set<GameSlug>(['simon'])
  * its scores, until it ends. Take a game off this list the day the site
  * releases it (its onDeck flag in the web's data/games.ts).
  */
-const ON_DECK_GAMES: ReadonlySet<GameSlug> = new Set<GameSlug>(['asteroids', 'patriot', 'centroid', 'crumbtrail', 'bop', 'acechase'])
+// None on deck for now: every game is out (2026-09-26).
+const ON_DECK_GAMES: ReadonlySet<GameSlug> = new Set<GameSlug>([])
 
 export type TournamentStatus = 'upcoming' | 'active' | 'ended'
 export type TournamentCadence = 'daily' | 'weekly' | 'oneshot'

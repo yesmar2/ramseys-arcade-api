@@ -63,6 +63,7 @@ const GAME_BANDS: Record<GameSlug, ScoreProfile> = {
   frenzy: { min: 200, max: 26_000, step: 1 },
   fireflies: { min: 6, max: 140 },
   acechase: { min: 150, max: 2400 },
+  hotlap: { min: 925_000, max: 950_000, step: 100 },
 }
 
 function lerp(a: number, b: number, t: number) {
@@ -165,6 +166,7 @@ export function buildSeed(seed = 20260904) {
     frenzy: [],
     fireflies: [],
     acechase: [],
+    hotlap: [],
   }
 
   NAMES.forEach((name, i) => {

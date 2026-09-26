@@ -239,11 +239,13 @@ export const SCORE_STREAK_THRESHOLDS: Record<GameSlug, number> = {
   putt: 2000,
   fireflies: 60,
   acechase: 1000,
+  hotlap: 945_000, // ≈ a lap under 55s
 }
 
 function thresholdStreakLabel(game: GameSlug, threshold: number): string {
   if (game === 'spotter') return 'Sub-45s clears in a row'
   if (game === 'findbug') return 'Sub-60s sweeps in a row'
+  if (game === 'hotlap') return 'Sub-55s laps in a row'
   return `Scores over ${threshold.toLocaleString()} in a row`
 }
 

@@ -598,3 +598,26 @@ export const dailyHoleResults = pgTable(
   },
   (t) => [primaryKey({ columns: [t.accountId, t.day] }), index('daily_hole_day_idx').on(t.day, t.tries, t.solvedAt)],
 )
+
+/**
+ * What broke in players' browsers: one row per distinct error (its message and
+ * the top of its stack), counted, with where and in which build it last
+ * happened. Rows untouched for 30 days go (sweep).
+ */
+export const clientErrors = pgTable(
+  'client_errors',
+  {
+    fingerprint: text('fingerprint').primaryKey(),
+    message: text('message').notNull(),
+    stack: text('stack'),
+    /** The page's path, without its query or hash. */
+    path: text('path'),
+    /** The site's build, the commit it came from. */
+    release: text('release'),
+    userAgent: text('user_agent'),
+    count: integer('count').notNull(),
+    firstAt: bigint('first_at', { mode: 'number' }).notNull(),
+    lastAt: bigint('last_at', { mode: 'number' }).notNull(),
+  },
+  (t) => [index('client_errors_last_at_idx').on(t.lastAt)],
+)

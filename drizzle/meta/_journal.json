@@ -113,6 +113,13 @@
       "when": 1790389921905,
       "tag": "0015_daily_hole",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1790425346191,
+      "tag": "0016_client_errors",
+      "breakpoints": true
     }
   ]
 }

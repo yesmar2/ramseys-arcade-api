@@ -2,6 +2,7 @@ import { Router } from 'express'
 import { z } from 'zod'
 import { requireAdmin } from './admin.js'
 import { banName, listBans, purgeName, recentScores, unbanName, voidScores } from './bans.js'
+import { listClientErrors } from './clientErrors.js'
 import { listFlags, reviewFlag, unreviewedCount } from './scoreFlags.js'
 import { resolveGameSlug } from './store.js'
 
@@ -18,6 +19,17 @@ adminRouter.get('/whoami', async (req, res) => {
   try {
     const account = await requireAdmin(req)
     res.json({ admin: true, email: account.email, unreviewedFlags: await unreviewedCount() })
+  } catch (err) {
+    refuse(err, res)
+  }
+})
+
+/** What broke in players' browsers lately, the latest first. */
+adminRouter.get('/client-errors', async (req, res) => {
+  try {
+    await requireAdmin(req)
+    const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 100))
+    res.json({ errors: await listClientErrors(limit) })
   } catch (err) {
     refuse(err, res)
   }

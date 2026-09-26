@@ -621,3 +621,27 @@ export const clientErrors = pgTable(
   },
   (t) => [index('client_errors_last_at_idx').on(t.lastAt)],
 )
+
+/**
+ * What players tell the arcade from its "Tell us" panel: an idea or a game
+ * they'd like, or something that broke. With the page it was sent from, who
+ * sent it when they were signed in (and the tag they play under), and the
+ * browser, for a problem that only happens on one. Admins read it on the
+ * site's admin page.
+ */
+export const feedback = pgTable(
+  'feedback',
+  {
+    id: text('id').primaryKey(),
+    /** 'idea' (a game, or something that would make it better) or 'problem' (something broke). */
+    kind: text('kind').notNull(),
+    message: text('message').notNull(),
+    /** The page's path, without its query or hash. */
+    path: text('path'),
+    accountId: text('account_id'),
+    name: text('name'),
+    userAgent: text('user_agent'),
+    createdAt: bigint('created_at', { mode: 'number' }).notNull(),
+  },
+  (t) => [index('feedback_created_at_idx').on(t.createdAt)],
+)

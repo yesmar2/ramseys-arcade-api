@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { requireAdmin } from './admin.js'
 import { banName, listBans, purgeName, recentScores, unbanName, voidScores } from './bans.js'
 import { listClientErrors } from './clientErrors.js'
+import { listFeedback } from './feedback.js'
 import { listFlags, reviewFlag, unreviewedCount } from './scoreFlags.js'
 import { resolveGameSlug } from './store.js'
 
@@ -30,6 +31,17 @@ adminRouter.get('/client-errors', async (req, res) => {
     await requireAdmin(req)
     const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 100))
     res.json({ errors: await listClientErrors(limit) })
+  } catch (err) {
+    refuse(err, res)
+  }
+})
+
+/** What players have told the arcade from its Tell us panel, the latest first. */
+adminRouter.get('/feedback', async (req, res) => {
+  try {
+    await requireAdmin(req)
+    const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 100))
+    res.json({ feedback: await listFeedback(limit) })
   } catch (err) {
     refuse(err, res)
   }

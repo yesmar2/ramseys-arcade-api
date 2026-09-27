@@ -705,3 +705,30 @@ export const prizesOwned = pgTable(
   },
   (t) => [primaryKey({ columns: [t.accountId, t.prizeId] })],
 )
+
+/**
+ * Track records: a lap on a Hot Lap track after its day. On its day a track is the Daily, and its laps are
+ * the day's board (leaderboard_scores); after that the track keeps a board of its own for good, its day's
+ * laps and every lap here (trackLaps.ts). Nothing that reads the day's boards reads these.
+ */
+export const trackLaps = pgTable(
+  'track_laps',
+  {
+    id: text('id').primaryKey(),
+    game: text('game').notNull(),
+    /** The plan's track, 1 on the first day's (the site's dailyPlan.ts, the API's hotlapPace.ts). */
+    track: integer('track').notNull(),
+    accountId: text('account_id')
+      .notNull()
+      .references(() => accounts.id, { onDelete: 'cascade' }),
+    /** The tag it was driven under. */
+    name: text('name').notNull(),
+    /** As the game's board has it: Hot Lap's is a million less the lap's milliseconds. */
+    score: integer('score').notNull(),
+    device: text('device').notNull(),
+    runId: text('run_id'),
+    durationMs: bigint('duration_ms', { mode: 'number' }),
+    at: bigint('at', { mode: 'number' }).notNull(),
+  },
+  (t) => [index('track_laps_game_track_score_idx').on(t.game, t.track, t.score), index('track_laps_name_idx').on(t.name)],
+)

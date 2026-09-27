@@ -8,6 +8,7 @@ import { clock, gameLabel, spanWords } from './words.js'
 import {
   ALLOWED_GAMES,
   boardDateKey,
+  DAILY_GAMES,
   filterByPeriod,
   isDeviceType,
   legacyGameSlugs,
@@ -239,13 +240,13 @@ export const SCORE_STREAK_THRESHOLDS: Record<GameSlug, number> = {
   putt: 2000,
   fireflies: 60,
   acechase: 1000,
-  hotlap: 945_000, // ≈ a lap under 55s
+  // A daily: none kept (see buildCrossRunStreakRecords).
+  hotlap: 0,
 }
 
 function thresholdStreakLabel(game: GameSlug, threshold: number): string {
   if (game === 'spotter') return 'Sub-45s clears in a row'
   if (game === 'findbug') return 'Sub-60s sweeps in a row'
-  if (game === 'hotlap') return 'Sub-55s laps in a row'
   return `Scores over ${threshold.toLocaleString()} in a row`
 }
 
@@ -260,6 +261,8 @@ function buildCrossRunStreakRecords(): RecordDef[] {
       direction: 'higher',
       unit: 'count',
     })
+    // A daily's scores are each on the day's own track or puzzle: a run of them over a line means nothing.
+    if (DAILY_GAMES.has(game)) continue
     defs.push({
       id: THRESHOLD_STREAK_ID,
       game,

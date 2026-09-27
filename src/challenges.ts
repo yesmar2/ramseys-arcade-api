@@ -4,7 +4,7 @@ import { db } from './db/client.js'
 import { challengeResults, challenges, leaderboardScores } from './db/schema.js'
 import { notify } from './notifications.js'
 import { fileAndPush } from './push.js'
-import type { GameSlug } from './store.js'
+import { boardDateKey, DAILY_GAMES, type GameSlug } from './store.js'
 import { gameLabel, gapWords, isTime, scoreFigure, scoreWords } from './words.js'
 
 /**
@@ -118,6 +118,8 @@ export async function recordChallengeRun(
 ): Promise<ChallengeRun | null> {
   const challenge = await getChallenge(input.challengeId)
   if (!challenge || challenge.game !== input.game) return null
+  // A daily's challenge is on its day's track: a run on another day's can't answer it.
+  if (DAILY_GAMES.has(input.game) && !(await sameDayAsChallenge(challenge, now))) return null
   const base = { challengeId: challenge.id, name: challenge.name, score: challenge.score }
   // Playing your own challenge is just playing.
   if (challenge.name === input.name || challenge.accountId === input.accountId) {
@@ -171,6 +173,17 @@ export async function recordChallengeRun(
   })
 
   return { ...base, outcome: won ? 'won' : 'short', replyId }
+}
+
+/** Whether now is the day of the run a challenge was made from. */
+async function sameDayAsChallenge(challenge: ChallengeRow, now: number): Promise<boolean> {
+  const [run] = await db()
+    .select({ at: leaderboardScores.at })
+    .from(leaderboardScores)
+    .where(eq(leaderboardScores.id, challenge.scoreId))
+    .limit(1)
+  const at = run?.at ?? challenge.createdAt
+  return boardDateKey(Number(at)) === boardDateKey(now)
 }
 
 async function tellChallenger(

@@ -411,6 +411,29 @@ function addDaysToDateKey(key: number, days: number) {
 
 export type ClosedPeriod = 'weekly' | 'monthly'
 
+/**
+ * Dailies: games with something new to play each day, the same for everyone (Hot Lap's track of the
+ * day). One day's scores can't be weighed against another day's, so every board of a daily is a day's:
+ * today's, whatever open period is asked for, and a closed period's last day. The standings count a
+ * daily's places the same way. The site marks these games `daily` in its data/games.ts.
+ */
+export const DAILY_GAMES: ReadonlySet<GameSlug> = new Set<GameSlug>(['hotlap'])
+
+/** The last day of a closed week or month, as a day key. */
+function lastDayOf(period: ClosedPeriod, periodKey: number): number {
+  if (period === 'weekly') return addDaysToDateKey(periodKey, 6)
+  const y = Math.floor(periodKey / 100)
+  const m = periodKey % 100
+  return addDaysToDateKey(m === 12 ? dateKey(y + 1, 1, 1) : dateKey(y, m + 1, 1), -1)
+}
+
+/** A game's runs in a closed period: a daily's are its last day's (see DAILY_GAMES). */
+function closedRuns(game: GameSlug, history: LeaderboardEntry[], period: ClosedPeriod, periodKey: number) {
+  if (!DAILY_GAMES.has(game)) return filterByClosedPeriod(history, period, periodKey)
+  const last = lastDayOf(period, periodKey)
+  return history.filter((e) => keyOf(e.at) === last)
+}
+
 export function filterByClosedPeriod(
   entries: LeaderboardEntry[],
   period: ClosedPeriod,
@@ -739,7 +762,9 @@ export function periodWindow(period: Period, now: number): string {
   return String(keyOf(now))
 }
 
-async function poolView(game: GameSlug, period: Period, now = Date.now()): Promise<PoolView> {
+async function poolView(game: GameSlug, asked: Period, now = Date.now()): Promise<PoolView> {
+  // A daily's boards are all the day's.
+  const period: Period = DAILY_GAMES.has(game) ? 'daily' : asked
   const copy = await loadCopy()
   const history = copy.byGame.get(game) ?? []
   const epoch = copy.epoch
@@ -787,7 +812,7 @@ export async function getClosedBoard(
   period: ClosedPeriod,
   periodKey: number,
 ): Promise<LeaderboardEntry[]> {
-  return topBoard(filterByClosedPeriod(await historyFor(game), period, periodKey))
+  return topBoard(closedRuns(game, await historyFor(game), period, periodKey))
 }
 
 export async function getBoard(
@@ -951,7 +976,7 @@ async function closedPeriodPlacements(
   periodKey: number,
 ): Promise<{ name: string; place: number }[]> {
   // The history is in board order, so its scores from any period already are.
-  return placementsFromPool(filterByClosedPeriod(await historyFor(game), period, periodKey))
+  return placementsFromPool(closedRuns(game, await historyFor(game), period, periodKey))
 }
 
 async function aggregateGlobalRanks(

@@ -3,6 +3,7 @@ import { Router } from 'express'
 import { z } from 'zod'
 import { pageParams } from './paging.js'
 import { accountFromRequest } from './auth.js'
+import { clientOffset, secretsForRun } from './secrets.js'
 import { isBanned } from './bans.js'
 import { clientIp, hashIp, takeToken } from './rateLimit.js'
 import { claimRun, peekRun } from './runs.js'
@@ -422,10 +423,25 @@ leaderboardsRouter.post('/:game', async (req, res) => {
       })
     : null
 
+  // Any secrets the run found (secrets.ts), once it's on the board.
+  const secrets = await secretsForRun({
+    accountId: account.id,
+    name: claim.name,
+    game,
+    score,
+    record: bestBefore,
+    offset: clientOffset(req),
+    at: result.entry.at,
+  }).catch((err: unknown) => {
+    console.warn(`[secrets] ${game} run for ${claim.name}:`, err)
+    return []
+  })
+
   res.status(201).json({
     game,
     challenge,
     tickets,
+    ...(secrets.length ? { secrets } : {}),
     entry: await withAvatarId(result.entry),
     rank: result.rank,
     ranks: result.ranks,

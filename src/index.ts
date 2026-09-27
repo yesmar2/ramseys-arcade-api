@@ -30,6 +30,7 @@ import { dailyHoleRouter } from './dailyHoleRoutes.js'
 import { publicVapidKey } from './push.js'
 import { statsRouter } from './statsRoutes.js'
 import { trophiesRouter } from './trophiesRoutes.js'
+import { secretsRouter } from './secretsRoutes.js'
 import { checkDbHealth, queryStats } from './db/client.js'
 import { runMigrations } from './db/migrate.js'
 import { migrateStrideToCrosswalk } from './migrateStrideToCrosswalk.js'
@@ -171,6 +172,7 @@ async function main() {
   app.use('/invites', invitesRouter)
   app.use('/friends', friendsRouter)
   app.use('/trophies', trophiesRouter)
+  app.use('/secrets', secretsRouter)
   app.use('/notifications', notificationsRouter)
   app.use('/challenges', challengesRouter)
   app.use('/stats', statsRouter)

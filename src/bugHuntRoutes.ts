@@ -2,6 +2,7 @@ import { Router } from 'express'
 import { z } from 'zod'
 import { accountFromRequest } from './auth.js'
 import { huntReply, recordFinds } from './bugHunt.js'
+import { clientOffset } from './secrets.js'
 import { takeToken } from './rateLimit.js'
 
 export const bugHuntRouter = Router()
@@ -60,7 +61,7 @@ bugHuntRouter.post('/finds', async (req, res) => {
     return
   }
   try {
-    res.json(await recordFinds(account.id, parsed.data.finds))
+    res.json(await recordFinds(account.id, parsed.data.finds, Date.now(), clientOffset(req)))
   } catch (err) {
     fail(err, res)
   }

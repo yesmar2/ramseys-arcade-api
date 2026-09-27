@@ -1,4 +1,4 @@
-import { and, count, desc, eq, inArray, ne } from 'drizzle-orm'
+import { and, count, desc, eq, inArray, notInArray } from 'drizzle-orm'
 import { db } from './db/client.js'
 import { getClaim } from './names.js'
 import { notify } from './notifications.js'
@@ -11,8 +11,11 @@ import {
 } from './store.js'
 import { ordinal, pts } from './words.js'
 
-/** `hunt`: every bug of a month's bug hunt caught, one award a month (periodKey YYYYMM). */
-export type TrophyPeriod = 'weekly' | 'monthly' | 'event' | 'hunt'
+/**
+ * `hunt`: every bug of a month's bug hunt caught, one award a month (periodKey YYYYMM). `secret`: a
+ * secret trophy (secrets.ts), once an account (periodKey the secret's number).
+ */
+export type TrophyPeriod = 'weekly' | 'monthly' | 'event' | 'hunt' | 'secret'
 export const MAX_TROPHY_RANK = 10
 
 export type TrophyAward = {
@@ -90,7 +93,7 @@ async function setCursor(next: { weeklyInitialized: boolean; monthlyInitialized:
 
 /** Board trophies only — event wins are awarded directly, not by period. */
 async function awardClosedPeriod(
-  period: Exclude<TrophyPeriod, 'event' | 'hunt'>,
+  period: Exclude<TrophyPeriod, 'event' | 'hunt' | 'secret'>,
   periodKey: number,
   now: number,
   /** Tell the players: only for the period that just closed, never a backfill. */
@@ -248,7 +251,7 @@ let ensuring: Promise<void> | null = null
  */
 const settledPeriods = new Set<string>()
 
-async function awardsGiven(period: Exclude<TrophyPeriod, 'event' | 'hunt'>, periodKey: number): Promise<number> {
+async function awardsGiven(period: Exclude<TrophyPeriod, 'event' | 'hunt' | 'secret'>, periodKey: number): Promise<number> {
   const rows = await db()
     .select({ n: count() })
     .from(trophyAwards)
@@ -331,11 +334,11 @@ export async function trophiesForName(name: string): Promise<TrophyAward[]> {
 
 export async function recentTrophies(limit = 20): Promise<TrophyAward[]> {
   const capped = Math.min(50, Math.max(1, Math.floor(limit)) || 20)
-  // The boards' feed is places and wins; a bug hunt set is a player's own.
+  // The boards' feed is places and wins; a bug hunt set or a secret is a player's own.
   const rows = await db()
     .select()
     .from(trophyAwards)
-    .where(ne(trophyAwards.period, 'hunt'))
+    .where(notInArray(trophyAwards.period, ['hunt', 'secret']))
     .orderBy(desc(trophyAwards.awardedAt), trophyAwards.rank)
     .limit(capped)
   return rows.map(rowToAward)
@@ -368,6 +371,8 @@ export type TrophySummary = {
   events: number
   /** Full months of the bug hunt. */
   sets: number
+  /** Secret trophies found. */
+  secrets: number
 }
 
 /**
@@ -503,13 +508,15 @@ function summarizeAwards(awards: TrophyAward[]): TrophySummary {
   let topTen = 0
   let events = 0
   let sets = 0
+  let secrets = 0
   for (const award of awards) {
     if (award.period === 'event') events++
     else if (award.period === 'hunt') sets++
+    else if (award.period === 'secret') secrets++
     else if (award.rank <= 3) podium++
     else topTen++
   }
-  return { total: awards.length, podium, topTen, events, sets }
+  return { total: awards.length, podium, topTen, events, sets, secrets }
 }
 
 export async function trophySummaryForName(name: string): Promise<TrophySummary> {
@@ -529,7 +536,7 @@ export async function trophySummariesForNames(
   for (const award of rows) {
     const row = out[award.name] ?? { total: 0, podium: 0 }
     row.total++
-    if (award.period !== 'event' && award.period !== 'hunt' && award.rank <= 3) row.podium++
+    if ((award.period === 'weekly' || award.period === 'monthly') && award.rank <= 3) row.podium++
     out[award.name] = row
   }
   return out

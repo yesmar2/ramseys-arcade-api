@@ -353,7 +353,7 @@ export function inPeriod(at: number, period: Period, now = Date.now()): boolean 
  */
 const dayStarts = new Map<number, number>()
 
-function dayStartMs(key: number): number {
+export function dayStartMs(key: number): number {
   const hit = dayStarts.get(key)
   if (hit !== undefined) return hit
   const midnightUtc = Date.UTC(Math.floor(key / 10_000), Math.floor((key % 10_000) / 100) - 1, key % 100)

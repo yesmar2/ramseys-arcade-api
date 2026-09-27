@@ -6,6 +6,7 @@ import { huntDay } from './bugHunt.js'
 import { namesOwnedByAccount, withAvatarIds } from './names.js'
 import { updateCrossRunStreakRecords } from './records.js'
 import { TRIES_SCORE_BASE } from './scoreLimits.js'
+import { awardSecret, type SecretFound } from './secrets.js'
 import { addScore, bestForName, type DeviceType } from './store.js'
 import { payRun } from './tickets.js'
 
@@ -52,6 +53,8 @@ export type DailyReply = {
   }
   /** What today's result paid for the prize counter, as it went on the board. */
   tickets?: { earned: number; balance: number }
+  /** A secret today's result found (secrets.ts): Hole in One. */
+  secrets?: SecretFound[]
 }
 
 /** Who sent a result, for the board's own records of a run. */
@@ -253,6 +256,7 @@ export async function recordResult(
   now = Date.now(),
 ): Promise<DailyReply> {
   let tickets: DailyReply['tickets']
+  let secrets: SecretFound[] = []
   if (validResult(input, now)) {
     const [tag] = await namesOwnedByAccount(accountId)
     const added = await db()
@@ -265,9 +269,13 @@ export async function recordResult(
       held = null
       if (tag && input.day === huntDay(now)) {
         tickets = (await onTheBoard(accountId, tag.name, input.tries, input.device ?? 'desktop', audit, now)).tickets
+        if (input.tries === 1) {
+          const found = await awardSecret({ accountId, name: tag.name, key: 'holeinone', at: now }).catch(() => null)
+          if (found) secrets = [found]
+        }
       }
     }
   }
   const reply = await dailyReply(accountId, now)
-  return tickets ? { ...reply, tickets } : reply
+  return { ...reply, ...(tickets ? { tickets } : {}), ...(secrets.length ? { secrets } : {}) }
 }

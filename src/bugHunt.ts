@@ -5,6 +5,7 @@ import { invalidateFlair } from './flair.js'
 import { namesOwnedByAccount } from './names.js'
 import { BOARD_TZ } from './store.js'
 import { awardTickets, HUNT_TICKETS } from './tickets.js'
+import { secretsForCatch, type SecretFound } from './secrets.js'
 import { awardHuntSet } from './trophies.js'
 
 /*
@@ -206,6 +207,8 @@ export type HuntReply = {
   completed?: HuntCompleted
   /** Only on the reply to a find that paid tickets: the day's bug, caught on its day. */
   tickets?: { earned: number; balance: number }
+  /** Only on the reply to a find that found a secret (secrets.ts): Early Bird. */
+  secrets?: SecretFound[]
 }
 
 /** Today, for anyone: how many caught its bug, and for a player, their finds, their place, and their set. */
@@ -283,6 +286,8 @@ export async function recordFinds(
   accountId: string,
   input: { day: string; bug: string; spot: string; at?: number }[],
   now = Date.now(),
+  /** The player's clock (secrets.ts clientOffset), for Early Bird. */
+  offset: number | null = null,
 ): Promise<HuntReply> {
   const today = huntDay(now)
   const rows = input
@@ -299,6 +304,7 @@ export async function recordFinds(
 
   let completed: HuntCompleted | null = null
   let tickets: { earned: number; balance: number } | null = null
+  let secrets: SecretFound[] = []
   if (rows.length) {
     // What each set held before this, so a find is only called the one that completed it if it was.
     const before = await findsFor(accountId)
@@ -322,8 +328,18 @@ export async function recordFinds(
       // A trophy that doesn't go through is put there by a later reply; the find is kept either way.
       completed = (await completeSet(accountId, key, setBugs(before, key), now).catch(() => null)) ?? completed
     }
+    // Today's bug, caught just now: early enough on the player's clock, a secret.
+    if (added.some((r) => r.day === today && r.counted)) {
+      const [tag] = await namesOwnedByAccount(accountId)
+      if (tag) secrets = await secretsForCatch({ accountId, name: tag.name, offset, at: now }).catch(() => [])
+    }
   }
 
   const reply = await huntReply(accountId, now)
-  return { ...reply, ...(completed ? { completed } : {}), ...(tickets ? { tickets } : {}) }
+  return {
+    ...reply,
+    ...(completed ? { completed } : {}),
+    ...(tickets ? { tickets } : {}),
+    ...(secrets.length ? { secrets } : {}),
+  }
 }

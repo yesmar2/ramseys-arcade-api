@@ -1,5 +1,5 @@
 import type { Request } from 'express'
-import { and, eq, gte, lt } from 'drizzle-orm'
+import { and, count, desc, eq, gte, lt, lte, ne } from 'drizzle-orm'
 import { db } from './db/client.js'
 import { leaderboardScores, trophyAwards } from './db/schema.js'
 import { notify } from './notifications.js'
@@ -9,8 +9,9 @@ import { ALLOWED_GAMES, boardDateKey, dayStartMs, getBoard, type GameSlug } from
  * Secret trophies: odd things a player can do that nothing on the site mentions until they've done them.
  * Each is a trophy like any other (period 'secret', its periodKey the secret's number below), on the
  * shelf of the tag the account plays as, once an account. A saved run, a bug caught or a day's hole can
- * find one; the site's easter eggs find their own (POST /secrets/found). The site keeps the same list,
- * by number, with each one's art (lib/secrets.ts).
+ * find one; the site's easter eggs find their own (POST /secrets/found, EGG_SECRETS). The site keeps the
+ * same list, by number, with each one's art (lib/secrets.ts), and its admin page says every rule below in
+ * words (components/AdminTrophies.tsx): change both with any rule here.
  */
 
 export const SECRETS = {
@@ -24,13 +25,30 @@ export const SECRETS = {
   holeinone: { n: 8, name: 'Hole in One', says: 'Today’s Hole on the very first try.' },
   konami: { n: 9, name: 'Up Up Down Down', says: 'Found the old cheat code.' },
   blip: { n: 10, name: 'Blip Blip', says: 'Tapped the blip until it tapped back.' },
+  wish: { n: 11, name: 'Make a Wish', says: 'Saved a run at 11:11.' },
+  dejavu: { n: 12, name: 'Déjà Vu', says: 'The same score twice in a row.' },
+  round: { n: 13, name: 'Round Number', says: 'A score of exactly 1,000, 10,000 or 100,000.' },
+  marathon: { n: 14, name: 'Marathon', says: 'Fifty runs in one day.' },
+  barrelroll: { n: 15, name: 'Barrel Roll', says: 'Asked the search for a barrel roll.' },
+  corner: { n: 16, name: 'Perfect Corner', says: 'Watched the bouncing blip hit the corner.' },
+  cheats: { n: 17, name: 'Nice Try', says: 'Tried an old cheat on the arcade.' },
+  continue: { n: 18, name: 'Continue?', says: 'Put a coin in at Game Over.' },
 } as const
 
 export type SecretKey = keyof typeof SECRETS
 export type SecretFound = { key: SecretKey; n: number; name: string; says: string }
 
 /** The secrets the site's easter eggs find, which it reports itself. */
-export const EGG_SECRETS: readonly SecretKey[] = ['konami', 'blip']
+export const EGG_SECRETS: readonly SecretKey[] = ['konami', 'blip', 'barrelroll', 'corner', 'cheats', 'continue']
+
+/** Round Number's scores. */
+const ROUND_SCORES: ReadonlySet<number> = new Set([1_000, 10_000, 100_000])
+
+/** Déjà Vu wants a score worth repeating. */
+const DEJA_VU_MIN = 100
+
+/** Saved runs in one of the boards' days that make a Marathon. */
+const MARATHON_RUNS = 50
 
 /** Games shown as a number of points, where a score's digits mean something to the player. */
 const POINTS_GAMES: ReadonlySet<GameSlug> = new Set(
@@ -54,6 +72,12 @@ export function clientOffset(req: Request): number | null {
 /** The hour on the player's clock at `at`. */
 function localHour(at: number, offset: number): number {
   return new Date(at - offset * 60_000).getUTCHours()
+}
+
+/** 11:11 on the player's clock, morning or night. */
+function isElevenEleven(at: number, offset: number): boolean {
+  const local = new Date(at - offset * 60_000)
+  return local.getUTCHours() % 12 === 11 && local.getUTCMinutes() === 11
 }
 
 async function foundBefore(accountId: string): Promise<Set<number>> {
@@ -115,17 +139,47 @@ function isPalindrome(n: number): boolean {
   return s === [...s].reverse().join('')
 }
 
-/** Every listed game has a run from this tag on the boards' day of `at`. */
-async function everyGameToday(name: string, at: number): Promise<boolean> {
+/**
+ * This tag's play on the boards' day of `at`: whether every listed game has a run (Grand Tour), and how
+ * many runs there are in all (Marathon). A solved Today's Hole is on the board too, so it counts.
+ */
+async function dayOfPlay(name: string, at: number): Promise<{ everyGame: boolean; runs: number }> {
   const start = dayStartMs(boardDateKey(at))
   // Thirty hours on is always the next day, however long a day is when the clocks change.
   const end = dayStartMs(boardDateKey(start + 30 * 3_600_000))
   const rows = await db()
-    .selectDistinct({ game: leaderboardScores.game })
+    .select({ game: leaderboardScores.game, runs: count() })
     .from(leaderboardScores)
     .where(and(eq(leaderboardScores.name, name), gte(leaderboardScores.at, start), lt(leaderboardScores.at, end)))
+    .groupBy(leaderboardScores.game)
   const played = new Set(rows.map((r) => r.game))
-  return TOUR_GAMES.every((g) => played.has(g))
+  return { everyGame: TOUR_GAMES.every((g) => played.has(g)), runs: rows.reduce((sum, r) => sum + Number(r.runs), 0) }
+}
+
+/** The score of this tag's run on `game` before the one saved as `entryId`, or null for a first. */
+async function runBefore(name: string, game: GameSlug, entryId: string, at: number): Promise<number | null> {
+  const [row] = await db()
+    .select({ score: leaderboardScores.score })
+    .from(leaderboardScores)
+    .where(and(eq(leaderboardScores.name, name), eq(leaderboardScores.game, game), lte(leaderboardScores.at, at), ne(leaderboardScores.id, entryId)))
+    .orderBy(desc(leaderboardScores.at))
+    .limit(1)
+  return row?.score ?? null
+}
+
+/** Grand Tour and Marathon, whichever the account hasn't got, from one look at the day. */
+async function dayFinds(
+  had: ReadonlySet<number>,
+  name: string,
+  at: number,
+  award: (key: SecretKey, extra?: { games?: number }) => Promise<void>,
+) {
+  const tour = !had.has(SECRETS.grandtour.n)
+  const marathon = !had.has(SECRETS.marathon.n)
+  if (!tour && !marathon) return
+  const day = await dayOfPlay(name, at)
+  if (tour && day.everyGame) await award('grandtour', { games: TOUR_GAMES.length })
+  if (marathon && day.runs >= MARATHON_RUNS) await award('marathon', { games: day.runs })
 }
 
 /**
@@ -140,6 +194,8 @@ export async function secretsForRun(opts: {
   record: number
   offset: number | null
   at: number
+  /** The run's own row, so Déjà Vu looks at the one before it. */
+  entryId: string
 }): Promise<SecretFound[]> {
   const had = await foundBefore(opts.accountId)
   const found: SecretFound[] = []
@@ -150,25 +206,33 @@ export async function secretsForRun(opts: {
   }
   const { game, score } = opts
   if (opts.offset != null && localHour(opts.at, opts.offset) === 3) await award('nightowl')
+  if (opts.offset != null && isElevenEleven(opts.at, opts.offset)) await award('wish')
   if (POINTS_GAMES.has(game)) {
     if (score >= 1000 && isPalindrome(score)) await award('palindrome', { score })
     if (score >= 777 && /^7+$/.test(String(score))) await award('sevens', { score })
     if (opts.record > 1 && score === opts.record - 1) await award('soclose', { score })
+    if (ROUND_SCORES.has(score)) await award('round', { score })
+    if (
+      score >= DEJA_VU_MIN &&
+      !had.has(SECRETS.dejavu.n) &&
+      (await runBefore(opts.name, game, opts.entryId, opts.at)) === score
+    ) {
+      await award('dejavu', { score })
+    }
   }
   if (score > 0 && !had.has(SECRETS.photofinish.n)) {
     // Tied for first this week: the week's best is this score, and someone else has it too.
     const week = await getBoard(game, 'weekly', opts.at)
     if (week[0]?.score === score && week.some((e) => e.score === score && e.name !== opts.name)) await award('photofinish', { score })
   }
-  if (!had.has(SECRETS.grandtour.n) && (await everyGameToday(opts.name, opts.at))) {
-    await award('grandtour', { games: TOUR_GAMES.length })
-  }
+  await dayFinds(had, opts.name, opts.at, award)
   return found
 }
 
 /**
- * The secrets a day's hole finds, once its result is on Ace Chase's board: Hole in One, and Grand Tour if
- * the hole was the day's last game to play (a run's own check doesn't see the hole's result).
+ * The secrets a day's hole finds, once its result is on Ace Chase's board: Hole in One, and Grand Tour or
+ * Marathon if the hole was the day's last game or fiftieth run (a run's own check doesn't see the hole's
+ * result).
  */
 export async function secretsForHole(opts: { accountId: string; name: string; tries: number; at: number }): Promise<SecretFound[]> {
   const had = await foundBefore(opts.accountId)
@@ -179,9 +243,7 @@ export async function secretsForHole(opts: { accountId: string; name: string; tr
     if (secret) found.push(secret)
   }
   if (opts.tries === 1) await award('holeinone')
-  if (!had.has(SECRETS.grandtour.n) && (await everyGameToday(opts.name, opts.at))) {
-    await award('grandtour', { games: TOUR_GAMES.length })
-  }
+  await dayFinds(had, opts.name, opts.at, award)
   return found
 }
 

@@ -13,8 +13,9 @@ const FOUND_LIMIT = { limit: 10, windowMs: 60 * 1000 }
 const foundSchema = z.object({ key: z.string().min(1).max(20) })
 
 /**
- * The site found an easter egg that hides a secret (EGG_SECRETS): the cheat code, the blip. It goes on the
- * shelf of the tag the account plays as. `found` is null if it was found before, or there's no tag yet.
+ * The site found an easter egg that hides a secret (EGG_SECRETS): the cheat code, the blip, the barrel roll,
+ * the bouncing blip's corner, an old cheat, a coin at Game Over. It goes on the shelf of the tag the account
+ * plays as. `found` is null if it was found before, or there's no tag yet.
  */
 secretsRouter.post('/found', async (req, res) => {
   const parsed = foundSchema.safeParse(req.body)

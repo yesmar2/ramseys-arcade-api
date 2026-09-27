@@ -3,8 +3,14 @@
  * palette colours, with a ring around it and a pin on its edge that the
  * player has earned. One short string, saved on the name claim:
  *
- *   a2:m:<letters>:<pattern>:<body>:<detail>:<badge>:<ring>:<pin>
- *   a2:e:<emblem>:<body>:<detail>:<badge>:<ring>:<pin>
+ *   a2:m:<letters>:<pattern>:<body>:<detail>:<badge>:<ring>:<pin>[:<worn>]
+ *   a2:e:<emblem>:<body>:<detail>:<badge>:<ring>:<pin>[:<worn>]
+ *
+ * What a player got at the prize counter (prizes.ts) rides along: a badge
+ * finish is the badge itself, and the other prizes they wear (a name style, a
+ * title, a card theme, confetti, the neon sign) are the last part, joined by
+ * dots, which only a tag that wears one has. Every board row that carries an
+ * avatar carries those with it.
  *
  * A monogram saves how many letters of the tag it shows (1 or 2), not the
  * letters, so it follows a rename and can't spell anything else. Every tag has
@@ -13,6 +19,8 @@
  * what a player has earned; the drawing lives in the app. Keep in step with
  * the frontend `src/lib/avatars.ts`.
  */
+
+import { isWornPrize, prizeById } from './prizes.js'
 
 export const AVATAR_EMBLEMS = [
   'joystick',
@@ -37,7 +45,8 @@ export type AvatarEmblem = (typeof AVATAR_EMBLEMS)[number]
 export const AVATAR_PATTERNS = ['plain', 'rings', 'split', 'stripes', 'dots', 'burst', 'half'] as const
 export type AvatarPattern = (typeof AVATAR_PATTERNS)[number]
 
-export const AVATAR_BADGES = ['bold', 'deep', 'night', 'paper'] as const
+/** The four anyone can wear, then the prize counter's finishes (prizes.ts), which only their owner can. */
+export const AVATAR_BADGES = ['bold', 'deep', 'night', 'paper', 'glitter', 'starfield', 'neon', 'holo'] as const
 export type AvatarBadge = (typeof AVATAR_BADGES)[number]
 
 /** Worn around the badge, for how you've placed. */
@@ -76,6 +85,8 @@ type Common = {
   badge: AvatarBadge
   ring: AvatarRing | null
   pin: AvatarPin | null
+  /** Prizes worn besides a finish (prizes.ts), at most one of each kind. */
+  worn?: string[]
 }
 export type Avatar = ({ kind: 'mono'; letters: 1 | 2; pattern: AvatarPattern } | { kind: 'emblem'; emblem: AvatarEmblem }) & Common
 
@@ -85,10 +96,24 @@ export type AvatarId = string
 const VERSION = 'a2'
 
 export function encodeAvatar(avatar: Avatar): AvatarId {
-  const tail = `${avatar.body}:${avatar.detail}:${avatar.badge}:${avatar.ring ?? 'none'}:${avatar.pin ?? 'none'}`
+  const worn = avatar.worn?.length ? `:${avatar.worn.join('.')}` : ''
+  const tail = `${avatar.body}:${avatar.detail}:${avatar.badge}:${avatar.ring ?? 'none'}:${avatar.pin ?? 'none'}${worn}`
   return avatar.kind === 'mono'
     ? `${VERSION}:m:${avatar.letters}:${avatar.pattern}:${tail}`
     : `${VERSION}:e:${avatar.emblem}:${tail}`
+}
+
+/** The worn part: known prizes that aren't finishes, one of each kind, none twice. */
+function parseWorn(raw: string | undefined): string[] | null {
+  if (raw == null) return []
+  const ids = raw.split('.')
+  const kinds = new Set<string>()
+  for (const id of ids) {
+    const prize = prizeById(id)
+    if (!prize || !isWornPrize(id) || kinds.has(prize.kind)) return null
+    kinds.add(prize.kind)
+  }
+  return ids
 }
 
 function oneOf<T extends string>(list: readonly T[], value: string | undefined): T | null {
@@ -101,8 +126,11 @@ export function parseAvatar(value: unknown): Avatar | null {
   if (parts[0] !== VERSION) return null
   const mono = parts[1] === 'm'
   if (!mono && parts[1] !== 'e') return null
-  if (parts.length !== (mono ? 9 : 8)) return null
-  const [body, detail, badgeRaw, ringRaw, pinRaw] = parts.slice(mono ? 4 : 3)
+  const bare = mono ? 9 : 8
+  if (parts.length !== bare && parts.length !== bare + 1) return null
+  const [body, detail, badgeRaw, ringRaw, pinRaw, wornRaw] = parts.slice(mono ? 4 : 3)
+  const worn = parseWorn(wornRaw)
+  if (!worn) return null
   const inRange = (n: number) => Number.isInteger(n) && n >= 0 && n < AVATAR_COLOR_COUNT
   const b = Number(body)
   const d = Number(detail)
@@ -112,7 +140,7 @@ export function parseAvatar(value: unknown): Avatar | null {
   if (!inRange(b) || !inRange(d) || !badge) return null
   if (ringRaw !== 'none' && !ring) return null
   if (pinRaw !== 'none' && !pin) return null
-  const common = { body: b, detail: d, badge, ring, pin }
+  const common = { body: b, detail: d, badge, ring, pin, worn }
   if (mono) {
     const letters = parts[2] === '1' ? 1 : parts[2] === '2' ? 2 : null
     const pattern = oneOf(AVATAR_PATTERNS, parts[3])

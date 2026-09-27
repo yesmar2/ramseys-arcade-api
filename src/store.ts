@@ -369,6 +369,11 @@ function dayStartMs(key: number): number {
   return lo * QUARTER_HOUR_MS
 }
 
+/** When the boards' day that `ms` falls in began. */
+export function boardDayStart(ms: number): number {
+  return dayStartMs(keyOf(ms))
+}
+
 /** A period's span as timestamps, from its first moment up to (not including) the first after it. */
 function periodSpan(period: Exclude<Period, 'all'>, now: number): [number, number] {
   const today = keyOf(now)
@@ -805,6 +810,32 @@ function bestIndexOf(view: PoolView, ref: PlayerRef | undefined): number {
 /** The same, by tag. */
 function bestIndexOfName(view: PoolView, name: string): number {
   return bestIndexOf(view, playerRefs.get(name))
+}
+
+/**
+ * Where a score stands among the players on a game's board for a period: its
+ * place (one more than the players whose best beats it, the player's own best
+ * left out) and the field, with the player in it. What a run is paid in
+ * tickets by (tickets.ts). A daily game's board is the day's, as always.
+ */
+export async function placeOfScore(
+  game: GameSlug,
+  period: Period,
+  name: string,
+  score: number,
+  now = Date.now(),
+): Promise<{ place: number; field: number }> {
+  const cleaned = name.trim().slice(0, 12).toUpperCase()
+  const view = await poolView(game, period, now)
+  const own = bestIndexOfName(view, cleaned)
+  let above = 0
+  // Board order, best first: each player's best is where placeAt marks them, and the rest are behind it.
+  for (let i = 0; i < view.entries.length; i++) {
+    if (view.entries[i].score <= score) break
+    if (view.placeAt[i] === 0 || i === own) continue
+    above++
+  }
+  return { place: above + 1, field: own >= 0 ? view.players : view.players + 1 }
 }
 
 export async function getClosedBoard(

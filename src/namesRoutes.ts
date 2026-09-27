@@ -13,6 +13,8 @@ import {
 } from './names.js'
 import { AVATAR_COLOR_COUNT, AVATAR_EMBLEMS, parseAvatar } from './avatars.js'
 import { flairFor, invalidateFlair, mayWear } from './flair.js'
+import { isFinishBadge } from './prizes.js'
+import { ownedPrizes } from './tickets.js'
 
 export const namesRouter = Router()
 
@@ -29,7 +31,7 @@ const renameSchema = z.object({
 })
 
 const avatarSchema = z.object({
-  avatarId: z.string().min(1).max(64),
+  avatarId: z.string().min(1).max(128),
   token: z.string().min(1).max(128).optional(),
 })
 
@@ -113,6 +115,15 @@ namesRouter.put('/:name/avatar', async (req, res) => {
       }
     }
     const account = await accountFromRequest(req)
+    // Prizes from the counter are worn by the account that traded for them, and nobody else.
+    const prizes = wanted ? [...(isFinishBadge(wanted.badge) ? [wanted.badge] : []), ...(wanted.worn ?? [])] : []
+    if (prizes.length) {
+      const owned = account ? await ownedPrizes(account.id) : new Set<string>()
+      if (prizes.some((id) => !owned.has(id))) {
+        res.status(403).json({ error: 'That’s a prize from the counter you haven’t traded for', code: 'PRIZE_NOT_OWNED' })
+        return
+      }
+    }
     const result = await setNameAvatar(name, parsed.data.avatarId, {
       claimToken: parsed.data.token,
       accountId: account?.id,

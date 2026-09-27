@@ -1,0 +1,85 @@
+import { Router } from 'express'
+import { z } from 'zod'
+import { accountFromRequest } from './auth.js'
+import { takeToken } from './rateLimit.js'
+import { setGoal, ticketsFor, tradePrize } from './tickets.js'
+
+/*
+ * The prize counter: a player's tickets, and trading them for prizes.
+ * Earning happens where the play is (a saved run, the Daily, the bug hunt).
+ */
+export const ticketsRouter = Router()
+
+/** More trades than anyone makes browsing a counter; only a script hits it. */
+const TRADE_LIMIT = { limit: 30, windowMs: 10 * 60 * 1000 }
+
+function fail(err: unknown, res: import('express').Response) {
+  const status = (err as { status?: number }).status ?? 500
+  res.status(status).json({
+    error: err instanceof Error ? err.message : 'Request failed',
+    code: (err as { code?: string }).code,
+  })
+}
+
+/** Your tickets: what you have, what came in today, your goal, your prizes and the latest in and out. */
+ticketsRouter.get('/', async (req, res) => {
+  const account = await accountFromRequest(req)
+  if (!account) {
+    res.status(401).json({ error: 'Sign in to collect tickets', code: 'AUTH_REQUIRED' })
+    return
+  }
+  try {
+    res.json(await ticketsFor(account.id))
+  } catch (err) {
+    fail(err, res)
+  }
+})
+
+const tradeSchema = z.object({ prize: z.string().min(1).max(32) })
+
+/** Trade tickets for a prize. Answers with the tickets as they stand after. */
+ticketsRouter.post('/trade', async (req, res) => {
+  const parsed = tradeSchema.safeParse(req.body)
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Invalid body', code: 'INVALID_BODY' })
+    return
+  }
+  const account = await accountFromRequest(req)
+  if (!account) {
+    res.status(401).json({ error: 'Sign in to trade tickets', code: 'AUTH_REQUIRED' })
+    return
+  }
+  const gate = takeToken(`trade:account:${account.id}`, TRADE_LIMIT)
+  if (!gate.ok) {
+    res.setHeader('Retry-After', Math.ceil(gate.retryAfterMs / 1000))
+    res.status(429).json({ error: 'Too many trades too quickly', code: 'RATE_LIMITED' })
+    return
+  }
+  try {
+    await tradePrize(account.id, parsed.data.prize)
+    res.json(await ticketsFor(account.id))
+  } catch (err) {
+    fail(err, res)
+  }
+})
+
+const goalSchema = z.object({ prize: z.string().min(1).max(32).nullable() })
+
+/** The prize you're saving for, or none. */
+ticketsRouter.put('/goal', async (req, res) => {
+  const parsed = goalSchema.safeParse(req.body)
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Invalid body', code: 'INVALID_BODY' })
+    return
+  }
+  const account = await accountFromRequest(req)
+  if (!account) {
+    res.status(401).json({ error: 'Sign in to save for a prize', code: 'AUTH_REQUIRED' })
+    return
+  }
+  try {
+    res.json({ goal: await setGoal(account.id, parsed.data.prize) })
+  } catch (err) {
+    fail(err, res)
+  }
+})

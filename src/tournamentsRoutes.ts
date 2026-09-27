@@ -7,6 +7,7 @@ import { assertCanUseName } from './names.js'
 import { takeToken } from './rateLimit.js'
 import { claimRun, peekRun, runClaimRef, startRun } from './runs.js'
 import { checkScoreRate } from './scoreLimits.js'
+import { awardTickets, DAILY_TICKETS } from './tickets.js'
 import { resolveGameSlug, type GameSlug } from './store.js'
 import {
   activeTournamentsForGame,
@@ -421,7 +422,16 @@ tournamentsRouter.post('/:id/scores', async (req, res) => {
       { inviteCode: parsed.data.invite, accountId: account.id },
       tryRowId,
     )
-    res.status(201).json({ ...result, name: claim.name, token: claim.token })
+    // A run in the day's Daily pays its tickets once a day.
+    const tickets = req.params.id.startsWith('daily-')
+      ? await awardTickets(account.id, 'daily', req.params.id, DAILY_TICKETS, resolveGameSlug(parsed.data.game)).catch(
+          (err: unknown) => {
+            console.warn(`[tickets] daily ${req.params.id}:`, err)
+            return null
+          },
+        )
+      : null
+    res.status(201).json({ ...result, tickets, name: claim.name, token: claim.token })
   } catch (err) {
     claimError(err, res)
   }

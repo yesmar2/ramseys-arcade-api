@@ -24,6 +24,7 @@ import { challengesRouter } from './challengesRoutes.js'
 import { bugHuntRouter } from './bugHuntRoutes.js'
 import { clientErrorsRouter } from './clientErrorsRoutes.js'
 import { feedbackRouter } from './feedbackRoutes.js'
+import { ticketsRouter } from './ticketsRoutes.js'
 import { dailyHoleRouter } from './dailyHoleRoutes.js'
 import { publicVapidKey } from './push.js'
 import { statsRouter } from './statsRoutes.js'
@@ -171,6 +172,7 @@ async function main() {
   app.use('/daily-hole', dailyHoleRouter)
   app.use('/client-errors', clientErrorsRouter)
   app.use('/feedback', feedbackRouter)
+  app.use('/tickets', ticketsRouter)
 
   logDbTarget()
 

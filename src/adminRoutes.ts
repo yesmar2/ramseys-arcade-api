@@ -5,7 +5,9 @@ import { banName, listBans, purgeName, recentScores, unbanName, voidScores } fro
 import { listClientErrors } from './clientErrors.js'
 import { listFeedback } from './feedback.js'
 import { listFlags, reviewFlag, unreviewedCount } from './scoreFlags.js'
+import { getClaim } from './names.js'
 import { resolveGameSlug } from './store.js'
+import { awardTickets } from './tickets.js'
 
 export const adminRouter = Router()
 
@@ -31,6 +33,33 @@ adminRouter.get('/client-errors', async (req, res) => {
     await requireAdmin(req)
     const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 100))
     res.json({ errors: await listClientErrors(limit) })
+  } catch (err) {
+    refuse(err, res)
+  }
+})
+
+const grantSchema = z.object({ name: z.string().min(1).max(12), amount: z.number().int().min(1).max(50_000) })
+
+/**
+ * Tickets for a tag's account, from an admin: to try the prize counter without
+ * earning them first, or to put right a payout that went wrong.
+ */
+adminRouter.post('/tickets/grant', async (req, res) => {
+  try {
+    await requireAdmin(req)
+    const parsed = grantSchema.safeParse(req.body)
+    if (!parsed.success) {
+      res.status(400).json({ error: 'Invalid body', code: 'INVALID_BODY' })
+      return
+    }
+    const claim = await getClaim(parsed.data.name.trim().toUpperCase())
+    if (!claim?.accountId) {
+      res.status(404).json({ error: 'That tag has no account', code: 'NO_ACCOUNT' })
+      return
+    }
+    const now = Date.now()
+    const paid = await awardTickets(claim.accountId, 'grant', `grant-${now}`, parsed.data.amount, null, now)
+    res.json({ name: parsed.data.name.trim().toUpperCase(), ...paid })
   } catch (err) {
     refuse(err, res)
   }

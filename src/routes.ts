@@ -11,6 +11,7 @@ import { resolveBoardScope } from './groups.js'
 import { assertCanUseName, withAvatarId, withAvatarIds } from './names.js'
 import { updateCrossRunStreakRecords } from './records.js'
 import { recordChallengeRun } from './challenges.js'
+import { payRun, plausiblePickups, type RunTickets } from './tickets.js'
 import {
   addScore,
   ALLOWED_GAMES,
@@ -136,6 +137,8 @@ const submitSchema = z.object({
   runId: z.string().min(1).max(64).optional(),
   /** The challenge this run was played against, from a friend's link. */
   challengeId: z.string().min(1).max(16).optional(),
+  /** Prize tickets the run picked up on the way (Crosswalk's), paid on top of the run's own. */
+  pickups: z.number().int().min(0).max(500).optional(),
 })
 
 /*
@@ -260,7 +263,7 @@ leaderboardsRouter.post('/:game', async (req, res) => {
     return
   }
 
-  const { name, score, token, device, runId, challengeId } = parsed.data
+  const { name, score, token, device, runId, challengeId, pickups } = parsed.data
   if (score > scoreCeiling(game)) {
     res.status(400).json({ error: 'That score is not possible in this game', code: 'SCORE_OUT_OF_RANGE' })
     return
@@ -347,6 +350,8 @@ leaderboardsRouter.post('/:game', async (req, res) => {
 
   // Read before the write, so "was this far past the rest?" has an answer.
   const bestBefore = (await getBoard(game, 'all'))[0]?.score ?? 0
+  // The player's own best before this run, for its tickets: a new best pays more, and none at all is a first go.
+  const priorBest = (await bestForName(game, claim.name, 'all'))?.score ?? null
 
   const result = await addScore(game, claim.name, score, device ?? 'desktop', {
     runId: runId ?? null,
@@ -393,9 +398,26 @@ leaderboardsRouter.post('/:game', async (req, res) => {
       })
     : null
 
+  // Tickets for a run the server timed; one saved without a run id pays none.
+  const tickets: RunTickets | null = runId
+    ? await payRun({
+        accountId: account.id,
+        game,
+        name: claim.name,
+        runId,
+        score,
+        priorBest,
+        pickups: game === 'crosswalk' ? plausiblePickups(score, pickups) : 0,
+      }).catch((err: unknown) => {
+        console.warn(`[tickets] ${game} run ${runId}:`, err)
+        return null
+      })
+    : null
+
   res.status(201).json({
     game,
     challenge,
+    tickets,
     entry: await withAvatarId(result.entry),
     rank: result.rank,
     ranks: result.ranks,

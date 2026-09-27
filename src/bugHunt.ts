@@ -4,6 +4,7 @@ import { bugHuntFinds } from './db/schema.js'
 import { invalidateFlair } from './flair.js'
 import { namesOwnedByAccount } from './names.js'
 import { BOARD_TZ } from './store.js'
+import { awardTickets, HUNT_TICKETS } from './tickets.js'
 import { awardHuntSet } from './trophies.js'
 
 /*
@@ -203,6 +204,8 @@ export type HuntReply = {
   }
   /** Only on the reply to the find that completed a set. */
   completed?: HuntCompleted
+  /** Only on the reply to a find that paid tickets: the day's bug, caught on its day. */
+  tickets?: { earned: number; balance: number }
 }
 
 /** Today, for anyone: how many caught its bug, and for a player, their finds, their place, and their set. */
@@ -295,6 +298,7 @@ export async function recordFinds(
     }))
 
   let completed: HuntCompleted | null = null
+  let tickets: { earned: number; balance: number } | null = null
   if (rows.length) {
     // What each set held before this, so a find is only called the one that completed it if it was.
     const before = await findsFor(accountId)
@@ -305,6 +309,14 @@ export async function recordFinds(
       .returning({ day: bugHuntFinds.day, counted: bugHuntFinds.counted })
     // A new find today changes the count everyone sees.
     if (added.some((r) => r.day === today)) counted = null
+    // Each day's bug, caught on its day, pays its tickets once.
+    let earned = 0
+    for (const row of added.filter((r) => r.counted)) {
+      const paid = await awardTickets(accountId, 'hunt', row.day, HUNT_TICKETS, null, now).catch(() => null)
+      if (!paid?.earned) continue
+      earned += paid.earned
+      tickets = { earned, balance: paid.balance }
+    }
     const sets = new Set(added.filter((r) => r.counted).map((r) => setKeyFor(r.day)))
     for (const key of sets) {
       // A trophy that doesn't go through is put there by a later reply; the find is kept either way.
@@ -313,5 +325,5 @@ export async function recordFinds(
   }
 
   const reply = await huntReply(accountId, now)
-  return completed ? { ...reply, completed } : reply
+  return { ...reply, ...(completed ? { completed } : {}), ...(tickets ? { tickets } : {}) }
 }

@@ -123,7 +123,7 @@ function buildCrosswalkFastestRowRecords(): RecordDef[] {
 const CROSSWALK_MOST_COINS: RecordDef = {
   id: 'most-coins',
   game: 'crosswalk',
-  label: 'Most coins in a run',
+  label: 'Most tickets in a run',
   direction: 'higher',
   unit: 'count',
 }

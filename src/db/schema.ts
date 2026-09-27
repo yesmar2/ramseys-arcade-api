@@ -645,3 +645,63 @@ export const feedback = pgTable(
   },
   (t) => [index('feedback_created_at_idx').on(t.createdAt)],
 )
+
+/**
+ * A player's tickets, by account (a rename keeps them): what they have to
+ * spend, what they have earned in all, and the tickets their runs have paid
+ * today, which stop at a cap. With the prize they're saving for, if any.
+ */
+export const ticketWallets = pgTable('ticket_wallets', {
+  accountId: text('account_id')
+    .primaryKey()
+    .references(() => accounts.id, { onDelete: 'cascade' }),
+  balance: integer('balance').notNull().default(0),
+  earned: integer('earned').notNull().default(0),
+  /** The boards' day, YYYYMMDD, that runToday counts. */
+  runDay: integer('run_day').notNull().default(0),
+  runToday: integer('run_today').notNull().default(0),
+  /** A prize id (prizes.ts), or null. */
+  goal: text('goal'),
+  updatedAt: bigint('updated_at', { mode: 'number' }).notNull(),
+})
+
+/**
+ * Every ticket in and out, and why. One row per reason and the thing it was
+ * for (a run's id, a day, a game, a prize), so nothing pays twice.
+ */
+export const ticketLedger = pgTable(
+  'ticket_ledger',
+  {
+    id: text('id').primaryKey(),
+    accountId: text('account_id')
+      .notNull()
+      .references(() => accounts.id, { onDelete: 'cascade' }),
+    /** Earned is more than zero; a trade is less. */
+    amount: integer('amount').notNull(),
+    /** run, best, first, pickup, streak, daily, hunt, grant or trade. */
+    reason: text('reason').notNull(),
+    ref: text('ref').notNull(),
+    game: text('game'),
+    at: bigint('at', { mode: 'number' }).notNull(),
+  },
+  (t) => [
+    uniqueIndex('ticket_ledger_account_reason_ref_idx').on(t.accountId, t.reason, t.ref),
+    index('ticket_ledger_account_at_idx').on(t.accountId, t.at),
+  ],
+)
+
+/** Prizes traded for at the counter, by account. They're kept for good. */
+export const prizesOwned = pgTable(
+  'prizes_owned',
+  {
+    accountId: text('account_id')
+      .notNull()
+      .references(() => accounts.id, { onDelete: 'cascade' }),
+    /** A prize id (prizes.ts). */
+    prizeId: text('prize_id').notNull(),
+    /** What it cost when it was traded for. */
+    price: integer('price').notNull(),
+    at: bigint('at', { mode: 'number' }).notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.accountId, t.prizeId] })],
+)

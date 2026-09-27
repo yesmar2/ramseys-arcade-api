@@ -6,10 +6,10 @@ import { prizeById } from './prizes.js'
 import {
   boardDateKey,
   boardDayStart,
-  placeOfScore,
-  placePoints,
+  placeOfRun,
   previousBoardDateKey,
   type GameSlug,
+  type LeaderboardEntry,
 } from './store.js'
 
 /*
@@ -17,8 +17,9 @@ import {
  * looks (prizes.ts). They're kept by account, so a rename keeps them, and
  * they can't be bought: nothing but play puts one in.
  *
- * A saved run pays 1 to 10 by how much of the week's board it beats (the same
- * share the standings pay points for, a tenth of it), 5 more for a new best,
+ * A saved run pays 1 to 10 by the share of the week's runs it beats (your own
+ * among them, so only your better runs pay well, and a board nobody else is
+ * on pays no more than a busy one), 5 more for a new best,
  * and whatever tickets it picked up on the way (Crosswalk's). Those stop at
  * RUN_TICKETS_PER_DAY a day, so grinding pays no more than playing. On top,
  * and uncapped: a first go at a game, the first run of each day on a streak,
@@ -46,9 +47,9 @@ export type RunTickets = {
   earned: number
   lines: TicketLine[]
   balance: number
-  /** The share of the week's board the run beat, 1–100: what the run line was worked out from. */
+  /** The share of the week's other runs this one beat, 0–100: what the run line was worked out from. */
   beat: number
-  /** Where the run placed among the week's players, and how many there are, the player among them. */
+  /** Where the run placed among the week's runs (1 for the best), and how many runs there are, this one among them. */
   place: number
   field: number
   /** Tickets the day's cap held back from this run. */
@@ -95,16 +96,20 @@ export function plausiblePickups(score: number, claimed: number | undefined): nu
 export async function payRun(input: {
   accountId: string
   game: GameSlug
-  name: string
   runId: string
+  /** The run as the boards now hold it. */
+  entry: LeaderboardEntry
   score: number
   priorBest: number | null
   pickups: number
   now?: number
 }): Promise<RunTickets> {
   const now = input.now ?? Date.now()
-  const { place, field } = await placeOfScore(input.game, 'weekly', input.name, input.score, now)
-  const beat = placePoints(place, field)
+  const standing = await placeOfRun(input.game, 'weekly', input.entry, now)
+  const field = standing?.runs ?? 1
+  const place = standing?.place ?? field
+  // The runs behind it scored less; the first run on a board has beaten nothing yet.
+  const beat = field > 1 ? Math.round((100 * (field - place)) / (field - 1)) : 0
   const wanted: TicketLine[] = [{ reason: 'run', amount: Math.max(1, Math.round(beat / 10)) }]
   if (input.priorBest != null && input.score > input.priorBest) wanted.push({ reason: 'best', amount: BEST_TICKETS })
   if (input.pickups > 0) wanted.push({ reason: 'pickup', amount: input.pickups })

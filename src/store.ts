@@ -813,29 +813,23 @@ function bestIndexOfName(view: PoolView, name: string): number {
 }
 
 /**
- * Where a score stands among the players on a game's board for a period: its
- * place (one more than the players whose best beats it, the player's own best
- * left out) and the field, with the player in it. What a run is paid in
- * tickets by (tickets.ts). A daily game's board is the day's, as always.
+ * Where a saved run stands among every run on a game's board for a period,
+ * the player's own among them: its place (1 for the best) and how many runs
+ * there are. A new run sorts after any it ties, so every run behind it scored
+ * less. What a run is paid in tickets by (tickets.ts): measured against runs
+ * rather than players, a run that isn't one of your best pays less, and a
+ * board with nobody else on it pays no more than a busy one. A daily game's
+ * board is the day's, as always.
  */
-export async function placeOfScore(
+export async function placeOfRun(
   game: GameSlug,
   period: Period,
-  name: string,
-  score: number,
+  entry: LeaderboardEntry,
   now = Date.now(),
-): Promise<{ place: number; field: number }> {
-  const cleaned = name.trim().slice(0, 12).toUpperCase()
+): Promise<{ place: number; runs: number } | null> {
   const view = await poolView(game, period, now)
-  const own = bestIndexOfName(view, cleaned)
-  let above = 0
-  // Board order, best first: each player's best is where placeAt marks them, and the rest are behind it.
-  for (let i = 0; i < view.entries.length; i++) {
-    if (view.entries[i].score <= score) break
-    if (view.placeAt[i] === 0 || i === own) continue
-    above++
-  }
-  return { place: above + 1, field: own >= 0 ? view.players : view.players + 1 }
+  const index = indexOfRun(view.entries, entry)
+  return index === -1 ? null : { place: index + 1, runs: view.entries.length }
 }
 
 export async function getClosedBoard(

@@ -403,8 +403,8 @@ leaderboardsRouter.post('/:game', async (req, res) => {
     ? await payRun({
         accountId: account.id,
         game,
-        name: claim.name,
         runId,
+        entry: result.entry,
         score,
         priorBest,
         pickups: game === 'crosswalk' ? plausiblePickups(score, pickups) : 0,

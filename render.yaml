@@ -15,6 +15,11 @@ services:
       # Set in Render dashboard → Neon pooled connection string
       - key: DATABASE_URL
         sync: false
+      # Who's an admin: emails, comma separated, set in the dashboard
+      # (the service → Environment). The site's admin page, its Admin menu row
+      # and admin tools all go by what the API says about the signed-in email.
+      - key: ADMIN_EMAILS
+        sync: false
       # Web push for bracket match alerts. Generate a pair with:
       #   node -e "console.log(require('web-push').generateVAPIDKeys())"
       # Without these the opt-in stays hidden in the app; /health reports

@@ -8,9 +8,10 @@ import { accountFromRequest, type Account } from './auth.js'
  * which is the right default: an admin surface that switches itself on when a
  * variable is missing is worse than one that is simply unavailable.
  *
- * The site has its own VITE_ADMIN_EMAILS, but that one only decides which
- * buttons to draw. It grants nothing, because it is read in the browser, where
- * the person being checked is the one doing the checking.
+ * The site asks GET /admin/whoami to know whether to draw its admin page,
+ * menu row and tools, so this list is the only one to keep. (Its old
+ * VITE_ADMIN_EMAILS still draws them if it's set, and grants nothing: it's
+ * read in the browser, where the person being checked does the checking.)
  */
 export function adminEmails(): ReadonlySet<string> {
   return new Set(

@@ -1,3 +1,4 @@
+import { HOTLAP_FIRST_DAY, HOTLAP_PACE_MS } from './hotlapPace.js'
 import { TIME_SCORE_BASE, TIME_SCORED_GAMES, TRIES_SCORE_BASE } from './scoreLimits.js'
 import { GAME_BANDS } from './seedBoards.js'
 import { ALLOWED_GAMES, boardDateKey, runScores, type GameSlug } from './store.js'
@@ -15,7 +16,8 @@ import { ALLOWED_GAMES, boardDateKey, runScores, type GameSlug } from './store.j
  *
  * The dailies have their own. Ace Chase goes by the tries, since every day's
  * hole is held to the same difficulty. Hot Lap goes by the day's blue car
- * (the pace car), since its track changes every day. A daily pays its best
+ * (the pace car), since its track changes every day: the plan's own, kept in
+ * hotlapPace.ts, so the site can't say a slower one. A daily pays its best
  * step of the day once, as it's reached (tickets.ts).
  */
 
@@ -95,15 +97,18 @@ export const ACECHASE_LADDER: Ladder = {
   ],
 }
 
-/** Where the blue car laps: the plan keeps every day's pace car between these (the site's scripts/hotlap-daily.mjs). */
+/**
+ * Where a blue car can lap: the plan's made tracks pace 40–70 s and its landmarks (real circuits) up to
+ * 100 s (the site's hotlap courses.ts and landmarks.ts). Only the site's own word is held to it.
+ */
 const PACE_MIN_MS = 40_000
-const PACE_MAX_MS = 68_000
+const PACE_MAX_MS = 100_000
 /** A blue car to show Hot Lap's ladder by, where no day's is given. */
 const TYPICAL_PACE_MS = 53_000
 
 /**
  * Hot Lap, on a day whose blue car laps in `paceMs`: slower than it 3, within 2% of it 5, beating it 8, by
- * 3% 11, by 6% 15. The site says the day's blue car with the lap; without one, a lap pays the 3 alone.
+ * 3% 11, by 6% 15. Without a blue car, a lap pays the 3 alone.
  */
 export function hotlapLadder(paceMs: number | null | undefined): Ladder {
   const base = { base: 3, baseLabel: 'a lap today' }
@@ -121,14 +126,28 @@ export function hotlapLadder(paceMs: number | null | undefined): Ladder {
   }
 }
 
-/** A game's ladder today. Hot Lap's needs the day's blue car. */
+/**
+ * The day's blue car from the plan: day 1 is the first day, and past the last planned day the days come
+ * round again, as the site's dailyTrack has them. Null with no plan.
+ */
+export function plannedPace(now = Date.now()): number | null {
+  if (!HOTLAP_PACE_MS.length) return null
+  const key = boardDateKey(now)
+  const [y0, m0, d0] = HOTLAP_FIRST_DAY.split('-').map(Number)
+  const days = Math.round(
+    (Date.UTC(Math.floor(key / 10_000), (Math.floor(key / 100) % 100) - 1, key % 100) - Date.UTC(y0!, m0! - 1, d0!)) / 86_400_000,
+  )
+  return HOTLAP_PACE_MS[Math.max(0, days) % HOTLAP_PACE_MS.length] ?? null
+}
+
+/** A game's ladder today. Hot Lap's goes by the plan's blue car for the day, or else the one the site says. */
 export async function ladderFor(game: GameSlug, now = Date.now(), paceMs?: number | null): Promise<Ladder> {
   if (game === 'acechase') return ACECHASE_LADDER
-  if (game === 'hotlap') return hotlapLadder(paceMs)
+  if (game === 'hotlap') return hotlapLadder(plannedPace(now) ?? paceMs)
   return drawnLadder(game, now)
 }
 
-/** Every game's ladder, for the site to show: Hot Lap's by a typical blue car, since it says its steps in words. */
+/** Every game's ladder, for the site to show: Hot Lap's by today's blue car, though the site shows its steps in words. */
 export async function allLadders(now = Date.now()): Promise<Record<string, Ladder>> {
   const out: Record<string, Ladder> = {}
   for (const game of ALLOWED_GAMES) out[game] = await ladderFor(game, now, TYPICAL_PACE_MS)

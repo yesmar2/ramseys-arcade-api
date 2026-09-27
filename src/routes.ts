@@ -264,6 +264,11 @@ leaderboardsRouter.post('/:game', async (req, res) => {
   }
 
   const { name, score, token, device, runId, challengeId, pickups } = parsed.data
+  // Ace Chase's board takes each day's first bullseye from Today's Hole (dailyHole.ts), one an account a day.
+  if (game === 'acechase') {
+    res.status(409).json({ error: 'Ace Chase results come from Today’s Hole', code: 'TODAYS_HOLE_ONLY' })
+    return
+  }
   if (score > scoreCeiling(game)) {
     res.status(400).json({ error: 'That score is not possible in this game', code: 'SCORE_OUT_OF_RANGE' })
     return

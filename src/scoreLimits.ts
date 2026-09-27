@@ -10,9 +10,20 @@ export const TIME_SCORE_BASE = 1_000_000
 
 export const TIME_SCORED_GAMES: ReadonlySet<GameSlug> = new Set<GameSlug>(['findbug', 'spotter', 'hotlap'])
 
+/**
+ * Tries-scored boards keep "higher is better" the same way, as the base less
+ * the tries: Ace Chase's is the tries a day's first bullseye took at Today's
+ * Hole, so 999,999 is an ace. The site's acechase/score.ts reads it back.
+ */
+export const TRIES_SCORE_BASE = 1_000_000
+
+export const TRIES_SCORED_GAMES: ReadonlySet<GameSlug> = new Set<GameSlug>(['acechase'])
+
 /** The largest score a real run of this game can post. */
 export function scoreCeiling(game: GameSlug): number {
-  return TIME_SCORED_GAMES.has(game) ? TIME_SCORE_BASE - 1 : TIME_SCORE_BASE
+  if (TIME_SCORED_GAMES.has(game)) return TIME_SCORE_BASE - 1
+  if (TRIES_SCORED_GAMES.has(game)) return TRIES_SCORE_BASE - 1
+  return TIME_SCORE_BASE
 }
 
 /**
@@ -66,6 +77,12 @@ type ScoreRule =
   | { kind: 'curve'; floor: number; perSecond: number; perSecondSquared: number }
   /** Score encodes TIME_SCORE_BASE - milliseconds; the clock must agree. */
   | { kind: 'time' }
+  /**
+   * Score encodes TRIES_SCORE_BASE - tries. No clock can check tries, which
+   * may be spread over a whole day; the board takes them only from Today's
+   * Hole (dailyHole.ts), one result an account a day.
+   */
+  | { kind: 'tries' }
 
 const SCORE_RULES: Record<GameSlug, ScoreRule> = {
   asteroids: { kind: 'rate', floor: 2_000, perSecond: 200 },
@@ -93,12 +110,7 @@ const SCORE_RULES: Record<GameSlug, ScoreRule> = {
    * watch, so no hand can go faster. These leave that bot under 60% of the cap.
    */
   fireflies: { kind: 'rate', floor: 20, perSecond: 3 },
-  /*
-   * Three holes at 1000 over the tries each took, so 3000 is the most any round can score. Each bullseye
-   * holds for its celebration (2.8s, not skippable), so even three first-try bulls with every flyover
-   * and putt skipped take about twelve seconds; past ten seconds this allows the full 3000.
-   */
-  acechase: { kind: 'rate', floor: 2000, perSecond: 100 },
+  acechase: { kind: 'tries' },
   findbug: { kind: 'time' },
   spotter: { kind: 'time' },
   hotlap: { kind: 'time' },
@@ -146,7 +158,7 @@ export function checkScoreRate(
   elapsedMs: number,
 ): PlausibilityVerdict {
   const rule = SCORE_RULES[game]
-  if (!rule) return { ok: true }
+  if (!rule || rule.kind === 'tries') return { ok: true }
 
   if (rule.kind === 'time') {
     const impliedMs = TIME_SCORE_BASE - score

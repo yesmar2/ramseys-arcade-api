@@ -239,8 +239,8 @@ export const SCORE_STREAK_THRESHOLDS: Record<GameSlug, number> = {
   bop: 25,
   putt: 2000,
   fireflies: 60,
-  acechase: 1000,
-  // A daily: none kept (see buildCrossRunStreakRecords).
+  // Dailies: none kept (see buildCrossRunStreakRecords).
+  acechase: 0,
   hotlap: 0,
 }
 

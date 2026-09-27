@@ -1,4 +1,4 @@
-import { seedScoreCap } from './scoreLimits.js'
+import { seedScoreCap, TRIES_SCORE_BASE } from './scoreLimits.js'
 import {
   loadStore,
   replaceAllBoards,
@@ -62,7 +62,8 @@ const GAME_BANDS: Record<GameSlug, ScoreProfile> = {
   barrage: { min: 300, max: 24_000, step: 5 },
   frenzy: { min: 200, max: 26_000, step: 1 },
   fireflies: { min: 6, max: 140 },
-  acechase: { min: 150, max: 2400 },
+  // Today's Hole: from twelve tries to two (an ace is left to real players).
+  acechase: { min: TRIES_SCORE_BASE - 12, max: TRIES_SCORE_BASE - 2 },
   hotlap: { min: 925_000, max: 950_000, step: 100 },
 }
 

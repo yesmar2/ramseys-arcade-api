@@ -2,7 +2,7 @@ import { Router } from 'express'
 import { z } from 'zod'
 import { accountFromRequest } from './auth.js'
 import { dailyReply, recordResult } from './dailyHole.js'
-import { takeToken } from './rateLimit.js'
+import { clientIp, hashIp, takeToken } from './rateLimit.js'
 
 export const dailyHoleRouter = Router()
 
@@ -31,9 +31,10 @@ const resultSchema = z.object({
   day: z.string().length(10),
   tries: z.number().int().min(1).max(400),
   pattern: z.string().min(1).max(400),
+  device: z.enum(['phone', 'tablet', 'desktop']).optional(),
 })
 
-/** Keep today's result: the tries the first bullseye took. The first one sent stands. */
+/** Keep today's result: the tries the first bullseye took. The first one sent stands, and goes on Ace Chase's board. */
 dailyHoleRouter.post('/results', async (req, res) => {
   const parsed = resultSchema.safeParse(req.body)
   if (!parsed.success) {
@@ -52,7 +53,7 @@ dailyHoleRouter.post('/results', async (req, res) => {
     return
   }
   try {
-    res.json(await recordResult(account.id, parsed.data))
+    res.json(await recordResult(account.id, parsed.data, { ipHash: hashIp(clientIp(req)), userAgent: req.get('user-agent') ?? null }))
   } catch (err) {
     fail(err, res)
   }

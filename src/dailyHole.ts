@@ -1,8 +1,13 @@
-import { and, asc, desc, eq, isNotNull, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, isNotNull, isNull, sql } from 'drizzle-orm'
+import { isBanned } from './bans.js'
 import { db } from './db/client.js'
 import { dailyHoleResults } from './db/schema.js'
 import { huntDay } from './bugHunt.js'
 import { namesOwnedByAccount, withAvatarIds } from './names.js'
+import { updateCrossRunStreakRecords } from './records.js'
+import { TRIES_SCORE_BASE } from './scoreLimits.js'
+import { addScore, bestForName, type DeviceType } from './store.js'
+import { payRun } from './tickets.js'
 
 /*
  * Ace Chase's Today's Hole: a new hole every day, the same for everyone. The site builds the hole from the
@@ -12,6 +17,10 @@ import { namesOwnedByAccount, withAvatarIds } from './names.js'
  *
  * The tries are the site's word: nothing here can see the game. What's kept is one result a day an account,
  * sent that day (or just after midnight for one that was), so a result can't be improved on later.
+ *
+ * Today's Hole is all of Ace Chase, a daily like Hot Lap, so a day's result is also the account's run on
+ * Ace Chase's board (the day's, as a daily's always is): under its tag, as the base less the tries, and
+ * paid its tickets like any run. This is the only way onto that board.
  */
 
 /** Today's Hole began here: no result is older. */
@@ -32,8 +41,23 @@ export type DailyReply = {
   average: number | null
   spread: number[]
   top: DailyEntry[]
-  you?: { tries: number | null; place: number | null; streak: number }
+  you?: {
+    tries: number | null
+    place: number | null
+    streak: number
+    /** The tag today's result is under on Ace Chase's board; null until the account has one. */
+    tag: string | null
+    /** Today's result is on the board. */
+    board: boolean
+  }
+  /** What today's result paid for the prize counter, as it went on the board. */
+  tickets?: { earned: number; balance: number }
 }
+
+/** Who sent a result, for the board's own records of a run. */
+export type ResultAudit = { ipHash?: string | null; userAgent?: string | null }
+
+type ResultRow = typeof dailyHoleResults.$inferSelect
 
 /* --------------------------------------------------------- the day --- */
 
@@ -118,13 +142,17 @@ export async function dailyReply(accountId: string | null, now = Date.now()): Pr
     .select()
     .from(dailyHoleResults)
     .where(and(eq(dailyHoleResults.accountId, accountId), eq(dailyHoleResults.day, day)))
+  const caught = mine ? await catchUp(accountId, mine, now) : { tag: null, board: false }
   return {
-    ...reply,
+    ...(caught.tickets ? await dayReply(day, now) : reply),
     you: {
       tries: mine?.tries ?? null,
       place: mine ? await placeOf(day, mine.tries, mine.solvedAt) : null,
       streak: await streakOf(accountId, day),
+      tag: caught.tag,
+      board: caught.board,
     },
+    ...(caught.tickets ? { tickets: caught.tickets } : {}),
   }
 }
 
@@ -138,12 +166,93 @@ export function validResult(input: { day: string; tries: number; pattern: string
   return PATTERN.test(input.pattern) && input.pattern.length === input.tries && input.pattern.indexOf('b') === input.tries - 1
 }
 
-/** Keep a day's result: the first one an account sends for a day stands. */
+/**
+ * A day's result as the account's run on Ace Chase's board, and its tickets. Only today's: one sent just
+ * after midnight belongs to yesterday's hole, and the board would stamp it today. A banned tag stays off.
+ */
+async function onTheBoard(
+  accountId: string,
+  name: string,
+  tries: number,
+  device: DeviceType,
+  audit: ResultAudit,
+  now: number,
+): Promise<{ boarded: boolean; tickets?: DailyReply['tickets'] }> {
+  if (await isBanned(name, accountId)) return { boarded: false }
+  const score = TRIES_SCORE_BASE - tries
+  const result = await addScore('acechase', name, score, device, {
+    runId: null,
+    durationMs: null,
+    ipHash: audit.ipHash ?? null,
+    userAgent: audit.userAgent ?? null,
+  })
+  await updateCrossRunStreakRecords('acechase', name, score, device, now).catch((err: unknown) => {
+    console.warn(`[daily-hole] streak records for ${name}:`, err)
+  })
+  // One result a day, so never a best to beat: the first ever is paid as a first go, once.
+  const paid = await payRun({
+    accountId,
+    game: 'acechase',
+    runId: `hole-${huntDay(now)}`,
+    entry: result.entry,
+    score,
+    priorBest: null,
+    pickups: 0,
+    now,
+  }).catch((err: unknown) => {
+    console.warn(`[tickets] acechase hole for ${name}:`, err)
+    return null
+  })
+  return { boarded: true, tickets: paid ? { earned: paid.earned, balance: paid.balance } : undefined }
+}
+
+/** Two reads at once can't both put the same result on the board. */
+const boarding = new Set<string>()
+
+/**
+ * Today's result, onto the board if it isn't there yet: one kept before its account had a tag (the tag
+ * is the name it goes on the board under), or before results went on the board at all. Asked on every
+ * read of the day, so a tag made after the bullseye still puts it there. An Ace Chase run on the board
+ * today from before, a round of the old three holes, isn't this result, so it doesn't count.
+ */
+async function catchUp(
+  accountId: string,
+  mine: ResultRow,
+  now: number,
+): Promise<{ tag: string | null; board: boolean; tickets?: DailyReply['tickets'] }> {
+  let tag = mine.name
+  if (!tag) {
+    const [owned] = await namesOwnedByAccount(accountId)
+    if (!owned) return { tag: null, board: false }
+    await db()
+      .update(dailyHoleResults)
+      .set({ name: owned.name })
+      .where(and(eq(dailyHoleResults.accountId, accountId), eq(dailyHoleResults.day, mine.day), isNull(dailyHoleResults.name)))
+    // Named, it's in the day's top ten.
+    held = null
+    tag = owned.name
+  }
+  const best = await bestForName('acechase', tag, 'daily', now)
+  if (best && best.score > TRIES_SCORE_BASE - 1000) return { tag, board: true }
+  const key = `${accountId}:${mine.day}`
+  if (boarding.has(key)) return { tag, board: false }
+  boarding.add(key)
+  try {
+    const { boarded, tickets } = await onTheBoard(accountId, tag, mine.tries, 'desktop', {}, now)
+    return { tag, board: boarded, tickets }
+  } finally {
+    boarding.delete(key)
+  }
+}
+
+/** Keep a day's result: the first one an account sends for a day stands, and today's goes on the board. */
 export async function recordResult(
   accountId: string,
-  input: { day: string; tries: number; pattern: string },
+  input: { day: string; tries: number; pattern: string; device?: DeviceType },
+  audit: ResultAudit = {},
   now = Date.now(),
 ): Promise<DailyReply> {
+  let tickets: DailyReply['tickets']
   if (validResult(input, now)) {
     const [tag] = await namesOwnedByAccount(accountId)
     const added = await db()
@@ -152,7 +261,13 @@ export async function recordResult(
       .onConflictDoNothing()
       .returning({ day: dailyHoleResults.day })
     // A new result today changes what everyone sees.
-    if (added.length) held = null
+    if (added.length) {
+      held = null
+      if (tag && input.day === huntDay(now)) {
+        tickets = (await onTheBoard(accountId, tag.name, input.tries, input.device ?? 'desktop', audit, now)).tickets
+      }
+    }
   }
-  return dailyReply(accountId, now)
+  const reply = await dailyReply(accountId, now)
+  return tickets ? { ...reply, tickets } : reply
 }

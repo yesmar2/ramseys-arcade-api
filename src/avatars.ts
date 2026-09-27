@@ -46,7 +46,7 @@ export const AVATAR_PATTERNS = ['plain', 'rings', 'split', 'stripes', 'dots', 'b
 export type AvatarPattern = (typeof AVATAR_PATTERNS)[number]
 
 /** The four anyone can wear, then the prize counter's finishes (prizes.ts), which only their owner can. */
-export const AVATAR_BADGES = ['bold', 'deep', 'night', 'paper', 'glitter', 'starfield', 'neon', 'holo'] as const
+export const AVATAR_BADGES = ['bold', 'deep', 'night', 'paper', 'glitter', 'starfield', 'pixels', 'neon', 'lava', 'holo', 'aurora'] as const
 export type AvatarBadge = (typeof AVATAR_BADGES)[number]
 
 /** Worn around the badge, for how you've placed. */

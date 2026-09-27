@@ -1,4 +1,4 @@
-import { checkScoreRate, scoreCeiling } from './scoreLimits.js'
+import { checkScoreRate, scoreCeiling, TRIES_SCORE_BASE, TRIES_SCORED_GAMES } from './scoreLimits.js'
 import { Router } from 'express'
 import { z } from 'zod'
 import { pageParams } from './paging.js'
@@ -19,6 +19,8 @@ import {
   bestForName,
   bestsForName,
   boardsSummaryForPeriod,
+  DAILY_GAMES,
+  dailyDays,
   getBoard,
   getBoardPage,
   globalRanksPage,
@@ -208,6 +210,35 @@ leaderboardsRouter.get('/:game', async (req, res) => {
     total: page.total,
     entries: await withAvatarIds(page.entries),
     you: you ? await withAvatarId(you) : null,
+  })
+})
+
+/**
+ * A daily game's days, newest first, for the site's archive of past days: each day's runs and players,
+ * its best run, and with `name`, that tag's best that day. A tries-scored game's runs from before it
+ * counted tries (a round of Ace Chase's old three holes) aren't a day's result, so they're left out.
+ */
+leaderboardsRouter.get('/:game/days', async (req, res) => {
+  const game = resolveGameSlug(req.params.game)
+  if (!game || !DAILY_GAMES.has(game)) {
+    res.status(404).json({ error: 'Not a daily game' })
+    return
+  }
+  const name = typeof req.query.name === 'string' && req.query.name.trim() ? req.query.name : null
+  const keep = TRIES_SCORED_GAMES.has(game) ? (score: number) => score > TRIES_SCORE_BASE - 1000 : undefined
+  const days = await dailyDays(game, name, keep)
+  const tops = await withAvatarIds(days.map((d) => d.top))
+  const iso = (key: number) => `${Math.floor(key / 10_000)}-${String(Math.floor(key / 100) % 100).padStart(2, '0')}-${String(key % 100).padStart(2, '0')}`
+  res.setHeader('Cache-Control', 'public, max-age=60')
+  res.json({
+    game,
+    days: days.map((d, i) => ({
+      day: iso(d.day),
+      runs: d.runs,
+      players: d.players,
+      top: { name: tops[i]!.name, score: tops[i]!.score, ...(tops[i]!.avatarId ? { avatarId: tops[i]!.avatarId } : {}) },
+      you: d.you ? { score: d.you.score } : null,
+    })),
   })
 })
 

@@ -813,6 +813,37 @@ function bestIndexOfName(view: PoolView, name: string): number {
   return bestIndexOf(view, playerRefs.get(name))
 }
 
+/**
+ * A daily game's days, newest first: how many runs and players each had, its best run (a tie going to
+ * whoever got there first), and `name`'s best that day if they played. What the site's archive of past
+ * days shows. `keep` says which runs are a day's result at all.
+ */
+export async function dailyDays(
+  game: GameSlug,
+  name?: string | null,
+  keep: (score: number) => boolean = () => true,
+): Promise<{ day: number; runs: number; players: number; top: LeaderboardEntry; you: LeaderboardEntry | null }[]> {
+  const copy = await loadCopy()
+  const who = name ? name.trim().slice(0, 12).toUpperCase() : null
+  const days = new Map<number, { runs: number; names: Set<string>; top: LeaderboardEntry; you: LeaderboardEntry | null }>()
+  // Board order, best first: a day's first run met is its best, and a player's first their best.
+  for (const entry of copy.byGame.get(game) ?? []) {
+    if (!keep(entry.score)) continue
+    const key = keyOf(entry.at)
+    let day = days.get(key)
+    if (!day) {
+      day = { runs: 0, names: new Set(), top: entry, you: null }
+      days.set(key, day)
+    }
+    day.runs++
+    day.names.add(entry.name)
+    if (who && !day.you && entry.name === who) day.you = entry
+  }
+  return [...days.entries()]
+    .sort((a, b) => b[0] - a[0])
+    .map(([day, d]) => ({ day, runs: d.runs, players: d.names.size, top: d.top, you: d.you }))
+}
+
 /** Every run's score on a game, best first, all time: what its ticket ladder is drawn from (ticketLadders.ts). */
 export async function runScores(game: GameSlug): Promise<number[]> {
   const copy = await loadCopy()

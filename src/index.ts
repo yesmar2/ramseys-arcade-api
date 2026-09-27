@@ -10,6 +10,7 @@ import { namesRouter } from './namesRoutes.js'
 import { leaderboardsRouter } from './routes.js'
 import { runsRouter } from './runsRoutes.js'
 import { adminRouter } from './adminRoutes.js'
+import { adminEmails } from './admin.js'
 import { recordsRouter } from './recordsRoutes.js'
 import { seedLeaderboards } from './seedBoards.js'
 import { seedRecords } from './seedRecords.js'
@@ -148,6 +149,11 @@ async function main() {
       // Whether VAPID is configured here. Without it the opt-in is hidden in
       // the app, which is otherwise indistinguishable from the feature missing.
       push: Boolean(publicVapidKey()),
+      // Whether ADMIN_EMAILS names anyone here (never who), so an admin who
+      // can't get in can tell a list this service never loaded from one without them.
+      admins: adminEmails().size > 0,
+      // The commit running (Render's RENDER_GIT_COMMIT), to tell a finished deploy from one still going.
+      commit: process.env.RENDER_GIT_COMMIT?.slice(0, 7) ?? null,
       // When match alerts, results and held pushes were last seen to; null until the first sweep.
       sweptAt: lastSweptAt(),
       ...(dbHealth.error ? { error: dbHealth.error } : {}),

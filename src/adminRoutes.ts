@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import { z } from 'zod'
-import { requireAdmin } from './admin.js'
+import { requireAdmin, whyNotAdmin } from './admin.js'
+import { accountFromRequest } from './auth.js'
 import { banName, listBans, purgeName, recentScores, unbanName, voidScores } from './bans.js'
 import { listClientErrors } from './clientErrors.js'
 import { listFeedback } from './feedback.js'
@@ -20,7 +21,15 @@ function refuse(err: unknown, res: import('express').Response) {
 
 adminRouter.get('/whoami', async (req, res) => {
   try {
-    const account = await requireAdmin(req)
+    const account = await accountFromRequest(req)
+    const why = whyNotAdmin(account)
+    // A 404, as every admin route answers a non-admin, but saying why: this is
+    // the admin page asking about the one signed in, and "not found" alone left
+    // an admin whose list was mistyped or never loaded nothing to go on.
+    if (why || !account) {
+      res.status(404).json({ error: why?.message ?? 'Not found', code: why?.code ?? 'NOT_FOUND' })
+      return
+    }
     res.json({ admin: true, email: account.email, unreviewedFlags: await unreviewedCount() })
   } catch (err) {
     refuse(err, res)

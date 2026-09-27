@@ -854,17 +854,21 @@ export async function runScores(game: GameSlug): Promise<number[]> {
 /**
  * A day's players on a game, best first: each tag's best run that day, a tie
  * going to whoever got there first. What a daily's top three are paid by
- * (tickets.ts), once the day is over.
+ * (tickets.ts), once the day is over, and a Hot Lap track's own board begins
+ * with (trackLaps.ts): each best with when it was set and on what.
  */
-export async function dayPlayers(game: GameSlug, dayKey: number): Promise<{ name: string; score: number }[]> {
+export async function dayPlayers(
+  game: GameSlug,
+  dayKey: number,
+): Promise<{ name: string; score: number; at: number; device: DeviceType }[]> {
   const copy = await loadCopy()
   const seen = new Set<string>()
-  const players: { name: string; score: number }[] = []
+  const players: { name: string; score: number; at: number; device: DeviceType }[] = []
   // Board order: best first, and the earlier of two the same.
   for (const entry of copy.byGame.get(game) ?? []) {
     if (seen.has(entry.name) || keyOf(entry.at) !== dayKey) continue
     seen.add(entry.name)
-    players.push({ name: entry.name, score: entry.score })
+    players.push({ name: entry.name, score: entry.score, at: entry.at, device: entry.device })
   }
   return players
 }

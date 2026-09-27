@@ -732,3 +732,29 @@ export const trackLaps = pgTable(
   },
   (t) => [index('track_laps_game_track_score_idx').on(t.game, t.track, t.score), index('track_laps_name_idx').on(t.name)],
 )
+
+/**
+ * Hole records: a result on an Ace Chase hole after its day. On its day a hole is Today's Hole, and its
+ * results are daily_hole_results; after that the hole keeps a board of its own for good, its day's results
+ * and every one here (holes.ts). As on its day, an account's first result on a hole is its only one: an
+ * account with a result from the hole's day has none here.
+ */
+export const holeResults = pgTable(
+  'hole_results',
+  {
+    accountId: text('account_id')
+      .notNull()
+      .references(() => accounts.id, { onDelete: 'cascade' }),
+    game: text('game').notNull(),
+    /** The hole's day on the boards' clock, YYYY-MM-DD. */
+    day: text('day').notNull(),
+    /** The tag it came in under. */
+    name: text('name').notNull(),
+    tries: integer('tries').notNull(),
+    /** Each try's end as a letter, as daily_hole_results keeps it. */
+    pattern: text('pattern').notNull(),
+    device: text('device').notNull(),
+    at: bigint('at', { mode: 'number' }).notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.accountId, t.game, t.day] }), index('hole_results_game_day_idx').on(t.game, t.day, t.tries, t.at)],
+)

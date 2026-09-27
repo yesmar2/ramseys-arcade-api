@@ -3,14 +3,15 @@ import { asc, desc, eq, and } from 'drizzle-orm'
 import { db } from './db/client.js'
 import { trackLaps } from './db/schema.js'
 import { HOTLAP_FIRST_DAY, HOTLAP_PACE_MS } from './hotlapPace.js'
-import { boardDateKey, dayPlayers, dayStartMs, type DeviceType, type GameSlug } from './store.js'
+import { boardDateKey, dayPlayers, isDeviceType, type DeviceType, type GameSlug } from './store.js'
 
 /*
  * Track records. Every Hot Lap track keeps a board of its own for good. On its day a track is the Daily,
  * and its laps are the day's board (store.ts), which closes at midnight with the day's places, points and
  * tickets. After that the track stays open: a lap on it comes here, and the track's board is its day's
- * laps and every lap since, each driver's best. Nothing here feeds the day's board, the standings, events,
- * tickets or the record books, and nothing that reads those reads this.
+ * laps and every lap since, each driver's best. Nothing here feeds the day's board, the standings, events
+ * or the day's tickets, and nothing that reads those reads this. The track's record is in Hot Lap's record
+ * book too (courseRecords.ts), and taking it after the track's day pays a few tickets, once (trackLapsRoutes.ts).
  *
  * Tracks are the plan's (the site's dailyPlan.ts; the API has its blue cars in hotlapPace.ts): track n is
  * day n's, and past the plan's end the days go round again, so day d drives track ((d − 1) % tracks) + 1.
@@ -69,8 +70,8 @@ export function fastestBelievable(n: number): number {
   return Math.round((HOTLAP_PACE_MS[n - 1] ?? 40_000) * 0.7)
 }
 
-/** A driver's best lap on a track: their tag, its score, and when (a day's lap, at its day's start). */
-export type TrackEntry = { name: string; score: number; at: number }
+/** A driver's best lap on a track: their tag, its score, when it was driven and on what. */
+export type TrackEntry = { name: string; score: number; at: number; device: DeviceType }
 
 /** Each driver's best lap on a track, best first, a tie going to the earlier: its days' laps and every lap since. */
 function merge(dayBests: TrackEntry[], laps: TrackEntry[]): TrackEntry[] {
@@ -86,22 +87,25 @@ function merge(dayBests: TrackEntry[], laps: TrackEntry[]): TrackEntry[] {
 async function dayLaps(game: GameSlug, n: number, today: number): Promise<TrackEntry[]> {
   const out: TrackEntry[] = []
   for (let d = n; d <= today; d += trackCount()) {
-    const key = dayKeyOf(d)
-    const at = dayStartMs(key)
-    for (const p of await dayPlayers(game, key)) out.push({ name: p.name, score: p.score, at })
+    for (const p of await dayPlayers(game, dayKeyOf(d))) out.push({ name: p.name, score: p.score, at: p.at, device: p.device })
   }
   return out
 }
+
+const lapDevice = (device: string): DeviceType => (isDeviceType(device) ? device : 'desktop')
 
 /** A track's board: each driver's best lap on it, best first. */
 export async function trackBoard(game: GameSlug, n: number, now = Date.now()): Promise<TrackEntry[]> {
   const today = dayNumberOf(boardDateKey(now))
   const rows = await db()
-    .select({ name: trackLaps.name, score: trackLaps.score, at: trackLaps.at })
+    .select({ name: trackLaps.name, score: trackLaps.score, at: trackLaps.at, device: trackLaps.device })
     .from(trackLaps)
     .where(and(eq(trackLaps.game, game), eq(trackLaps.track, n)))
     .orderBy(desc(trackLaps.score), asc(trackLaps.at))
-  return merge(await dayLaps(game, n, today), rows)
+  return merge(
+    await dayLaps(game, n, today),
+    rows.map((r) => ({ ...r, device: lapDevice(r.device) })),
+  )
 }
 
 export type TrackRecord = {
@@ -121,15 +125,16 @@ export async function trackRecords(game: GameSlug, name: string | null, now = Da
   const last = Math.min(today, trackCount())
   if (last < 1) return []
   const rows = await db()
-    .select({ track: trackLaps.track, name: trackLaps.name, score: trackLaps.score, at: trackLaps.at })
+    .select({ track: trackLaps.track, name: trackLaps.name, score: trackLaps.score, at: trackLaps.at, device: trackLaps.device })
     .from(trackLaps)
     .where(eq(trackLaps.game, game))
     .orderBy(desc(trackLaps.score), asc(trackLaps.at))
   const later = new Map<number, TrackEntry[]>()
   for (const r of rows) {
+    const lap = { name: r.name, score: r.score, at: r.at, device: lapDevice(r.device) }
     const list = later.get(r.track)
-    if (list) list.push(r)
-    else later.set(r.track, [r])
+    if (list) list.push(lap)
+    else later.set(r.track, [lap])
   }
   const who = name ? name.trim().slice(0, 12).toUpperCase() : null
   const out: TrackRecord[] = []

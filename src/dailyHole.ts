@@ -3,6 +3,7 @@ import { isBanned } from './bans.js'
 import { db } from './db/client.js'
 import { dailyHoleResults } from './db/schema.js'
 import { huntDay } from './bugHunt.js'
+import { noteDayHole } from './courseRecords.js'
 import { namesOwnedByAccount, withAvatarIds } from './names.js'
 import { updateCrossRunStreakRecords } from './records.js'
 import { TRIES_SCORE_BASE } from './scoreLimits.js'
@@ -192,6 +193,8 @@ async function onTheBoard(
   await updateCrossRunStreakRecords('acechase', name, score, device, now).catch((err: unknown) => {
     console.warn(`[daily-hole] streak records for ${name}:`, err)
   })
+  // Into the hole's record book too (courseRecords.ts): its board, holes.ts, has it already.
+  await noteDayHole(name, tries, device, now)
   // One result a day, so never a best to beat: the first ever is paid as a first go, once.
   const paid = await payRun({
     accountId,

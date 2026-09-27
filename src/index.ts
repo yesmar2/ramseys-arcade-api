@@ -27,6 +27,8 @@ import { clientErrorsRouter } from './clientErrorsRoutes.js'
 import { feedbackRouter } from './feedbackRoutes.js'
 import { ticketsRouter } from './ticketsRoutes.js'
 import { tracksRouter } from './trackLapsRoutes.js'
+import { holesRouter } from './holesRoutes.js'
+import { syncCourseRecords } from './courseRecords.js'
 import { dailyHoleRouter } from './dailyHoleRoutes.js'
 import { publicVapidKey } from './push.js'
 import { statsRouter } from './statsRoutes.js'
@@ -183,6 +185,7 @@ async function main() {
   app.use('/feedback', feedbackRouter)
   app.use('/tickets', ticketsRouter)
   app.use('/tracks', tracksRouter)
+  app.use('/holes', holesRouter)
 
   logDbTarget()
 
@@ -220,6 +223,12 @@ async function main() {
     console.log(`Skermix API listening on http://${HOST}:${PORT}`)
   })
   startSweeping()
+  // Each track's and hole's record book catches up with its board: what was set before the books kept them.
+  void withLease('course-records', () => syncCourseRecords(), { ttlMs: 10 * 60_000, waitMs: 0 })
+    .then((added) => {
+      if (added) console.log(`[course records] ${added} records from the tracks' and holes' boards`)
+    })
+    .catch((err: unknown) => console.warn('[course records] catching up failed:', err))
 }
 
 main().catch((err) => {

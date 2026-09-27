@@ -4,9 +4,11 @@ import { accountFromRequest } from './auth.js'
 import { isBanned } from './bans.js'
 import { assertCanUseName, withAvatarIds } from './names.js'
 import { takeToken } from './rateLimit.js'
+import { noteCourseRecord } from './courseRecords.js'
 import { claimRun, peekRun } from './runs.js'
 import { checkScoreRate, scoreCeiling, TIME_SCORE_BASE } from './scoreLimits.js'
 import { resolveGameSlug, type GameSlug } from './store.js'
+import { awardTickets, RECORD_TICKETS } from './tickets.js'
 import { addTrackLap, fastestBelievable, TRACK_GAMES, trackBoard, trackDayIso, trackRecords, trackState } from './trackLaps.js'
 
 /*
@@ -14,7 +16,8 @@ import { addTrackLap, fastestBelievable, TRACK_GAMES, trackBoard, trackDayIso, t
  *
  *   GET  /tracks/:game/records?name=   every track that has had its day: its record, drivers, your best and place
  *   GET  /tracks/:game/:n/board?name=  a track's board: the top ten and where you stand
- *   POST /tracks/:game/:n/laps         a lap on a track after its day, checked as a day's lap is
+ *   POST /tracks/:game/:n/laps         a lap on a track after its day, checked as a day's lap is; into the
+ *                                      track's record book too, and taking the record pays RECORD_TICKETS once
  */
 export const tracksRouter = Router()
 
@@ -157,9 +160,20 @@ tracksRouter.post('/:game/:n/laps', async (req, res) => {
     return
   }
   await addTrackLap({ game, track: n, accountId: account.id, name: claim.name, score, device: device ?? 'desktop', runId, durationMs: run.elapsedMs })
+  // Into the track's record book too, as its board has it.
+  await noteCourseRecord(game, n, claim.name, TIME_SCORE_BASE - score, device ?? 'desktop')
   const after = await trackBoard(game, n)
   const place = after.findIndex((e) => e.name === claim.name) + 1
   const record = after[0]!
+  // Took the record with this lap, from someone else or from nobody.
+  const tookRecord = record.name === claim.name && record.score === score && (before[0]?.score ?? 0) < score
+  // A few tickets for taking it, once a track, however often it changes hands.
+  const tickets = tookRecord
+    ? await awardTickets(account.id, 'record', `${game}:track:${n}`, RECORD_TICKETS, game).catch((err: unknown) => {
+        console.warn(`[tickets] ${game} track ${n} record for ${claim.name}:`, err)
+        return null
+      })
+    : null
   res.json({
     game,
     track: n,
@@ -169,7 +183,7 @@ tracksRouter.post('/:game/:n/laps', async (req, res) => {
     place,
     drivers: after.length,
     record: { name: record.name, score: record.score },
-    // Took the record with this lap, from someone else or from nobody.
-    tookRecord: record.name === claim.name && record.score === score && (before[0]?.score ?? 0) < score,
+    tookRecord,
+    ...(tickets?.earned ? { tickets } : {}),
   })
 })

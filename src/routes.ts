@@ -12,6 +12,7 @@ import { flagIfSuspicious } from './scoreFlags.js'
 import { resolveBoardScope } from './groups.js'
 import { assertCanUseName, withAvatarId, withAvatarIds } from './names.js'
 import { updateCrossRunStreakRecords } from './records.js'
+import { noteDayLap } from './courseRecords.js'
 import { recordChallengeRun } from './challenges.js'
 import { payRun, plausiblePickups, type RunTickets } from './tickets.js'
 import {
@@ -420,6 +421,8 @@ leaderboardsRouter.post('/:game', async (req, res) => {
     score,
     device ?? 'desktop',
   )
+  // A lap of today's Hot Lap track goes in the track's record book too (courseRecords.ts).
+  if (game === 'hotlap') await noteDayLap(claim.name, score, device ?? 'desktop', result.entry.at)
 
   // The site's records (streaks, busiest day) catch up within their minute
   // (siteRecords.ts). Clearing them on every save made nearly every home page

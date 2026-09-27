@@ -29,8 +29,9 @@ import { ladderFor, stepFor, type LadderStep } from './ticketLadders.js'
  * games' runs pay 5 more for a new best, and whatever tickets a run picked up
  * on the way (Crosswalk's). A run's tickets stop at RUN_TICKETS_PER_DAY a day,
  * so grinding pays no more than playing. On top, and uncapped: a first go at a
- * game, the first run of each day on a streak, a run in the Daily, and each
- * day's bug caught. Only a run with a run id pays, since that's the run the
+ * game, the first run of each day on a streak, a run in the Daily, each day's
+ * bug caught, and taking a past Hot Lap track's or Ace Chase hole's record
+ * (once a track or hole). Only a run with a run id pays, since that's the run the
  * server timed and checked (a day's Ace Chase result is paid as it goes on
  * the board, dailyHole.ts).
  *
@@ -45,12 +46,17 @@ export const FIRST_GO_TICKETS = 20
 export const STREAK_TICKETS = 5
 export const DAILY_TICKETS = 10
 export const HUNT_TICKETS = 15
+/**
+ * Taking a track's or hole's record after its day (trackLapsRoutes.ts, holesRoutes.ts): once a track or
+ * hole an account, however many times it's lost and taken back. On its day the day's top three are paid.
+ */
+export const RECORD_TICKETS = 15
 /** A daily's top three the day after, first to third. */
 export const DAY_TOP_TICKETS = [10, 6, 3] as const
 /** Players a daily's day needs before its top three are paid: a win in a field of one or two isn't one. */
 export const DAY_TOP_FIELD = 3
 
-export type TicketReason = 'run' | 'best' | 'pickup' | 'first' | 'streak' | 'daily' | 'hunt' | 'top' | 'grant' | 'trade'
+export type TicketReason = 'run' | 'best' | 'pickup' | 'first' | 'streak' | 'daily' | 'hunt' | 'top' | 'record' | 'grant' | 'trade'
 
 export type TicketLine = { reason: TicketReason; amount: number }
 

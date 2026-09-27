@@ -1,6 +1,8 @@
 import { eq, sql } from 'drizzle-orm'
+import { ACECHASE_FIRST_DAY, ACECHASE_HOLE_NAMES, HOTLAP_TRACK_NAMES } from './courseNames.js'
 import { db } from './db/client.js'
 import { recordScores } from './db/schema.js'
+import { HOTLAP_FIRST_DAY } from './hotlapPace.js'
 import { announceRewrite, insertWithFeed, MULTI_INSTANCE, onChange, onRewrite } from './feed.js'
 import { getClaim } from './names.js'
 import { notify } from './notifications.js'
@@ -297,14 +299,71 @@ const DEFS_BY_KEY = new Map(
   RECORD_DEFS.map((def) => [`${def.game}::${def.id}`, def] as const),
 )
 
+/*
+ * Course records: each Hot Lap track's fastest lap and each Ace Chase hole's fewest tries, a record a
+ * track or hole, named after it (courseNames.ts, from the site's plans). What goes in them is what goes on
+ * the course's own board (trackLaps.ts, holes.ts): its day's laps or results, and every one since, put in
+ * by courseRecords.ts. A game's book lists the tracks or holes whose day has come, today's included.
+ */
+const COURSES: Partial<
+  Record<GameSlug, { prefix: 'track' | 'hole'; firstDay: string; names: readonly string[]; unit: RecordDef['unit'] }>
+> = {
+  hotlap: { prefix: 'track', firstDay: HOTLAP_FIRST_DAY, names: HOTLAP_TRACK_NAMES, unit: 'ms' },
+  acechase: { prefix: 'hole', firstDay: ACECHASE_FIRST_DAY, names: ACECHASE_HOLE_NAMES, unit: 'count' },
+}
+
+const courseDefs = new Map<string, RecordDef>()
+
+/** A track's or hole's record id: track-3, hole-12; null for a game without them or a number out of the plan. */
+export function courseRecordId(game: GameSlug, n: number): string | null {
+  const course = COURSES[game]
+  return course && Number.isInteger(n) && n >= 1 && n <= course.names.length ? `${course.prefix}-${n}` : null
+}
+
+/** Which track or hole a record is, or null for any other record. */
+export function courseOfRecord(game: GameSlug, recordId: string): number | null {
+  const course = COURSES[game]
+  if (!course) return null
+  const match = /^(track|hole)-(\d+)$/.exec(recordId)
+  if (!match || match[1] !== course.prefix) return null
+  const n = Number(match[2])
+  return n >= 1 && n <= course.names.length ? n : null
+}
+
+function courseDef(game: GameSlug, n: number): RecordDef {
+  const key = `${game}::${n}`
+  let def = courseDefs.get(key)
+  if (!def) {
+    const course = COURSES[game]!
+    def = { id: `${course.prefix}-${n}`, game, label: `#${n} ${course.names[n - 1]}`, direction: 'lower', unit: course.unit }
+    courseDefs.set(key, def)
+  }
+  return def
+}
+
+/** How many of a game's tracks or holes have had their day, today's included. */
+function coursesSoFar(game: GameSlug, now = Date.now()): number {
+  const course = COURSES[game]
+  if (!course) return 0
+  const key = boardDateKey(now)
+  const today = Date.UTC(Math.floor(key / 10_000), (Math.floor(key / 100) % 100) - 1, key % 100)
+  const [y, m, d] = course.firstDay.split('-').map(Number)
+  const days = Math.round((today - Date.UTC(y!, m! - 1, d!)) / 86_400_000) + 1
+  return Math.max(0, Math.min(course.names.length, days))
+}
+
 export function listRecordDefs(game: GameSlug): RecordDef[] {
-  return RECORD_DEFS.filter((def) => def.game === game)
+  const courses = Array.from({ length: coursesSoFar(game) }, (_, i) => courseDef(game, i + 1))
+  return [...RECORD_DEFS.filter((def) => def.game === game), ...courses]
 }
 
 export function getRecordDef(game: string, recordId: string): RecordDef | null {
   const resolved = resolveGameSlug(game)
   if (!resolved) return null
-  return DEFS_BY_KEY.get(`${resolved}::${recordId}`) ?? null
+  const def = DEFS_BY_KEY.get(`${resolved}::${recordId}`)
+  if (def) return def
+  const n = courseOfRecord(resolved, recordId)
+  return n == null ? null : courseDef(resolved, n)
 }
 
 export function isAsteroidsWaveTimeRecord(recordId: string): number | null {
@@ -958,6 +1017,54 @@ export async function addRecord(
   }
 }
 
+/**
+ * A result from before its book kept it, written as it was set (its own time) and with nobody told: how a
+ * course's record book catches up with its board (courseRecords.ts). Only one that beats the player's own
+ * best in the book goes in, so asking again changes nothing. True if it went in.
+ */
+export async function seedRecordEntry(
+  game: GameSlug,
+  recordId: string,
+  input: { name: string; score: number; at: number; device: DeviceType },
+): Promise<boolean> {
+  const def = getRecordDef(game, recordId)
+  if (!def || !Number.isFinite(input.score) || input.score < 0) return false
+  const name = input.name.trim().slice(0, 12).toUpperCase()
+  if (!name) return false
+  const value = Math.floor(input.score)
+  // The book is best first, so a player's first row in it is their best.
+  const had = (await bookView(game, recordId, def)).sorted.find((e) => e.name === name)
+  if (had && !isBetter(value, had.score, def.direction)) return false
+  const entry: RecordEntry = {
+    id: `${input.at}-${Math.random().toString(36).slice(2, 8)}`,
+    name,
+    score: value,
+    at: input.at,
+    device: isDeviceType(input.device) ? input.device : 'desktop',
+  }
+  recordWritesInFlight++
+  recordWritesBegun++
+  try {
+    await insertWithFeed(
+      db().insert(recordScores).values({
+        id: entry.id,
+        game,
+        recordId,
+        name: entry.name,
+        score: entry.score,
+        at: entry.at,
+        device: entry.device,
+      }),
+      'record',
+      { game, recordId, entry },
+    )
+    rememberRecord(game, recordId, def, entry)
+  } finally {
+    recordWritesInFlight--
+  }
+  return true
+}
+
 export type CrossRunStreakHit = {
   recordId: string
   label: string
@@ -1089,8 +1196,11 @@ export {
   CROSSWALK_ROW_MILESTONE_STEP,
 }
 
-/** A record's value the way its book prints it: 47.5s for a clock, 23 for a count. */
+/** A record's value the way its book prints it: 47.5s for a clock, 23 for a count, 45.18s for a lap, 2 tries. */
 function recordValue(def: RecordDef, value: number): string {
+  if (courseOfRecord(def.game, def.id) != null) {
+    return def.unit === 'ms' ? clock(value, 2) : `${value.toLocaleString('en-US')} ${value === 1 ? 'try' : 'tries'}`
+  }
   return def.unit === 'ms' ? clock(value) : value.toLocaleString('en-US')
 }
 

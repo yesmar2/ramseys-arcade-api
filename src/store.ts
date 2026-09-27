@@ -813,24 +813,28 @@ function bestIndexOfName(view: PoolView, name: string): number {
   return bestIndexOf(view, playerRefs.get(name))
 }
 
+/** Every run's score on a game, best first, all time: what its ticket ladder is drawn from (ticketLadders.ts). */
+export async function runScores(game: GameSlug): Promise<number[]> {
+  const copy = await loadCopy()
+  return (copy.byGame.get(game) ?? []).map((entry) => entry.score)
+}
+
 /**
- * Where a saved run stands among every run on a game's board for a period,
- * the player's own among them: its place (1 for the best) and how many runs
- * there are. A new run sorts after any it ties, so every run behind it scored
- * less. What a run is paid in tickets by (tickets.ts): measured against runs
- * rather than players, a run that isn't one of your best pays less, and a
- * board with nobody else on it pays no more than a busy one. A daily game's
- * board is the day's, as always.
+ * A day's players on a game, best first: each tag's best run that day, a tie
+ * going to whoever got there first. What a daily's top three are paid by
+ * (tickets.ts), once the day is over.
  */
-export async function placeOfRun(
-  game: GameSlug,
-  period: Period,
-  entry: LeaderboardEntry,
-  now = Date.now(),
-): Promise<{ place: number; runs: number } | null> {
-  const view = await poolView(game, period, now)
-  const index = indexOfRun(view.entries, entry)
-  return index === -1 ? null : { place: index + 1, runs: view.entries.length }
+export async function dayPlayers(game: GameSlug, dayKey: number): Promise<{ name: string; score: number }[]> {
+  const copy = await loadCopy()
+  const seen = new Set<string>()
+  const players: { name: string; score: number }[] = []
+  // Board order: best first, and the earlier of two the same.
+  for (const entry of copy.byGame.get(game) ?? []) {
+    if (seen.has(entry.name) || keyOf(entry.at) !== dayKey) continue
+    seen.add(entry.name)
+    players.push({ name: entry.name, score: entry.score })
+  }
+  return players
 }
 
 export async function getClosedBoard(

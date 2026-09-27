@@ -1,30 +1,38 @@
 import crypto from 'node:crypto'
 import { and, desc, eq, gt, gte, sql } from 'drizzle-orm'
+import { isBanned } from './bans.js'
 import { db } from './db/client.js'
 import { prizesOwned, ticketLedger, ticketWallets } from './db/schema.js'
+import { getClaim } from './names.js'
 import { prizeById } from './prizes.js'
 import {
   boardDateKey,
   boardDayStart,
-  placeOfRun,
+  DAILY_GAMES,
+  dayPlayers,
   previousBoardDateKey,
   type GameSlug,
   type LeaderboardEntry,
 } from './store.js'
+import { ladderFor, stepFor, type LadderStep } from './ticketLadders.js'
 
 /*
  * Tickets: what the arcade pays out for playing, spent at the prize counter on
  * looks (prizes.ts). They're kept by account, so a rename keeps them, and
  * they can't be bought: nothing but play puts one in.
  *
- * A saved run pays 1 to 10 by the share of the week's runs it beats (your own
- * among them, so only your better runs pay well, and a board nobody else is
- * on pays no more than a busy one), 5 more for a new best,
- * and whatever tickets it picked up on the way (Crosswalk's). Those stop at
- * RUN_TICKETS_PER_DAY a day, so grinding pays no more than playing. On top,
- * and uncapped: a first go at a game, the first run of each day on a streak,
- * a run in the Daily, and each day's bug caught. Only a run with a run id
- * pays, since that's the run the server timed and checked.
+ * A saved run pays by the score it reached, on its game's ladder
+ * (ticketLadders.ts): 1 to 10, the same whoever else is playing and whenever.
+ * The dailies (Ace Chase, Hot Lap) pay their best step of the day once, as
+ * it's reached, up to 15, so another lap pays only when it climbs a step; and
+ * the day after, each daily's top three get DAY_TOP_TICKETS more. Other
+ * games' runs pay 5 more for a new best, and whatever tickets a run picked up
+ * on the way (Crosswalk's). A run's tickets stop at RUN_TICKETS_PER_DAY a day,
+ * so grinding pays no more than playing. On top, and uncapped: a first go at a
+ * game, the first run of each day on a streak, a run in the Daily, and each
+ * day's bug caught. Only a run with a run id pays, since that's the run the
+ * server timed and checked (a day's Ace Chase result is paid as it goes on
+ * the board, dailyHole.ts).
  *
  * Every ticket in or out is a row in the ledger, one per reason and the thing
  * it was for, so a save sent twice pays once.
@@ -37,8 +45,12 @@ export const FIRST_GO_TICKETS = 20
 export const STREAK_TICKETS = 5
 export const DAILY_TICKETS = 10
 export const HUNT_TICKETS = 15
+/** A daily's top three the day after, first to third. */
+export const DAY_TOP_TICKETS = [10, 6, 3] as const
+/** Players a daily's day needs before its top three are paid: a win in a field of one or two isn't one. */
+export const DAY_TOP_FIELD = 3
 
-export type TicketReason = 'run' | 'best' | 'pickup' | 'first' | 'streak' | 'daily' | 'hunt' | 'grant' | 'trade'
+export type TicketReason = 'run' | 'best' | 'pickup' | 'first' | 'streak' | 'daily' | 'hunt' | 'top' | 'grant' | 'trade'
 
 export type TicketLine = { reason: TicketReason; amount: number }
 
@@ -47,11 +59,15 @@ export type RunTickets = {
   earned: number
   lines: TicketLine[]
   balance: number
-  /** The share of the week's other runs this one beat, 0–100: what the run line was worked out from. */
-  beat: number
-  /** Where the run placed among the week's runs (1 for the best), and how many runs there are, this one among them. */
-  place: number
-  field: number
+  /** The step of its game's ladder the run reached, or null below the first, and the next one up. */
+  reached: LadderStep | null
+  next: LadderStep | null
+  /** What a run below the first step pays, and how a daily says it. */
+  base: number
+  baseLabel?: string
+  /** What the run's step is worth. A daily pays it once a day: what its runs already had today goes off it. */
+  step: number
+  paidBefore: number
   /** Tickets the day's cap held back from this run. */
   capped: number
   /** Run tickets left today before the cap. */
@@ -92,7 +108,26 @@ export function plausiblePickups(score: number, claimed: number | undefined): nu
   return Math.min(Math.floor(claimed), Math.floor(score * 0.3) + 3)
 }
 
-/** Pay a saved run its tickets. `priorBest` is the player's best on the game before it, or null for a first go. */
+/** What a game's runs have paid on the ladder since the day began. */
+async function runTicketsToday(tx: Tx, accountId: string, game: GameSlug, now: number): Promise<number> {
+  const [row] = await tx
+    .select({ n: sql<number>`coalesce(sum(${ticketLedger.amount}), 0)::int` })
+    .from(ticketLedger)
+    .where(
+      and(
+        eq(ticketLedger.accountId, accountId),
+        eq(ticketLedger.reason, 'run'),
+        eq(ticketLedger.game, game),
+        gte(ticketLedger.at, boardDayStart(now)),
+      ),
+    )
+  return row?.n ?? 0
+}
+
+/**
+ * Pay a saved run its tickets. `priorBest` is the player's best on the game before it, or null for a
+ * first go; `paceMs` is Hot Lap's blue car on the day, which its ladder goes by.
+ */
 export async function payRun(input: {
   accountId: string
   game: GameSlug
@@ -102,21 +137,24 @@ export async function payRun(input: {
   score: number
   priorBest: number | null
   pickups: number
+  paceMs?: number | null
   now?: number
 }): Promise<RunTickets> {
   const now = input.now ?? Date.now()
-  const standing = await placeOfRun(input.game, 'weekly', input.entry, now)
-  const field = standing?.runs ?? 1
-  const place = standing?.place ?? field
-  // The runs behind it scored less; the first run on a board has beaten nothing yet.
-  const beat = field > 1 ? Math.round((100 * (field - place)) / (field - 1)) : 0
-  const wanted: TicketLine[] = [{ reason: 'run', amount: Math.max(1, Math.round(beat / 10)) }]
-  if (input.priorBest != null && input.score > input.priorBest) wanted.push({ reason: 'best', amount: BEST_TICKETS })
-  if (input.pickups > 0) wanted.push({ reason: 'pickup', amount: input.pickups })
+  const ladder = await ladderFor(input.game, now, input.paceMs)
+  const { tickets: step, reached, next } = stepFor(ladder, input.score)
+  const daily = DAILY_GAMES.has(input.game)
 
   return db().transaction(async (tx) => {
     const wallet = await lockWallet(tx, input.accountId, now)
     const today = boardDateKey(now)
+    // A daily pays its best step of the day once: a run that climbs a step is paid the difference.
+    const paidBefore = daily ? await runTicketsToday(tx, input.accountId, input.game, now) : 0
+    const wanted: TicketLine[] = []
+    if (step - paidBefore > 0) wanted.push({ reason: 'run', amount: step - paidBefore })
+    // A daily's best of the day is its step; a best on the others pays on top.
+    if (!daily && input.priorBest != null && input.score > input.priorBest) wanted.push({ reason: 'best', amount: BEST_TICKETS })
+    if (input.pickups > 0) wanted.push({ reason: 'pickup', amount: input.pickups })
     const usedToday = wallet.runDay === today ? wallet.runToday : 0
     let room = Math.max(0, RUN_TICKETS_PER_DAY - usedToday)
     let capped = 0
@@ -176,13 +214,43 @@ export async function payRun(input: {
       earned,
       lines: paid.map((row) => ({ reason: row.reason as TicketReason, amount: row.amount })),
       balance: wallet.balance + earned,
-      beat,
-      place,
-      field,
+      reached,
+      next,
+      base: ladder.base,
+      ...(ladder.baseLabel ? { baseLabel: ladder.baseLabel } : {}),
+      step,
+      paidBefore,
       capped,
       todayLeft: Math.max(0, RUN_TICKETS_PER_DAY - runToday),
     }
   })
+}
+
+/** The last day whose top three have been paid, so the sweep asks once a day. */
+let toppedDay = 0
+
+/**
+ * Each daily's top three from the day before, paid DAY_TOP_TICKETS by the sweep once the day is over: so
+ * winning the day still counts for something, on top of the steps every run is paid as it's reached. Only
+ * a day with DAY_TOP_FIELD players or more, and tags with an account behind them that isn't barred. Paid
+ * once whenever the sweep runs, however many times: each is its own ledger row.
+ */
+export async function payDayTops(now = Date.now()): Promise<number> {
+  const day = previousBoardDateKey(boardDateKey(now))
+  if (toppedDay === day) return 0
+  let paid = 0
+  for (const game of DAILY_GAMES) {
+    const players = await dayPlayers(game, day)
+    if (players.length < DAY_TOP_FIELD) continue
+    for (let i = 0; i < DAY_TOP_TICKETS.length && i < players.length; i++) {
+      const name = players[i]!.name
+      const accountId = (await getClaim(name))?.accountId
+      if (!accountId || (await isBanned(name, accountId))) continue
+      paid += (await awardTickets(accountId, 'top', `${game}:${day}:${i + 1}`, DAY_TOP_TICKETS[i]!, game, now)).earned
+    }
+  }
+  toppedDay = day
+  return paid
 }
 
 /** Tickets for something done once (the day's Daily, a day's bug, an admin's grant): nothing if it was paid already. */

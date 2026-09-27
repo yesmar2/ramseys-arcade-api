@@ -43,8 +43,8 @@ type ScoreProfile = {
   step?: number
 }
 
-/** Realistic score bands by skill 0 (casual) → 1 (elite). */
-const GAME_BANDS: Record<GameSlug, ScoreProfile> = {
+/** Realistic score bands by skill 0 (casual) → 1 (elite). Also where a game short of runs draws its ticket ladder (ticketLadders.ts). */
+export const GAME_BANDS: Record<GameSlug, ScoreProfile> = {
   stacker: { min: 6, max: 118 },
   patriot: { min: 480, max: 28600, step: 5 },
   snake: { min: 30, max: 1180, step: 10 },

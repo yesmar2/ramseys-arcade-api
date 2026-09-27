@@ -139,6 +139,8 @@ const submitSchema = z.object({
   challengeId: z.string().min(1).max(16).optional(),
   /** Prize tickets the run picked up on the way (Crosswalk's), paid on top of the run's own. */
   pickups: z.number().int().min(0).max(500).optional(),
+  /** Hot Lap: the day's blue car, in milliseconds, which its ticket ladder goes by. */
+  pace: z.number().int().min(10_000).max(300_000).optional(),
 })
 
 /*
@@ -263,7 +265,7 @@ leaderboardsRouter.post('/:game', async (req, res) => {
     return
   }
 
-  const { name, score, token, device, runId, challengeId, pickups } = parsed.data
+  const { name, score, token, device, runId, challengeId, pickups, pace } = parsed.data
   // Ace Chase's board takes each day's first bullseye from Today's Hole (dailyHole.ts), one an account a day.
   if (game === 'acechase') {
     res.status(409).json({ error: 'Ace Chase results come from Today’s Hole', code: 'TODAYS_HOLE_ONLY' })
@@ -413,6 +415,7 @@ leaderboardsRouter.post('/:game', async (req, res) => {
         score,
         priorBest,
         pickups: game === 'crosswalk' ? plausiblePickups(score, pickups) : 0,
+        paceMs: game === 'hotlap' ? pace : null,
       }).catch((err: unknown) => {
         console.warn(`[tickets] ${game} run ${runId}:`, err)
         return null

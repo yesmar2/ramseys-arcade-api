@@ -1,6 +1,7 @@
 import { pruneClientErrors } from './clientErrors.js'
 import { pruneFeed, takeLease } from './feed.js'
 import { pushHeld } from './push.js'
+import { payDayTops } from './tickets.js'
 import { sweepTournaments } from './tournaments.js'
 import { ensurePeriodTrophies } from './trophies.js'
 
@@ -40,6 +41,7 @@ export async function sweep(): Promise<void> {
       ['pushes', () => pushHeld(Date.now())],
       ['feed', () => pruneFeed(Date.now())],
       ['client errors', () => pruneClientErrors(Date.now())],
+      ['daily tops', () => payDayTops(Date.now())],
     ]
     for (const [name, step] of steps) {
       try {

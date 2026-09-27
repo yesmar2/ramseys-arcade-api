@@ -2,6 +2,7 @@ import { Router } from 'express'
 import { z } from 'zod'
 import { accountFromRequest } from './auth.js'
 import { takeToken } from './rateLimit.js'
+import { allLadders } from './ticketLadders.js'
 import { setGoal, ticketsFor, tradePrize } from './tickets.js'
 
 /*
@@ -20,6 +21,16 @@ function fail(err: unknown, res: import('express').Response) {
     code: (err as { code?: string }).code,
   })
 }
+
+/** What a run pays, game by game, for the site to show beside how to play: anyone can ask. */
+ticketsRouter.get('/ladders', async (_req, res) => {
+  try {
+    res.setHeader('Cache-Control', 'public, max-age=600')
+    res.json({ ladders: await allLadders() })
+  } catch (err) {
+    fail(err, res)
+  }
+})
 
 /** Your tickets: what you have, what came in today, your goal, your prizes and the latest in and out. */
 ticketsRouter.get('/', async (req, res) => {

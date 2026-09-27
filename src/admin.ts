@@ -15,14 +15,20 @@ import { accountFromRequest, type Account } from './auth.js'
  *
  * The list is every email address in the variable, however it's written:
  * separated by commas, semicolons or spaces, in quotes or <>, or with the
- * whole `ADMIN_EMAILS=…` line pasted in as the value. A dashboard field is an
- * easy place to type any of those, and a list that quietly reads as empty
- * looks exactly like not being an admin.
+ * whole `ADMIN_EMAILS=…` line pasted in as the value. The variable's name gets
+ * the same slack (ADMIN_EMAIL, admin_emails, ADMIN-EMAILS). A dashboard field
+ * is an easy place to type any of those, and a list that quietly reads as
+ * empty looks exactly like not being an admin.
  */
 export function adminEmails(): ReadonlySet<string> {
-  const written = String(process.env.ADMIN_EMAILS ?? '').match(/[^\s,;"'<>=]+@[^\s,;"'<>]+/g) ?? []
+  const written = Object.entries(process.env)
+    .filter(([key]) => ADMIN_KEY.test(key))
+    .flatMap(([, value]) => String(value ?? '').match(/[^\s,;"'<>=]+@[^\s,;"'<>]+/g) ?? [])
   return new Set(written.map(mailbox))
 }
+
+/** ADMIN_EMAILS, and the near misses of its name. */
+const ADMIN_KEY = /^\s*admin[\s_-]*e?mails?\s*$/i
 
 /**
  * The mailbox an address reaches, to compare by: lowercased, and a Gmail

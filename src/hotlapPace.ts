@@ -1,7 +1,8 @@
-// Written from the site's src/games/hotlap/dailyPlan.ts: each planned day's blue car (its pace car's lap), in
-// milliseconds, from the first day on. Hot Lap's ticket ladder goes by it (ticketLadders.ts), so a lap is paid
-// by the day's own blue car, whatever the site sends. Past the last planned day the days come round again,
-// as the site's dailyTrack has them. Write it again whenever the plan changes; don't edit it by hand.
+// Written by the site's scripts/hotlap-daily.mjs from its src/games/hotlap/dailyPlan.ts: each planned day's
+// blue car (its pace car's lap), in milliseconds, from the first day on. Hot Lap's ticket ladder goes by it
+// (ticketLadders.ts), so a lap is paid by the day's own blue car, whatever the site sends. Past the last
+// planned day the days come round again, as the site's dailyTrack has them. Don't edit it by hand: the
+// script writes it again whenever the plan changes.
 export const HOTLAP_FIRST_DAY = '2026-09-26'
 
 export const HOTLAP_PACE_MS: readonly number[] = [

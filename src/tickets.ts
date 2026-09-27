@@ -48,6 +48,9 @@ export type RunTickets = {
   balance: number
   /** The share of the week's board the run beat, 1–100: what the run line was worked out from. */
   beat: number
+  /** Where the run placed among the week's players, and how many there are, the player among them. */
+  place: number
+  field: number
   /** Tickets the day's cap held back from this run. */
   capped: number
   /** Run tickets left today before the cap. */
@@ -169,6 +172,8 @@ export async function payRun(input: {
       lines: paid.map((row) => ({ reason: row.reason as TicketReason, amount: row.amount })),
       balance: wallet.balance + earned,
       beat,
+      place,
+      field,
       capped,
       todayLeft: Math.max(0, RUN_TICKETS_PER_DAY - runToday),
     }

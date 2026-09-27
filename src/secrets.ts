@@ -41,7 +41,7 @@ const POINTS_GAMES: ReadonlySet<GameSlug> = new Set(
 const TOUR_GAMES: readonly GameSlug[] = ALLOWED_GAMES.filter((g) => g !== 'simon' && g !== 'spotter')
 
 /**
- * The player's own clock, as the site sends it on every request (X-TZ-Offset: Date#getTimezoneOffset,
+ * The player's own clock, as the site sends it with what it posts (X-TZ-Offset: Date#getTimezoneOffset,
  * minutes behind UTC), or null. Only the time-of-day secrets use it, so its word is enough.
  */
 export function clientOffset(req: Request): number | null {
@@ -160,6 +160,25 @@ export async function secretsForRun(opts: {
     const week = await getBoard(game, 'weekly', opts.at)
     if (week[0]?.score === score && week.some((e) => e.score === score && e.name !== opts.name)) await award('photofinish', { score })
   }
+  if (!had.has(SECRETS.grandtour.n) && (await everyGameToday(opts.name, opts.at))) {
+    await award('grandtour', { games: TOUR_GAMES.length })
+  }
+  return found
+}
+
+/**
+ * The secrets a day's hole finds, once its result is on Ace Chase's board: Hole in One, and Grand Tour if
+ * the hole was the day's last game to play (a run's own check doesn't see the hole's result).
+ */
+export async function secretsForHole(opts: { accountId: string; name: string; tries: number; at: number }): Promise<SecretFound[]> {
+  const had = await foundBefore(opts.accountId)
+  const found: SecretFound[] = []
+  const award = async (key: SecretKey, extra: { games?: number } = {}) => {
+    if (had.has(SECRETS[key].n)) return
+    const secret = await awardSecret({ accountId: opts.accountId, name: opts.name, key, at: opts.at, ...extra })
+    if (secret) found.push(secret)
+  }
+  if (opts.tries === 1) await award('holeinone')
   if (!had.has(SECRETS.grandtour.n) && (await everyGameToday(opts.name, opts.at))) {
     await award('grandtour', { games: TOUR_GAMES.length })
   }

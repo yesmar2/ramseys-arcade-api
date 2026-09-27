@@ -6,7 +6,7 @@ import { huntDay } from './bugHunt.js'
 import { namesOwnedByAccount, withAvatarIds } from './names.js'
 import { updateCrossRunStreakRecords } from './records.js'
 import { TRIES_SCORE_BASE } from './scoreLimits.js'
-import { awardSecret, type SecretFound } from './secrets.js'
+import { secretsForHole, type SecretFound } from './secrets.js'
 import { addScore, bestForName, type DeviceType } from './store.js'
 import { payRun } from './tickets.js'
 
@@ -53,7 +53,7 @@ export type DailyReply = {
   }
   /** What today's result paid for the prize counter, as it went on the board. */
   tickets?: { earned: number; balance: number }
-  /** A secret today's result found (secrets.ts): Hole in One. */
+  /** Secrets today's result found (secrets.ts): Hole in One, and Grand Tour when the hole was the day's last game. */
   secrets?: SecretFound[]
 }
 
@@ -269,10 +269,7 @@ export async function recordResult(
       held = null
       if (tag && input.day === huntDay(now)) {
         tickets = (await onTheBoard(accountId, tag.name, input.tries, input.device ?? 'desktop', audit, now)).tickets
-        if (input.tries === 1) {
-          const found = await awardSecret({ accountId, name: tag.name, key: 'holeinone', at: now }).catch(() => null)
-          if (found) secrets = [found]
-        }
+        secrets = await secretsForHole({ accountId, name: tag.name, tries: input.tries, at: now }).catch(() => [])
       }
     }
   }

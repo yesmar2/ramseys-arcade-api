@@ -7,6 +7,7 @@ import { clientOffset, secretsForRun } from './secrets.js'
 import { isBanned } from './bans.js'
 import { clientIp, hashIp, takeToken } from './rateLimit.js'
 import { claimRun, peekRun } from './runs.js'
+import { claimFirstRunDay, FIRST_RUN_DAILIES, FIRST_RUN_ERRORS, FIRST_RUN_TTL_MS, firstRunProblem } from './firstRun.js'
 import { flagIfSuspicious } from './scoreFlags.js'
 import { resolveBoardScope } from './groups.js'
 import { assertCanUseName, withAvatarId, withAvatarIds } from './names.js'
@@ -326,9 +327,10 @@ leaderboardsRouter.post('/:game', async (req, res) => {
    * keep working through the deploy. REQUIRE_RUN_TOKEN closes that door once
    * the site has caught up.
    */
+  const firstRunOnly = FIRST_RUN_DAILIES.has(game)
   let durationMs: number | null = null
   if (runId) {
-    const run = await peekRun(runId, account.id, game)
+    const run = await peekRun(runId, account.id, game, firstRunOnly ? FIRST_RUN_TTL_MS : undefined)
     if (!run.ok) {
       res.status(400).json({ error: RUN_ERRORS[run.code], code: `RUN_${run.code}` })
       return
@@ -348,6 +350,15 @@ leaderboardsRouter.post('/:game', async (req, res) => {
   } else if (REQUIRE_RUN_TOKEN) {
     res.status(400).json({ error: 'Start the run before saving a score', code: 'RUN_REQUIRED' })
     return
+  }
+
+  // Find the Bug's board takes an account's first run of the day, and one a day (firstRun.ts).
+  if (firstRunOnly) {
+    const problem = await firstRunProblem(account.id, game, runId ?? null)
+    if (problem) {
+      res.status(409).json({ error: FIRST_RUN_ERRORS[problem], code: problem })
+      return
+    }
   }
 
   let claim: { name: string; token: string }
@@ -384,6 +395,11 @@ leaderboardsRouter.post('/:game', async (req, res) => {
   // already had its say, so spending the run here cannot strand a retry.
   if (runId && !(await claimRun(runId, 'leaderboard'))) {
     res.status(400).json({ error: RUN_ERRORS.USED, code: 'RUN_USED' })
+    return
+  }
+  // Two saves of the day racing (two devices): the first to hold the day is the one that counts.
+  if (firstRunOnly && !(await claimFirstRunDay(account.id, game))) {
+    res.status(409).json({ error: FIRST_RUN_ERRORS.DAILY_DONE, code: 'DAILY_DONE' })
     return
   }
 

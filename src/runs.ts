@@ -53,6 +53,8 @@ export async function peekRun(
   runId: string,
   accountId: string,
   game: GameSlug,
+  /** Longer for a daily's first run, which lasts its day (firstRun.ts). */
+  ttlMs = RUN_TTL_MS,
 ): Promise<RunLookup> {
   const now = Date.now()
   const [run] = await db().select().from(gameRuns).where(eq(gameRuns.id, runId)).limit(1)
@@ -62,7 +64,7 @@ export async function peekRun(
   if (run.accountId != null && run.accountId !== accountId) {
     return { ok: false, code: 'MISMATCH' }
   }
-  if (now - run.startedAt > RUN_TTL_MS) return { ok: false, code: 'EXPIRED' }
+  if (now - run.startedAt > ttlMs) return { ok: false, code: 'EXPIRED' }
   return { ok: true, startedAt: run.startedAt, elapsedMs: now - run.startedAt }
 }
 

@@ -36,15 +36,16 @@ import { getClaim, namesOwnedByAccount, withAvatarIds } from './names.js'
 import { notify, type NotificationMeta } from './notifications.js'
 import { RUN_TTL_MS } from './runs.js'
 import { awardEventWin } from './trophies.js'
-import { ALLOWED_GAMES, BOARD_TZ, canonicalizeGameSlug, isAllowedGame, resolveGameSlug, type GameSlug } from './store.js'
+import { ALLOWED_GAMES, BOARD_TZ, canonicalizeGameSlug, DAILY_GAMES, isAllowedGame, resolveGameSlug, type GameSlug } from './store.js'
 import { GAME_LABELS, ordinal, pts, scoreWords } from './words.js'
 
 export type { TournamentKind } from './bracket.js'
 export type { PublicBracket, PublicBracketMatch, PublicBracketSide } from './bracket.js'
 
 /** Games eligible for rolling daily/weekly events (excludes unfinished / non-event titles). */
-// Ace Chase and Hot Lap are new: kept out of the events the API picks games for (and out of the pool's shuffle) until they have been played.
-const EVENT_GAMES = ALLOWED_GAMES.filter((g) => g !== 'crosswalk' && g !== 'spotter' && g !== 'acechase' && g !== 'hotlap')
+// The dailies (Ace Chase, Hot Lap, Find the Bug) are each day's own hole, track or scenes, the same for
+// everyone, with boards of the day's: they stay out of events (and out of the pool's shuffle).
+const EVENT_GAMES = ALLOWED_GAMES.filter((g) => g !== 'crosswalk' && g !== 'spotter' && !DAILY_GAMES.has(g))
 
 /**
  * Games the site has retired: no new event picks one, but an event already

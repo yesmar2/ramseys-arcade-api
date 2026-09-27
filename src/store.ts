@@ -418,12 +418,13 @@ export type ClosedPeriod = 'weekly' | 'monthly'
 
 /**
  * Dailies: games with something new to play each day, the same for everyone (Hot Lap's track of the
- * day, Ace Chase's hole of the day). One day's scores can't be weighed against another day's, so every
- * board of a daily is a day's: today's, whatever open period is asked for, and a closed period's last
- * day. The standings count a daily's places the same way. The site marks these games `daily` in its
- * data/games.ts.
+ * day, Ace Chase's hole of the day, Find the Bug's five scenes of the day). One day's scores can't be
+ * weighed against another day's, so every board of a daily is a day's: today's, whatever open period is
+ * asked for, and a closed period's last day. The standings count a daily's places the same way. The
+ * site marks these games `daily` in its data/games.ts. Find the Bug's board takes only a day's first
+ * run (firstRun.ts).
  */
-export const DAILY_GAMES: ReadonlySet<GameSlug> = new Set<GameSlug>(['hotlap', 'acechase'])
+export const DAILY_GAMES: ReadonlySet<GameSlug> = new Set<GameSlug>(['hotlap', 'acechase', 'findbug'])
 
 /** The last day of a closed week or month, as a day key. */
 function lastDayOf(period: ClosedPeriod, periodKey: number): number {

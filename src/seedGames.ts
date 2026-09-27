@@ -36,7 +36,10 @@ export type SeedRun = {
   records: RunRecord[]
 }
 
-/** Every game on the site except Simon, which retired, and Spotter, which is hidden. */
+/**
+ * Every game on the site except Simon, which retired, Spotter, which is hidden, and the dailies (Ace
+ * Chase, Hot Lap, Find the Bug), whose boards are each day's own: a seeded world is played once.
+ */
 export const SEEDED_GAMES: readonly GameSlug[] = [
   'asteroids',
   'patriot',
@@ -46,7 +49,6 @@ export const SEEDED_GAMES: readonly GameSlug[] = [
   'centroid',
   'pop',
   'pellets',
-  'findbug',
   'crumbtrail',
   'bop',
   'putt',

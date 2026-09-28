@@ -20,6 +20,8 @@ export type NotificationKind =
   | 'event-result'
   | 'challenge-beaten'
   | 'challenge-taken'
+  /** A friend beat your result on one of today's three (todayBeaten.ts). */
+  | 'today-beaten'
 
 /**
  * The push allow-list.

@@ -5,6 +5,7 @@ import { pageParams } from './paging.js'
 import { accountFromRequest } from './auth.js'
 import { clientOffset, secretsForRun } from './secrets.js'
 import { settleToday } from './today.js'
+import { tellBeatenFriends } from './todayBeaten.js'
 import { isBanned } from './bans.js'
 import { clientIp, hashIp, takeToken } from './rateLimit.js'
 import { claimRun, peekRun } from './runs.js'
@@ -493,6 +494,10 @@ leaderboardsRouter.post('/:game', async (req, res) => {
   if (game === 'hotlap' || game === 'findbug') {
     await settleToday(account.id, result.entry.at).catch((err: unknown) => {
       console.warn(`[today] ${game} run for ${claim.name}:`, err)
+    })
+    // And it may beat a friend's result on it today (todayBeaten.ts).
+    await tellBeatenFriends({ accountId: account.id, game, now: result.entry.at }).catch((err: unknown) => {
+      console.warn(`[today] telling ${claim.name}'s friends:`, err)
     })
   }
 

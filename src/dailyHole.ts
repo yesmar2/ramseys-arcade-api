@@ -9,6 +9,7 @@ import { updateCrossRunStreakRecords } from './records.js'
 import { TRIES_SCORE_BASE } from './scoreLimits.js'
 import { secretsForHole, type SecretFound } from './secrets.js'
 import { settleToday } from './today.js'
+import { tellBeatenFriends } from './todayBeaten.js'
 import { addScore, bestForName, type DeviceType } from './store.js'
 import { payRun } from './tickets.js'
 
@@ -277,6 +278,8 @@ export async function recordResult(
       }
       // The hole is one of the Today set's three (today.ts): it may finish the day's card.
       await settleToday(accountId, now).catch(() => undefined)
+      // And it may beat a friend's hole today (todayBeaten.ts).
+      await tellBeatenFriends({ accountId, game: 'acechase', now }).catch(() => 0)
     }
   }
   const reply = await dailyReply(accountId, now)

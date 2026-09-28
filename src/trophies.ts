@@ -450,7 +450,7 @@ async function notifyEventWin(name: string, eventTitle: string, eventId: string)
 export type TrophyCount = Pick<TrophySummary, 'total' | 'podium'>
 
 /**
- * A month of the bug hunt caught in full: all twelve bugs, each on its own
+ * A month of the bug hunt caught in full: all ten bugs, each on its own
  * day. The trophy goes on the shelf of the tag the account plays as, and the
  * inbox says so. The first set ever also unlocks the bug net pin.
  */
@@ -493,8 +493,8 @@ export async function awardHuntSet(opts: {
     kind: 'trophy',
     title: `You caught ${month}’s full set`,
     body: firstSet
-      ? 'All twelve bugs in the hunt. The set is on your shelf, and the bug net pin is yours to wear.'
-      : 'All twelve bugs in the hunt. The set is on your shelf.',
+      ? 'All ten bugs in the hunt. The set is on your shelf, and the bug net pin is yours to wear.'
+      : 'All ten bugs in the hunt. The set is on your shelf.',
     href: '/rank/all?focus=trophies',
     meta: { trophy: { period: 'hunt', rank: 1 }, ...(firstSet ? { pin: 'bugnet' } : {}) },
     digestKey: `trophy:hunt:${opts.periodKey}`,

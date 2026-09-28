@@ -14,20 +14,22 @@ import { awardHuntSet } from './trophies.js'
  * caught it. A player's finds follow them to any device, and a day can say
  * how many caught its bug and where a find came in.
  *
- * Finds come in two kinds. Any find names a real day and one of the twelve,
+ * Finds come in two kinds. Any find names a real day and one of the ten,
  * and fills in the player's collection. A find counts toward a month's set
  * only if it reached the API on its own day and names that day's bug. So the
  * API picks the bug exactly as the site does, and a backlog a device sends
  * up later never puts a set on the shelf.
  */
 
-/** The wanted bugs from Find the Bug, in the site's order: the order is part of the pick. */
+/**
+ * The bugs in the hunt: ten of Find the Bug's twelve wanted bugs, in the site's order, which is part of
+ * the pick. Pickle and Tiger stay in Find the Bug only (2026-09-28): peeking out, a top hat and a bobble
+ * hat read most like the others'.
+ */
 export const HUNT_BUG_ORDER = [
   'bug',
   'skip',
   'dotty',
-  'pickle',
-  'tiger',
   'rosie',
   'ziggy',
   'honey',
@@ -103,10 +105,10 @@ function dayNumber(day: string): number {
 
 /**
  * The day's bug, picked exactly as the site picks it. From October, each
- * month starts the rotation afresh: days 1 to 12 are one shuffle of the
- * twelve, 13 to 24 another, and the rest of the month part of a third, so
- * every bug comes round two or three times a month. Before that, a running
- * shuffle of twelve days at a time.
+ * month starts the rotation afresh: days 1 to 10 are one shuffle of the ten,
+ * 11 to 20 another, 21 to 30 a third, and a 31st the start of a fourth, so
+ * every bug comes round three times a month (twice for two of them in
+ * February). Before that, a running shuffle of ten days at a time.
  */
 export function bugForDay(day: string): string {
   if (day >= MONTHLY_FROM) {
@@ -128,7 +130,7 @@ export function setKeyFor(day: string): string {
 
 export type HuntFind = { day: string; bug: string; spot: string; at: number; counted: boolean }
 
-/** A find the site sent, if it could be one: a real day no later than tomorrow, one of the twelve. */
+/** A find the site sent, if it could be one: a real day no later than tomorrow, one of the ten. */
 export function validFind(input: { day: string; bug: string; spot: string }, now = Date.now()): boolean {
   if (!DAY.test(input.day) || input.day < FIRST_DAY) return false
   // A day ahead is a clock on the other side of midnight; more than that is not a find.
@@ -179,9 +181,12 @@ export async function findsFor(accountId: string): Promise<HuntFind[]> {
   return rows.map((r) => ({ day: r.day, bug: r.bug, spot: r.spot, at: r.foundAt, counted: r.counted }))
 }
 
-/** The bugs that count toward a set, from a player's finds. */
+/**
+ * The bugs that count toward a set, from a player's finds: only bugs still in the hunt, so one caught
+ * while there were twelve (Pickle, Tiger) doesn't count toward a set of ten.
+ */
 function setBugs(finds: HuntFind[], key: string): Set<string> {
-  return new Set(finds.filter((f) => f.counted && setKeyFor(f.day) === key).map((f) => f.bug))
+  return new Set(finds.filter((f) => f.counted && setKeyFor(f.day) === key && HUNT_BUGS.has(f.bug)).map((f) => f.bug))
 }
 
 /** A set just completed by a find: which, and what came with it. */
@@ -256,7 +261,7 @@ async function shelveSet(accountId: string, key: string, finds: HuntFind[], now:
   return { key, shelved: true, pin: award.firstSet }
 }
 
-/** A find has just brought a set to all twelve. Nothing if it was complete before this find. */
+/** A find has just brought a set to all ten. Nothing if it was complete before this find. */
 async function completeSet(accountId: string, key: string, before: Set<string>, now: number): Promise<HuntCompleted | null> {
   const finds = await findsFor(accountId)
   if (setBugs(finds, key).size < SET_SIZE || before.size >= SET_SIZE) return null

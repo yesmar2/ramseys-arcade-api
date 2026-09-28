@@ -2,6 +2,7 @@ import crypto from 'node:crypto'
 import { eq, inArray } from 'drizzle-orm'
 import { db } from './db/client.js'
 import { nameClaims } from './db/schema.js'
+import { dbTarget } from './env.js'
 import { announce, onChange, onRewrite } from './feed.js'
 import { renamePlayerAcrossGroups } from './groups.js'
 import { assertAllowedName } from './nameFilter.js'
@@ -146,11 +147,17 @@ async function reloadClaims(names: string[]) {
   }
 }
 
-/** Local/dev only. Production Render sets NODE_ENV=production. */
+/**
+ * Local/dev only. Render does not set NODE_ENV by itself, so that alone left
+ * this open wherever nobody had set it by hand. It fails safe the way magic
+ * links do: only a database named as a non-production branch (NEON_BRANCH,
+ * as the local .env sets it) turns it on, and staging leaves NEON_BRANCH
+ * unset so it stays off there too.
+ */
 export function isDevToolsEnabled() {
   if (process.env.ALLOW_DEV_TOOLS === '0') return false
   if (process.env.ALLOW_DEV_TOOLS === '1') return true
-  return process.env.NODE_ENV !== 'production'
+  return process.env.NODE_ENV !== 'production' && !dbTarget().isProduction
 }
 
 /**

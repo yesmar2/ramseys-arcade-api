@@ -2,7 +2,8 @@ import { Router } from 'express'
 import { z } from 'zod'
 import { accountFromRequest } from './auth.js'
 import { isBanned } from './bans.js'
-import { assertCanUseName, withAvatarIds } from './names.js'
+import { GHOST_RATE, ghostFor, ghostProblem, keepGhost } from './lapGhosts.js'
+import { assertCanUseName, namesOwnedByAccount, withAvatarIds } from './names.js'
 import { takeToken } from './rateLimit.js'
 import { noteCourseRecord } from './courseRecords.js'
 import { claimRun, peekRun } from './runs.js'
@@ -18,6 +19,8 @@ import { addTrackLap, fastestBelievable, TRACK_GAMES, trackBoard, trackDayIso, t
  *   GET  /tracks/:game/:n/board?name=  a track's board: the top ten and where you stand
  *   POST /tracks/:game/:n/laps         a lap on a track after its day, checked as a day's lap is; into the
  *                                      track's record book too, and taking the record pays RECORD_TICKETS once
+ *   GET  /tracks/:game/:n/ghost        the track's fastest lap with its path, for everyone to race (lapGhosts.ts)
+ *   POST /tracks/:game/:n/ghost        a saved lap's path, kept if it's the track's fastest yet
  */
 export const tracksRouter = Router()
 
@@ -186,4 +189,79 @@ tracksRouter.post('/:game/:n/laps', async (req, res) => {
     tookRecord,
     ...(tickets?.earned ? { tickets } : {}),
   })
+})
+
+/* ---------------------------------------------------------------- ghosts --- */
+
+/** Paths are sent only after a lap is saved, so a few a minute is plenty. */
+const GHOST_LIMIT = { limit: 30, windowMs: 10 * 60 * 1000 }
+
+const ghostSchema = z.object({
+  name: z.string().min(1).max(12),
+  score: z.number().int().positive().max(1_000_000),
+  splits: z.array(z.number()).length(3),
+  path: z.array(z.number()).max(18_000),
+})
+
+tracksRouter.get('/:game/:n/ghost', async (req, res) => {
+  const game = trackGame(req.params.game)
+  const n = Number(req.params.n)
+  if (!game || trackState(n) === 'none') {
+    res.status(404).json({ error: 'No such track' })
+    return
+  }
+  const ghost = await ghostFor(game, n)
+  if (!ghost) {
+    res.status(404).json({ error: 'No ghost on this track yet', code: 'NO_GHOST' })
+    return
+  }
+  const [holder] = await withAvatarIds([{ name: ghost.name }])
+  res.setHeader('Cache-Control', 'public, max-age=30')
+  res.json({
+    game,
+    track: n,
+    name: ghost.name,
+    avatarId: holder?.avatarId,
+    time: ghost.timeMs,
+    splits: ghost.splits,
+    rate: GHOST_RATE,
+    path: ghost.path,
+  })
+})
+
+tracksRouter.post('/:game/:n/ghost', async (req, res) => {
+  const game = trackGame(req.params.game)
+  const n = Number(req.params.n)
+  const state = trackState(n)
+  // A track still to come is only a test drive: no board, so no ghost.
+  if (!game || state === 'none' || state === 'ahead') {
+    res.status(404).json({ error: 'No such track' })
+    return
+  }
+  const parsed = ghostSchema.safeParse(req.body)
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Invalid body', details: parsed.error.flatten() })
+    return
+  }
+  const account = await accountFromRequest(req)
+  if (!account) {
+    res.status(401).json({ error: 'Sign in to send a lap', code: 'AUTH_REQUIRED' })
+    return
+  }
+  const gate = takeToken(`ghost:account:${account.id}`, GHOST_LIMIT)
+  if (!gate.ok) {
+    res.setHeader('Retry-After', Math.ceil(gate.retryAfterMs / 1000))
+    res.status(429).json({ error: 'Too many laps too quickly', code: 'RATE_LIMITED' })
+    return
+  }
+  const { name, score, splits, path } = parsed.data
+  const timeMs = TIME_SCORE_BASE - score
+  const problem = ghostProblem(timeMs, splits, path)
+  if (problem) {
+    res.status(400).json({ error: 'That path isn’t a lap of that time', code: 'GHOST_INVALID', reason: problem })
+    return
+  }
+  const names = (await namesOwnedByAccount(account.id)).map((claim) => claim.name)
+  const kept = await keepGhost({ game, track: n, accountId: account.id, names, name: cleanName(name) ?? name, timeMs, splits, path })
+  res.json({ kept })
 })

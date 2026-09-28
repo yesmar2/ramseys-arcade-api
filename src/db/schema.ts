@@ -773,3 +773,27 @@ export const notificationSettings = pgTable('notification_settings', {
   levels: jsonb('levels').notNull(),
   updatedAt: bigint('updated_at', { mode: 'number' }).notNull(),
 })
+
+/**
+ * The ghost of the fastest lap on each track (lapGhosts.ts): where the car was, ten times a second, for
+ * everyone to race. One a track, the fastest that came with its path; a lap on the board only.
+ */
+export const lapGhosts = pgTable(
+  'lap_ghosts',
+  {
+    game: text('game').notNull(),
+    track: integer('track').notNull(),
+    accountId: text('account_id')
+      .notNull()
+      .references(() => accounts.id, { onDelete: 'cascade' }),
+    /** The tag the lap is on the board under. */
+    name: text('name').notNull(),
+    timeMs: integer('time_ms').notNull(),
+    /** Where each sector ended, in seconds from the lights. */
+    splits: jsonb('splits').notNull(),
+    /** x, y and heading, one after another, ten times a second from the lights. */
+    path: jsonb('path').notNull(),
+    at: bigint('at', { mode: 'number' }).notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.game, t.track] })],
+)

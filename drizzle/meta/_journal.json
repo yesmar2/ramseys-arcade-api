@@ -155,6 +155,13 @@
       "when": 1790604397953,
       "tag": "0021_notification_settings",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1790615587784,
+      "tag": "0022_lap_ghosts",
+      "breakpoints": true
     }
   ]
 }

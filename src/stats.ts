@@ -4,6 +4,7 @@ import { leaderboardScores, recordScores } from './db/schema.js'
 import { getRecordDef } from './records.js'
 import {
   boardDateKey,
+  DAILY_GAMES,
   getBoardPage,
   inPeriod,
   previousBoardDateKey,
@@ -172,6 +173,24 @@ export async function playerStats(
       limit: Number.MAX_SAFE_INTEGER,
       now,
     })
+    if (DAILY_GAMES.has(slug as GameSlug) && period !== 'daily') {
+      // A daily's board for longer than a day is its days' points (store.ts dayPointsBoard), one row a player:
+      // the player's place is their row's, and they're ahead of everyone below it.
+      const at = board.entries.findIndex((entry) => entry.name === name)
+      const field = board.entries.length
+      games.push({
+        slug,
+        runs: rows.length,
+        best,
+        rank: at >= 0 ? at + 1 : null,
+        totalPlayers: field || 1,
+        percentile: at >= 0 && field > 1 ? Math.round(((field - at - 1) / (field - 1)) * 100) : 0,
+        average: Math.round(total / rows.length),
+        lastPlayedAt: Math.max(...rows.map((r) => r.at)),
+        trend: trendOf(rows),
+      })
+      continue
+    }
     const names = new Set<string>()
     let beaten = 0
     const ahead = new Set<string>()

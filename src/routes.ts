@@ -14,7 +14,7 @@ import { flagIfSuspicious } from './scoreFlags.js'
 import { resolveBoardScope } from './groups.js'
 import { assertCanUseName, withAvatarId, withAvatarIds } from './names.js'
 import { updateCrossRunStreakRecords } from './records.js'
-import { noteDayLap } from './courseRecords.js'
+import { noteDayRun } from './courseRecords.js'
 import { recordChallengeRun } from './challenges.js'
 import { payRun, plausiblePickups, type RunTickets } from './tickets.js'
 import {
@@ -406,9 +406,11 @@ leaderboardsRouter.post('/:game', async (req, res) => {
     return
   }
 
-  // Read before the write, so "was this far past the rest?" has an answer.
-  const bestBefore = (await getBoard(game, 'all'))[0]?.score ?? 0
+  // Read before the write, so "was this far past the rest?" has an answer: a daily's today, the others' all time
+  // (a daily's all-time board is its days' points, store.ts dayPointsBoard, not a score to measure a run against).
+  const bestBefore = (await getBoard(game, DAILY_GAMES.has(game) ? 'daily' : 'all'))[0]?.score ?? 0
   // The player's own best before this run, for its tickets: a new best pays more, and none at all is a first go.
+  // A daily's is its day points, which say only whether this is a first go (tickets.ts pays it no best).
   const priorBest = (await bestForName(game, claim.name, 'all'))?.score ?? null
 
   const result = await addScore(game, claim.name, score, device ?? 'desktop', {
@@ -423,8 +425,8 @@ leaderboardsRouter.post('/:game', async (req, res) => {
     score,
     device ?? 'desktop',
   )
-  // A lap of today's Hot Lap track goes in the track's record book too (courseRecords.ts).
-  if (game === 'hotlap') await noteDayLap(claim.name, score, device ?? 'desktop', result.entry.at)
+  // A lap of today's Hot Lap track, or Find the Bug's run of the day, goes in that day's record book too (courseRecords.ts).
+  if (game === 'hotlap' || game === 'findbug') await noteDayRun(game, claim.name, score, device ?? 'desktop', result.entry.at)
 
   // The site's records (streaks, busiest day) catch up within their minute
   // (siteRecords.ts). Clearing them on every save made nearly every home page

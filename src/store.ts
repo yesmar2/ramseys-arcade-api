@@ -59,6 +59,8 @@ export type LeaderboardEntry = {
   score: number
   at: number
   device: DeviceType
+  /** On a daily's board for more than a day, where the score is day points (dayPointsBoard): the days they came from. */
+  days?: number
 }
 
 export function isDeviceType(value: unknown): value is DeviceType {
@@ -419,26 +421,69 @@ export type ClosedPeriod = 'weekly' | 'monthly'
 /**
  * Dailies: games with something new to play each day, the same for everyone (Hot Lap's track of the
  * day, Ace Chase's hole of the day, Find the Bug's five scenes of the day). One day's scores can't be
- * weighed against another day's, so every board of a daily is a day's: today's, whatever open period is
- * asked for, and a closed period's last day. The standings count a daily's places the same way. The
- * site marks these games `daily` in its data/games.ts. Find the Bug's board takes only a day's first
- * run (firstRun.ts).
+ * weighed against another day's, so a daily's board for a day is that day's runs, and its board for
+ * longer (the week, the month, all time) is its days' places: each day's board pays its players points
+ * by place, as the standings pay a board (placePoints), and the days add up (dayPointsBoard). Coming
+ * back every day counts, and a day's win stays in the week's standings. The site marks these games
+ * `daily` in its data/games.ts, and prints a daily's board for longer than a day in points. Find the
+ * Bug's board takes only a day's first run (firstRun.ts).
  */
 export const DAILY_GAMES: ReadonlySet<GameSlug> = new Set<GameSlug>(['hotlap', 'acechase', 'findbug'])
 
-/** The last day of a closed week or month, as a day key. */
-function lastDayOf(period: ClosedPeriod, periodKey: number): number {
-  if (period === 'weekly') return addDaysToDateKey(periodKey, 6)
-  const y = Math.floor(periodKey / 100)
-  const m = periodKey % 100
-  return addDaysToDateKey(m === 12 ? dateKey(y + 1, 1, 1) : dateKey(y, m + 1, 1), -1)
+/**
+ * The first day (YYYYMMDD) each daily's board was a day's: Ace Chase's held rounds of three holes before
+ * it was Today's Hole, and Find the Bug's an endless hunt, whose days weren't the same for everyone. Day
+ * points count from here.
+ */
+const DAILY_SINCE: Partial<Record<GameSlug, number>> = { hotlap: 20260926, acechase: 20260927, findbug: 20260927 }
+
+/**
+ * A daily's board for more than a day: one row a player, their day points (each day's board pays by
+ * place, placePoints), from the runs of those days in board order. A tie goes to whoever reached the
+ * total first: the latest of the days' best runs that make it up.
+ */
+function dayPointsBoard(game: GameSlug, runs: readonly LeaderboardEntry[]): LeaderboardEntry[] {
+  const since = DAILY_SINCE[game] ?? 0
+  const days = new Map<number, LeaderboardEntry[]>()
+  for (const run of runs) {
+    const key = keyOf(run.at)
+    if (key < since) continue
+    const list = days.get(key)
+    if (list) list.push(run)
+    else days.set(key, [run])
+  }
+  const totals = new Map<string, LeaderboardEntry & { days: number }>()
+  for (const dayRuns of days.values()) {
+    // In board order, so each player's first run on a day is their best that day.
+    const seen = new Set<string>()
+    const best: LeaderboardEntry[] = []
+    for (const run of dayRuns) {
+      if (seen.has(run.name)) continue
+      seen.add(run.name)
+      best.push(run)
+    }
+    best.forEach((run, i) => {
+      const points = placePoints(i + 1, best.length)
+      const had = totals.get(run.name)
+      if (!had) {
+        totals.set(run.name, { id: `days:${game}:${run.name}`, name: run.name, score: points, at: run.at, device: run.device, days: 1 })
+        return
+      }
+      had.score += points
+      had.days += 1
+      if (run.at > had.at) {
+        had.at = run.at
+        had.device = run.device
+      }
+    })
+  }
+  return [...totals.values()].sort(boardOrder)
 }
 
-/** A game's runs in a closed period: a daily's are its last day's (see DAILY_GAMES). */
+/** A game's runs in a closed period, in board order: a daily's are its days' points (see DAILY_GAMES). */
 function closedRuns(game: GameSlug, history: LeaderboardEntry[], period: ClosedPeriod, periodKey: number) {
-  if (!DAILY_GAMES.has(game)) return filterByClosedPeriod(history, period, periodKey)
-  const last = lastDayOf(period, periodKey)
-  return history.filter((e) => keyOf(e.at) === last)
+  const runs = filterByClosedPeriod(history, period, periodKey)
+  return DAILY_GAMES.has(game) ? dayPointsBoard(game, runs) : runs
 }
 
 export function filterByClosedPeriod(
@@ -769,9 +814,7 @@ export function periodWindow(period: Period, now: number): string {
   return String(keyOf(now))
 }
 
-async function poolView(game: GameSlug, asked: Period, now = Date.now()): Promise<PoolView> {
-  // A daily's boards are all the day's.
-  const period: Period = DAILY_GAMES.has(game) ? 'daily' : asked
+async function poolView(game: GameSlug, period: Period, now = Date.now()): Promise<PoolView> {
   const copy = await loadCopy()
   const history = copy.byGame.get(game) ?? []
   const epoch = copy.epoch
@@ -780,7 +823,9 @@ async function poolView(game: GameSlug, asked: Period, now = Date.now()): Promis
   const key = `${game}:${period}`
   const hit = poolViews.get(key)
   if (hit && hit.epoch === epoch && hit.version === version && hit.window === window) return hit
-  const entries = period === 'all' ? history.slice() : filterByPeriod(history, period, now)
+  // A daily's board for a day is the day's runs; for longer, its days' points (see DAILY_GAMES).
+  const runs = period === 'all' ? history : filterByPeriod(history, period, now)
+  const entries = DAILY_GAMES.has(game) && period !== 'daily' ? dayPointsBoard(game, runs) : period === 'all' ? history.slice() : runs
   // Board order, so a player's first run here is their best.
   const stamp = ++viewStamp
   let bestIndex = new Int32Array(playerRefs.size)

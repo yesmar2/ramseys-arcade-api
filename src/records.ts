@@ -300,34 +300,83 @@ const DEFS_BY_KEY = new Map(
 )
 
 /*
- * Course records: each Hot Lap track's fastest lap and each Ace Chase hole's fewest tries, a record a
- * track or hole, named after it (courseNames.ts, from the site's plans). What goes in them is what goes on
- * the course's own board (trackLaps.ts, holes.ts): its day's laps or results, and every one since, put in
- * by courseRecords.ts. A game's book lists the tracks or holes whose day has come, today's included.
+ * Course records: each Hot Lap track's fastest lap, each Ace Chase hole's fewest tries, and each Find the
+ * Bug day's fastest sweep, a record a track, hole or day, named after it (courseNames.ts, from the site's
+ * plans; a Find the Bug day by its date). What goes in them is what goes on the course's own board
+ * (trackLaps.ts, holes.ts; a Find the Bug day's is its day's, where only a first run counts): its day's
+ * laps or results, and every one since, put in by courseRecords.ts. A game's book lists those whose day
+ * has come, today's included.
  */
-const COURSES: Partial<
-  Record<GameSlug, { prefix: 'track' | 'hole'; firstDay: string; names: readonly string[]; unit: RecordDef['unit'] }>
-> = {
-  hotlap: { prefix: 'track', firstDay: HOTLAP_FIRST_DAY, names: HOTLAP_TRACK_NAMES, unit: 'ms' },
-  acechase: { prefix: 'hole', firstDay: ACECHASE_FIRST_DAY, names: ACECHASE_HOLE_NAMES, unit: 'count' },
+type Course = {
+  prefix: 'track' | 'hole' | 'day'
+  firstDay: string
+  unit: RecordDef['unit']
+  /** How many there are: a planned game's plan, and Find the Bug's days, which go on for good. */
+  count: number
+  /** A course's name, for its record's label. */
+  name: (n: number) => string
+}
+
+/** Find the Bug's Today's Wanted #1 was this day's (the site's games/findbug/daily.ts FIRST_DAY). */
+export const FINDBUG_FIRST_DAY = '2026-09-27'
+
+const courseDayWords = new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', weekday: 'short', month: 'short', day: 'numeric' })
+
+/** A game's day from its number: "Mon, Sep 28". */
+function courseDay(firstDay: string, n: number): string {
+  const [y, m, d] = firstDay.split('-').map(Number)
+  return courseDayWords.format(new Date(Date.UTC(y!, m! - 1, d! + n - 1, 12)))
+}
+
+const COURSES: Partial<Record<GameSlug, Course>> = {
+  hotlap: {
+    prefix: 'track',
+    firstDay: HOTLAP_FIRST_DAY,
+    unit: 'ms',
+    count: HOTLAP_TRACK_NAMES.length,
+    name: (n) => HOTLAP_TRACK_NAMES[n - 1] ?? `Track ${n}`,
+  },
+  acechase: {
+    prefix: 'hole',
+    firstDay: ACECHASE_FIRST_DAY,
+    unit: 'count',
+    count: ACECHASE_HOLE_NAMES.length,
+    name: (n) => ACECHASE_HOLE_NAMES[n - 1] ?? `Hole ${n}`,
+  },
+  findbug: {
+    prefix: 'day',
+    firstDay: FINDBUG_FIRST_DAY,
+    unit: 'ms',
+    count: Number.MAX_SAFE_INTEGER,
+    name: (n) => courseDay(FINDBUG_FIRST_DAY, n),
+  },
 }
 
 const courseDefs = new Map<string, RecordDef>()
 
-/** A track's or hole's record id: track-3, hole-12; null for a game without them or a number out of the plan. */
+/** A track's, hole's or day's record id: track-3, hole-12, day-2; null for a game without them or a number out of range. */
 export function courseRecordId(game: GameSlug, n: number): string | null {
   const course = COURSES[game]
-  return course && Number.isInteger(n) && n >= 1 && n <= course.names.length ? `${course.prefix}-${n}` : null
+  return course && Number.isInteger(n) && n >= 1 && n <= course.count ? `${course.prefix}-${n}` : null
 }
 
-/** Which track or hole a record is, or null for any other record. */
+/** Which track, hole or day a record is, or null for any other record. */
 export function courseOfRecord(game: GameSlug, recordId: string): number | null {
   const course = COURSES[game]
   if (!course) return null
-  const match = /^(track|hole)-(\d+)$/.exec(recordId)
+  const match = /^(track|hole|day)-(\d+)$/.exec(recordId)
   if (!match || match[1] !== course.prefix) return null
   const n = Number(match[2])
-  return n >= 1 && n <= course.names.length ? n : null
+  return n >= 1 && n <= course.count ? n : null
+}
+
+/** A game's course number on a day (YYYYMMDD): 1 on its first day; less than 1 before it. */
+export function courseOnDay(game: GameSlug, dayKey: number): number {
+  const course = COURSES[game]
+  if (!course) return 0
+  const day = Date.UTC(Math.floor(dayKey / 10_000), (Math.floor(dayKey / 100) % 100) - 1, dayKey % 100)
+  const [y, m, d] = course.firstDay.split('-').map(Number)
+  return Math.round((day - Date.UTC(y!, m! - 1, d!)) / 86_400_000) + 1
 }
 
 function courseDef(game: GameSlug, n: number): RecordDef {
@@ -335,21 +384,17 @@ function courseDef(game: GameSlug, n: number): RecordDef {
   let def = courseDefs.get(key)
   if (!def) {
     const course = COURSES[game]!
-    def = { id: `${course.prefix}-${n}`, game, label: `#${n} ${course.names[n - 1]}`, direction: 'lower', unit: course.unit }
+    def = { id: `${course.prefix}-${n}`, game, label: `#${n} ${course.name(n)}`, direction: 'lower', unit: course.unit }
     courseDefs.set(key, def)
   }
   return def
 }
 
-/** How many of a game's tracks or holes have had their day, today's included. */
+/** How many of a game's tracks, holes or days have had their day, today's included. */
 function coursesSoFar(game: GameSlug, now = Date.now()): number {
   const course = COURSES[game]
   if (!course) return 0
-  const key = boardDateKey(now)
-  const today = Date.UTC(Math.floor(key / 10_000), (Math.floor(key / 100) % 100) - 1, key % 100)
-  const [y, m, d] = course.firstDay.split('-').map(Number)
-  const days = Math.round((today - Date.UTC(y!, m! - 1, d!)) / 86_400_000) + 1
-  return Math.max(0, Math.min(course.names.length, days))
+  return Math.max(0, Math.min(course.count, courseOnDay(game, boardDateKey(now))))
 }
 
 export function listRecordDefs(game: GameSlug): RecordDef[] {

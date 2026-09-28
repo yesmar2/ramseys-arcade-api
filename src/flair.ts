@@ -3,7 +3,7 @@ import { AVATAR_GAME_PINS, AVATAR_PINS, AVATAR_RINGS, type AvatarPin, type Avata
 import { db } from './db/client.js'
 import { leaderboardScores } from './db/schema.js'
 import { getClaim } from './names.js'
-import { listGameRecords } from './records.js'
+import { courseOfRecord, listGameRecords } from './records.js'
 import { boardDateKey, previousBoardDateKey, rankForName, type GameSlug } from './store.js'
 import { bestTodayStreak } from './today.js'
 import { trophiesForName } from './trophies.js'
@@ -70,6 +70,8 @@ async function recordStanding(name: string): Promise<{ held: boolean; best: Flai
   for (const game of AVATAR_GAME_PINS) {
     const { records } = await listGameRecords(game, 'all', Date.now(), undefined, name)
     for (const r of records) {
+      // A daily's record for one of its days (Find the Bug's) is that day's win, which isn't the ring's kind of record.
+      if (courseOfRecord(game, r.id) != null) continue
       if (r.top?.name === name) held = true
       const rank = r.you?.rank
       if (rank != null && (!best || rank < best.rank)) best = { game, label: r.label, rank }

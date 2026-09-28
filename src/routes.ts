@@ -9,7 +9,8 @@ import { tellBeatenFriends } from './todayBeaten.js'
 import { isBanned } from './bans.js'
 import { clientIp, hashIp, takeToken } from './rateLimit.js'
 import { claimRun, peekRun } from './runs.js'
-import { claimFirstRunDay, FIRST_RUN_DAILIES, FIRST_RUN_ERRORS, FIRST_RUN_TTL_MS, firstRunProblem } from './firstRun.js'
+import { claimFirstRunDay, FIRST_RUN_DAILIES, FIRST_RUN_TTL_MS, firstRunError, firstRunProblem } from './firstRun.js'
+import { judgePours, minPourMs, poursSchema } from './halffull/save.js'
 import { flagIfSuspicious } from './scoreFlags.js'
 import { resolveBoardScope } from './groups.js'
 import { assertCanUseName, withAvatarId, withAvatarIds } from './names.js'
@@ -22,6 +23,7 @@ import {
   ALLOWED_GAMES,
   bestForName,
   bestsForName,
+  boardDateKey,
   boardsSummaryForPeriod,
   DAILY_GAMES,
   dailyDays,
@@ -135,6 +137,9 @@ leaderboardsRouter.get('/summary', async (req, res) => {
   res.json({ limit, period, games })
 })
 
+/** A board day key (YYYYMMDD) as the day it is, YYYY-MM-DD. */
+const dayOfKey = (key: number) => `${Math.floor(key / 10_000)}-${String(Math.floor(key / 100) % 100).padStart(2, '0')}-${String(key % 100).padStart(2, '0')}`
+
 const submitSchema = z.object({
   name: z.string().min(1).max(12),
   score: z.number().int().positive().max(1_000_000),
@@ -148,6 +153,8 @@ const submitSchema = z.object({
   pickups: z.number().int().min(0).max(500).optional(),
   /** Hot Lap: the day's blue car, in milliseconds, which its ticket ladder goes by. */
   pace: z.number().int().min(10_000).max(300_000).optional(),
+  /** Half Full: the day and its five locked levels, from which the API works out the score itself. */
+  pours: poursSchema.optional(),
 })
 
 /*
@@ -301,11 +308,30 @@ leaderboardsRouter.post('/:game', async (req, res) => {
     return
   }
 
-  const { name, score, token, device, runId, challengeId, pickups, pace } = parsed.data
+  const { name, token, device, runId, challengeId, pickups, pace, pours } = parsed.data
+  let score = parsed.data.score
   // Ace Chase's board takes each day's first bullseye from Today's Hole (dailyHole.ts), one an account a day.
   if (game === 'acechase') {
     res.status(409).json({ error: 'Ace Chase results come from Today’s Hole', code: 'TODAYS_HOLE_ONLY' })
     return
+  }
+  // Half Full's score is worked out here from the day's five pours (halffull/save.ts): the figure sent is never taken.
+  if (game === 'halffull') {
+    if (!pours) {
+      res.status(400).json({ error: 'A Half Full day is saved with its pours', code: 'POURS_REQUIRED' })
+      return
+    }
+    if (pours.day !== dayOfKey(boardDateKey(Date.now()))) {
+      res.status(409).json({ error: firstRunError(game, 'DAY_OVER'), code: 'DAY_OVER' })
+      return
+    }
+    const judged = judgePours(pours)
+    if (!judged.ok) {
+      res.status(400).json({ error: 'Those pours can’t be a run of today’s glasses', code: 'POURS_INVALID' })
+      return
+    }
+    if (judged.board !== score) console.warn(`[halffull] a day sent as ${score} works out at ${judged.board}; kept ${judged.board}`)
+    score = judged.board
   }
   if (score > scoreCeiling(game)) {
     res.status(400).json({ error: 'That score is not possible in this game', code: 'SCORE_OUT_OF_RANGE' })
@@ -339,6 +365,12 @@ leaderboardsRouter.post('/:game', async (req, res) => {
       return
     }
     durationMs = run.elapsedMs
+    // Five pours can't be locked faster than each glass's lock allows (halffull/save.ts minPourMs).
+    if (game === 'halffull' && run.elapsedMs < minPourMs(pours?.auto)) {
+      console.warn(`[anticheat] rejected halffull from account ${account.id}: five pours in ${run.elapsedMs}ms`)
+      res.status(400).json({ error: 'That score is not possible in the time the run took', code: 'SCORE_IMPLAUSIBLE' })
+      return
+    }
     const plausible = checkScoreRate(game, score, run.elapsedMs)
     if (!plausible.ok) {
       console.warn(
@@ -359,7 +391,7 @@ leaderboardsRouter.post('/:game', async (req, res) => {
   if (firstRunOnly) {
     const problem = await firstRunProblem(account.id, game, runId ?? null)
     if (problem) {
-      res.status(409).json({ error: FIRST_RUN_ERRORS[problem], code: problem })
+      res.status(409).json({ error: firstRunError(game, problem), code: problem })
       return
     }
   }
@@ -402,7 +434,7 @@ leaderboardsRouter.post('/:game', async (req, res) => {
   }
   // Two saves of the day racing (two devices): the first to hold the day is the one that counts.
   if (firstRunOnly && !(await claimFirstRunDay(account.id, game))) {
-    res.status(409).json({ error: FIRST_RUN_ERRORS.DAILY_DONE, code: 'DAILY_DONE' })
+    res.status(409).json({ error: firstRunError(game, 'DAILY_DONE'), code: 'DAILY_DONE' })
     return
   }
 
@@ -425,8 +457,8 @@ leaderboardsRouter.post('/:game', async (req, res) => {
     score,
     device ?? 'desktop',
   )
-  // A lap of today's Hot Lap track, or Find the Bug's run of the day, goes in that day's record book too (courseRecords.ts).
-  if (game === 'hotlap' || game === 'findbug') await noteDayRun(game, claim.name, score, device ?? 'desktop', result.entry.at)
+  // A lap of today's Hot Lap track, or Find the Bug's or Half Full's run of the day, goes in that day's record book too (courseRecords.ts).
+  if (DAILY_GAMES.has(game)) await noteDayRun(game, claim.name, score, device ?? 'desktop', result.entry.at)
 
   // The site's records (streaks, busiest day) catch up within their minute
   // (siteRecords.ts). Clearing them on every save made nearly every home page
@@ -460,19 +492,21 @@ leaderboardsRouter.post('/:game', async (req, res) => {
       })
     : null
 
-  // Tickets for a run the server timed; one saved without a run id pays none.
-  const tickets: RunTickets | null = runId
+  // Tickets for a run the server timed; one saved without a run id pays none, but for a Half Full day, whose
+  // score the server worked out itself and which saves once a day: it's paid under the day.
+  const payRef = runId ?? (game === 'halffull' ? `halffull-${boardDateKey(result.entry.at)}` : null)
+  const tickets: RunTickets | null = payRef
     ? await payRun({
         accountId: account.id,
         game,
-        runId,
+        runId: payRef,
         entry: result.entry,
         score,
         priorBest,
         pickups: game === 'crosswalk' ? plausiblePickups(score, pickups) : 0,
         paceMs: game === 'hotlap' ? pace : null,
       }).catch((err: unknown) => {
-        console.warn(`[tickets] ${game} run ${runId}:`, err)
+        console.warn(`[tickets] ${game} run ${payRef}:`, err)
         return null
       })
     : null

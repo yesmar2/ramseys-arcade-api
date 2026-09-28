@@ -5,16 +5,16 @@ import { boardDateKey, boardDayStart, type GameSlug } from './store.js'
 
 /*
  * Dailies whose day's result is the first run: Find the Bug, five scenes that are the same for everyone
- * all day. Once you know where the day's bugs hide, a second run is easy, so the board takes one run an
- * account a day, and only the first the account started that day. Replays are practice, which the site
- * never sends.
+ * all day, and Half Full, five glasses. Once you know where the day's bugs hide, or where each glass is
+ * really half, a second run is easy, so the board takes one run an account a day, and only the first the
+ * account started that day. Replays are practice, which the site never sends.
  *
  * A run opened while signed out belongs to whoever signs in and saves it (runs.ts), so the API can't tell
  * which of a signed-out player's runs came first; the site keeps that on the device. What it can tell, it
  * holds: a run opened signed in has to be the account's first of the day, and a signed-out one can't
  * have started after it.
  */
-export const FIRST_RUN_DAILIES: ReadonlySet<GameSlug> = new Set<GameSlug>(['findbug'])
+export const FIRST_RUN_DAILIES: ReadonlySet<GameSlug> = new Set<GameSlug>(['findbug', 'halffull'])
 
 /**
  * How long the day's first run stays good: longer than any day, so it lasts until its day ends (after
@@ -28,6 +28,17 @@ export const FIRST_RUN_ERRORS: Record<FirstRunCode, string> = {
   DAILY_DONE: 'You’ve played today’s already: your first run is your result, and the rest are practice',
   NOT_FIRST_RUN: 'Only your first run of the day counts, and this wasn’t it',
   DAY_OVER: 'That run started on an earlier day’s scenes, so it can’t go on today’s board',
+}
+
+const HALFFULL_ERRORS: Record<FirstRunCode, string> = {
+  DAILY_DONE: 'You’ve poured today’s already: your first pour is your result, and the rest are practice',
+  NOT_FIRST_RUN: 'Only your first pour of the day counts, and this wasn’t it',
+  DAY_OVER: 'That pour began on an earlier day’s glasses, so it can’t go on today’s board',
+}
+
+/** Why a first-run daily's save was refused, in the game's own words. */
+export function firstRunError(game: GameSlug, code: FirstRunCode): string {
+  return (game === 'halffull' ? HALFFULL_ERRORS : FIRST_RUN_ERRORS)[code]
 }
 
 /** The claim that holds an account's day: one a game a day, in run_claims, where the insert is the lock. */

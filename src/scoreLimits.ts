@@ -21,6 +21,8 @@ export const TRIES_SCORED_GAMES: ReadonlySet<GameSlug> = new Set<GameSlug>(['ace
 
 /** The largest score a real run of this game can post. */
 export function scoreCeiling(game: GameSlug): number {
+  // Half Full's day, in hundredths of a point: 10,000 is five pours dead on half.
+  if (game === 'halffull') return 10_000
   if (TIME_SCORED_GAMES.has(game)) return TIME_SCORE_BASE - 1
   if (TRIES_SCORED_GAMES.has(game)) return TRIES_SCORE_BASE - 1
   return TIME_SCORE_BASE
@@ -83,6 +85,11 @@ type ScoreRule =
    * Hole (dailyHole.ts), one result an account a day.
    */
   | { kind: 'tries' }
+  /**
+   * The API works the score out itself from what was played (Half Full's five levels, halffull/save.ts),
+   * so the figure the site sends is never taken; how long the pours took is held to its own floor.
+   */
+  | { kind: 'judged' }
 
 const SCORE_RULES: Record<GameSlug, ScoreRule> = {
   asteroids: { kind: 'rate', floor: 2_000, perSecond: 200 },
@@ -114,6 +121,7 @@ const SCORE_RULES: Record<GameSlug, ScoreRule> = {
   findbug: { kind: 'time' },
   spotter: { kind: 'time' },
   hotlap: { kind: 'time' },
+  halffull: { kind: 'judged' },
 }
 
 /**
@@ -158,7 +166,7 @@ export function checkScoreRate(
   elapsedMs: number,
 ): PlausibilityVerdict {
   const rule = SCORE_RULES[game]
-  if (!rule || rule.kind === 'tries') return { ok: true }
+  if (!rule || rule.kind === 'tries' || rule.kind === 'judged') return { ok: true }
 
   if (rule.kind === 'time') {
     const impliedMs = TIME_SCORE_BASE - score

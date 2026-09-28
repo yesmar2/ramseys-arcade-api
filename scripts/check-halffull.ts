@@ -5,12 +5,19 @@
  *
  * Run from this repo with the site checked out beside it: `npm run check:halffull`.
  */
+import { HALFFULL_FIRST_DAY } from '../src/halffull/launch.js'
 import * as apiPlan from '../src/halffull/plan.js'
 import * as apiScore from '../src/halffull/score.js'
 import * as webPlan from '../../ramseys-arcade/src/games/halffull/plan.js'
 import * as webScore from '../../ramseys-arcade/src/games/halffull/score.js'
+import { FIRST_DAY as WEB_FIRST_DAY } from '../../ramseys-arcade/src/games/halffull/daily.js'
 
-const FIRST = '2026-09-27'
+// Half Full #1 is one day on both sides: the board and the book count from it, and the site numbers from it.
+if (HALFFULL_FIRST_DAY !== WEB_FIRST_DAY) {
+  console.error(`Half Full's first day is ${HALFFULL_FIRST_DAY} here and ${WEB_FIRST_DAY} on the site.`)
+  process.exit(1)
+}
+const FIRST = HALFFULL_FIRST_DAY
 const DAYS = Number(process.argv[2] ?? 540)
 
 function addDays(day: string, n: number): string {

@@ -98,6 +98,21 @@ export const ACECHASE_LADDER: Ladder = {
 }
 
 /**
+ * Half Full, by the day's tier (the site's score.ts tierFor; the board is hundredths of a point): a pour 3,
+ * Sloshy 5, Good Pour 7, Steady Hand 10, Spot On 15.
+ */
+export const HALFFULL_LADDER: Ladder = {
+  base: 3,
+  baseLabel: 'a pour today',
+  steps: [
+    { at: 7_600, tickets: 5, label: 'Sloshy' },
+    { at: 8_600, tickets: 7, label: 'Good Pour' },
+    { at: 9_200, tickets: 10, label: 'Steady Hand' },
+    { at: 9_600, tickets: 15, label: 'Spot On' },
+  ],
+}
+
+/**
  * Where a blue car can lap: the plan's made tracks pace 40–70 s and its landmarks (real circuits) up to
  * 100 s (the site's hotlap courses.ts and landmarks.ts). Only the site's own word is held to it.
  */
@@ -143,6 +158,7 @@ export function plannedPace(now = Date.now()): number | null {
 /** A game's ladder today. Hot Lap's goes by the plan's blue car for the day, or else the one the site says. */
 export async function ladderFor(game: GameSlug, now = Date.now(), paceMs?: number | null): Promise<Ladder> {
   if (game === 'acechase') return ACECHASE_LADDER
+  if (game === 'halffull') return HALFFULL_LADDER
   if (game === 'hotlap') return hotlapLadder(plannedPace(now) ?? paceMs)
   return drawnLadder(game, now)
 }

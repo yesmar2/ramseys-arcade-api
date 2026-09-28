@@ -2,6 +2,7 @@ import { asc, desc, eq, sql } from 'drizzle-orm'
 import { db } from './db/client.js'
 import { leaderboardScores } from './db/schema.js'
 import { announceRewrite, insertWithFeed, MULTI_INSTANCE, onChange, onRewrite } from './feed.js'
+import { HALFFULL_FIRST_KEY } from './halffull/launch.js'
 
 export const ALLOWED_GAMES = [
   'asteroids',
@@ -23,6 +24,7 @@ export const ALLOWED_GAMES = [
   'fireflies',
   'acechase',
   'hotlap',
+  'halffull',
 ] as const
 export type GameSlug = (typeof ALLOWED_GAMES)[number]
 
@@ -100,6 +102,7 @@ function emptyStore(): Store {
     fireflies: [],
     acechase: [],
     hotlap: [],
+    halffull: [],
   }
 }
 
@@ -152,6 +155,7 @@ export async function replaceAllBoards(next: Store) {
     fireflies: Array.isArray(next.fireflies) ? next.fireflies : [],
     acechase: Array.isArray(next.acechase) ? next.acechase : [],
     hotlap: Array.isArray(next.hotlap) ? next.hotlap : [],
+    halffull: Array.isArray(next.halffull) ? next.halffull : [],
   }
   await db().transaction(async (tx) => {
     await tx.delete(leaderboardScores)
@@ -420,22 +424,27 @@ export type ClosedPeriod = 'weekly' | 'monthly'
 
 /**
  * Dailies: games with something new to play each day, the same for everyone (Hot Lap's track of the
- * day, Ace Chase's hole of the day, Find the Bug's five scenes of the day). One day's scores can't be
- * weighed against another day's, so a daily's board for a day is that day's runs, and its board for
+ * day, Ace Chase's hole of the day, Find the Bug's five scenes of the day, Half Full's five glasses). One
+ * day's scores can't be weighed against another day's, so a daily's board for a day is that day's runs, and its board for
  * longer (the week, the month, all time) is its days' places: each day's board pays its players points
  * by place, as the standings pay a board (placePoints), and the days add up (dayPointsBoard). Coming
  * back every day counts, and a day's win stays in the week's standings. The site marks these games
  * `daily` in its data/games.ts, and prints a daily's board for longer than a day in points. Find the
- * Bug's board takes only a day's first run (firstRun.ts).
+ * Bug's and Half Full's boards take only a day's first run (firstRun.ts).
  */
-export const DAILY_GAMES: ReadonlySet<GameSlug> = new Set<GameSlug>(['hotlap', 'acechase', 'findbug'])
+export const DAILY_GAMES: ReadonlySet<GameSlug> = new Set<GameSlug>(['hotlap', 'acechase', 'findbug', 'halffull'])
 
 /**
  * The first day (YYYYMMDD) each daily's board was a day's: Ace Chase's held rounds of three holes before
  * it was Today's Hole, and Find the Bug's an endless hunt, whose days weren't the same for everyone. Day
  * points count from here.
  */
-export const DAILY_SINCE: Partial<Record<GameSlug, number>> = { hotlap: 20260926, acechase: 20260927, findbug: 20260927 }
+export const DAILY_SINCE: Partial<Record<GameSlug, number>> = {
+  hotlap: 20260926,
+  acechase: 20260927,
+  findbug: 20260927,
+  halffull: HALFFULL_FIRST_KEY,
+}
 
 /**
  * A daily's board for more than a day: one row a player, their day points (each day's board pays by

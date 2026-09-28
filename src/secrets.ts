@@ -52,11 +52,14 @@ const MARATHON_RUNS = 50
 
 /** Games shown as a number of points, where a score's digits mean something to the player. */
 const POINTS_GAMES: ReadonlySet<GameSlug> = new Set(
-  ALLOWED_GAMES.filter((g) => g !== 'acechase' && g !== 'spotter' && g !== 'findbug' && g !== 'hotlap'),
+  ALLOWED_GAMES.filter((g) => g !== 'acechase' && g !== 'spotter' && g !== 'findbug' && g !== 'hotlap' && g !== 'halffull'),
 )
 
-/** Every game the site lists (data/games.ts hides Simon and Spotter): the Grand Tour's. */
-const TOUR_GAMES: readonly GameSlug[] = ALLOWED_GAMES.filter((g) => g !== 'simon' && g !== 'spotter')
+/**
+ * Every game the site lists (data/games.ts hides Simon and Spotter): the Grand Tour's. Half Full joins it
+ * the day the site lists it (it's on deck until then, and nobody could finish a tour that needed it).
+ */
+const TOUR_GAMES: readonly GameSlug[] = ALLOWED_GAMES.filter((g) => g !== 'simon' && g !== 'spotter' && g !== 'halffull')
 
 /**
  * The player's own clock, as the site sends it with what it posts (X-TZ-Offset: Date#getTimezoneOffset,

@@ -2,11 +2,12 @@ import { eq, sql } from 'drizzle-orm'
 import { ACECHASE_FIRST_DAY, ACECHASE_HOLE_NAMES, HOTLAP_TRACK_NAMES } from './courseNames.js'
 import { db } from './db/client.js'
 import { recordScores } from './db/schema.js'
+import { HALFFULL_FIRST_DAY } from './halffull/launch.js'
 import { HOTLAP_FIRST_DAY } from './hotlapPace.js'
 import { announceRewrite, insertWithFeed, MULTI_INSTANCE, onChange, onRewrite } from './feed.js'
 import { getClaim } from './names.js'
 import { notify } from './notifications.js'
-import { clock, gameLabel, spanWords } from './words.js'
+import { clock, gameLabel, scoreFigure, spanWords } from './words.js'
 import {
   ALLOWED_GAMES,
   boardDateKey,
@@ -244,6 +245,7 @@ export const SCORE_STREAK_THRESHOLDS: Record<GameSlug, number> = {
   // Dailies: none kept (see buildCrossRunStreakRecords).
   acechase: 0,
   hotlap: 0,
+  halffull: 0,
 }
 
 function thresholdStreakLabel(game: GameSlug, threshold: number): string {
@@ -300,17 +302,20 @@ const DEFS_BY_KEY = new Map(
 )
 
 /*
- * Course records: each Hot Lap track's fastest lap, each Ace Chase hole's fewest tries, and each Find the
- * Bug day's fastest sweep, a record a track, hole or day, named after it (courseNames.ts, from the site's
- * plans; a Find the Bug day by its date). What goes in them is what goes on the course's own board
- * (trackLaps.ts, holes.ts; a Find the Bug day's is its day's, where only a first run counts): its day's
- * laps or results, and every one since, put in by courseRecords.ts. A game's book lists those whose day
- * has come, today's included.
+ * Course records: each Hot Lap track's fastest lap, each Ace Chase hole's fewest tries, each Find the Bug
+ * day's fastest sweep, and each Half Full day's closest pour, a record a track, hole or day, named after it
+ * (courseNames.ts, from the site's plans; a Find the Bug or Half Full day by its date). What goes in them
+ * is what goes on the course's own board (trackLaps.ts, holes.ts; a Find the Bug or Half Full day's is its
+ * day's, where only a first run counts): its day's laps or results, and every one since, put in by
+ * courseRecords.ts. A game's book lists those whose day has come, today's included.
  */
 type Course = {
-  prefix: 'track' | 'hole' | 'day'
+  /** The record's id before its number. A Half Full day's is `pour-`, so the site can print it as a percent. */
+  prefix: 'track' | 'hole' | 'day' | 'pour'
   firstDay: string
   unit: RecordDef['unit']
+  /** Which way a record goes: fewer tries and a faster time are lower, a closer pour is higher. */
+  direction: RecordDef['direction']
   /** How many there are: a planned game's plan, and Find the Bug's days, which go on for good. */
   count: number
   /** A course's name, for its record's label. */
@@ -333,6 +338,7 @@ const COURSES: Partial<Record<GameSlug, Course>> = {
     prefix: 'track',
     firstDay: HOTLAP_FIRST_DAY,
     unit: 'ms',
+    direction: 'lower',
     count: HOTLAP_TRACK_NAMES.length,
     name: (n) => HOTLAP_TRACK_NAMES[n - 1] ?? `Track ${n}`,
   },
@@ -340,6 +346,7 @@ const COURSES: Partial<Record<GameSlug, Course>> = {
     prefix: 'hole',
     firstDay: ACECHASE_FIRST_DAY,
     unit: 'count',
+    direction: 'lower',
     count: ACECHASE_HOLE_NAMES.length,
     name: (n) => ACECHASE_HOLE_NAMES[n - 1] ?? `Hole ${n}`,
   },
@@ -347,8 +354,18 @@ const COURSES: Partial<Record<GameSlug, Course>> = {
     prefix: 'day',
     firstDay: FINDBUG_FIRST_DAY,
     unit: 'ms',
+    direction: 'lower',
     count: Number.MAX_SAFE_INTEGER,
     name: (n) => courseDay(FINDBUG_FIRST_DAY, n),
+  },
+  // A day's board figure, hundredths of a point (91.2% is 9120), where only a first pour counts.
+  halffull: {
+    prefix: 'pour',
+    firstDay: HALFFULL_FIRST_DAY,
+    unit: 'count',
+    direction: 'higher',
+    count: Number.MAX_SAFE_INTEGER,
+    name: (n) => courseDay(HALFFULL_FIRST_DAY, n),
   },
 }
 
@@ -364,7 +381,7 @@ export function courseRecordId(game: GameSlug, n: number): string | null {
 export function courseOfRecord(game: GameSlug, recordId: string): number | null {
   const course = COURSES[game]
   if (!course) return null
-  const match = /^(track|hole|day)-(\d+)$/.exec(recordId)
+  const match = /^(track|hole|day|pour)-(\d+)$/.exec(recordId)
   if (!match || match[1] !== course.prefix) return null
   const n = Number(match[2])
   return n >= 1 && n <= course.count ? n : null
@@ -384,7 +401,7 @@ function courseDef(game: GameSlug, n: number): RecordDef {
   let def = courseDefs.get(key)
   if (!def) {
     const course = COURSES[game]!
-    def = { id: `${course.prefix}-${n}`, game, label: `#${n} ${course.name(n)}`, direction: 'lower', unit: course.unit }
+    def = { id: `${course.prefix}-${n}`, game, label: `#${n} ${course.name(n)}`, direction: course.direction, unit: course.unit }
     courseDefs.set(key, def)
   }
   return def
@@ -1243,6 +1260,7 @@ export {
 
 /** A record's value the way its book prints it: 47.5s for a clock, 23 for a count, 45.18s for a lap, 2 tries. */
 function recordValue(def: RecordDef, value: number): string {
+  if (def.id.startsWith('pour-')) return scoreFigure('halffull', value)
   if (courseOfRecord(def.game, def.id) != null) {
     return def.unit === 'ms' ? clock(value, 2) : `${value.toLocaleString('en-US')} ${value === 1 ? 'try' : 'tries'}`
   }

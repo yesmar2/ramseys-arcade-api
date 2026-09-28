@@ -92,6 +92,15 @@ export const TODAY_MILESTONES: readonly TodayMilestone[] = [
 const LOOKBACK_DAYS = 400
 /** The week strip under the streak: this many days, ending today. */
 const WEEK_DAYS = 7
+/** The Today page's calendar of kept days: five weeks of days, ending today. */
+const CALENDAR_DAYS = 35
+
+/**
+ * The first board day the Today set could be kept: the day the last of the dailies on its card from the
+ * start became a day's game (store.ts DAILY_SINCE), which was Find the Bug's Today's Wanted #1 on
+ * 2026-09-27. A day before it wasn't missed; there was nothing to keep.
+ */
+const TODAY_SINCE = Math.max(...TODAY_DAILIES.filter((d) => d.from === 0).map((d) => DAILY_SINCE[d.game] ?? 0))
 
 export type TodayState = {
   /** The boards' day, YYYY-MM-DD. */
@@ -114,6 +123,10 @@ export type TodayState = {
   streak: { current: number; best: number }
   /** The last seven days, oldest first, ending today: whether each was a streak day, and a Full ticket. */
   week: { day: string; kept: boolean; full: boolean }[]
+  /** The same for the last 35 days, the Today page's calendar; `week` is its last seven, kept for older sites. */
+  days: { day: string; kept: boolean; full: boolean }[]
+  /** The first day the Today set could be kept (TODAY_SINCE), YYYY-MM-DD: days before it are blank, not missed. */
+  since: string
 }
 
 const dayOf = (key: number) => {
@@ -184,9 +197,9 @@ export async function todayState(accountId: string, now = Date.now()): Promise<T
   const today = boardDateKey(now)
   const played = await playedDays(accountId, now)
   const kept = keptDays(played)
-  const week: TodayState['week'] = []
-  for (let i = 0, key = today; i < WEEK_DAYS; i++, key = previousBoardDateKey(key)) {
-    week.unshift({ day: dayOf(key), kept: kept.has(key), full: fullDay(doneOn(played, key), key) })
+  const days: TodayState['days'] = []
+  for (let i = 0, key = today; i < CALENDAR_DAYS; i++, key = previousBoardDateKey(key)) {
+    days.unshift({ day: dayOf(key), kept: kept.has(key), full: fullDay(doneOn(played, key), key) })
   }
   const { live, need } = todayRule(today)
   const lap = played.track.get(today)
@@ -211,7 +224,9 @@ export async function todayState(accountId: string, now = Date.now()): Promise<T
     count: live.length,
     full: fullDay(doneOn(played, today), today),
     streak: streaksOf(kept, today),
-    week,
+    week: days.slice(-WEEK_DAYS),
+    days,
+    since: dayOf(TODAY_SINCE),
   }
 }
 

@@ -99,7 +99,7 @@ export async function tellBeatenFriends(opts: { accountId: string; game: TodayGa
       kind: 'today-beaten',
       title: `${mine.name} beat ${what.mine} ${what.daily}`,
       body: `${resultWords(opts.game, yours)} to your ${resultWords(opts.game, theirResult)}.${again}`,
-      href: '/?focus=today',
+      href: '/today',
       meta: { actor: mine.name, game: opts.game, ...(opts.game === 'hotlap' ? { playHref: '/games/hotlap/play' } : {}) },
       digestKey: `today-beaten:${day}:${opts.game}:${opts.accountId}`,
       once: true,

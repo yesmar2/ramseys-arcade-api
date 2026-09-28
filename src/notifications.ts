@@ -274,7 +274,10 @@ function readMeta(row: NotificationRow): NotificationMeta {
   return meta
 }
 
-/** Links filed as `#/…` before the site moved to paths, and two that never led anywhere. */
+/**
+ * Links filed as `#/…` before the site moved to paths, two that never led anywhere, and today's ticket on
+ * the home page, which is the Today page now.
+ */
 function currentHref(row: NotificationRow, meta: NotificationMeta): string | null {
   const href = row.href
   if (!href) return null
@@ -282,6 +285,7 @@ function currentHref(row: NotificationRow, meta: NotificationMeta): string | nul
     return meta.actor ? `/rank/${encodeURIComponent(meta.actor)}/week` : '/rank/week?focus=friends'
   }
   if (href === '#/rank') return '/rank/all?focus=trophies'
+  if (href === '/?focus=today') return '/today'
   if (href.startsWith('#/')) return href.slice(1)
   return href
 }

@@ -310,18 +310,23 @@ const bop: Model = (q, rng) => {
   return finish('bop', rng, score, play, [])
 }
 
-/** Five par-7 holes; each pays 100 a stroke under par plus two, and an ace 200 more. */
+/** Putt's five short holes and their pars (the site's games/putt/course.ts). */
+const PUTT_PARS = [2, 2, 2, 2, 3]
+
+/** Each hole pays 100 a stroke under par plus two, and an ace 200 more. */
 const putt: Model = (q, rng) => {
-  const offset = lerp(2.6, -0.5, q)
-  const spread = lerp(1.6, 1.0, q)
+  // Strokes over par a hole: a casual player's about one over, the best half a stroke under, aces and all.
+  const offset = lerp(1, -0.5, q)
+  const spread = lerp(0.8, 0.6, q)
   let score = 0
   let strokes = 0
-  for (let hole = 0; hole < 5; hole++) {
-    const s = Math.max(1, Math.round(7 + offset + gauss(rng) * spread))
+  for (const par of PUTT_PARS) {
+    const s = Math.max(1, Math.round(par + offset + gauss(rng) * spread))
     strokes += s
-    score += Math.max(0, 9 - s) * 100 + (s === 1 ? 200 : 0)
+    score += Math.max(0, par + 2 - s) * 100 + (s === 1 ? 200 : 0)
   }
-  const play = strokes * between(rng, 6.5, 9.5) + 5 * between(rng, 3, 5)
+  // Each hole's fly-over and drop, and each stroke's look, pull and roll.
+  const play = strokes * between(rng, 5.5, 8) + PUTT_PARS.length * between(rng, 3, 4.5)
   return finish('putt', rng, score, play, [])
 }
 

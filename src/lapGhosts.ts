@@ -6,10 +6,12 @@ import type { GameSlug } from './store.js'
 import { trackBoard } from './trackLaps.js'
 
 /*
- * The ghost of the fastest lap on each Hot Lap track, for everyone to race: today's #1 on today's track,
- * a past track's record holder on a past one. The site sends a lap's path once the lap is saved; it's kept
- * when its tag is on the track's board with a lap at least that fast, and it beats the ghost kept so far. A
- * path is where the car was ten times a second from the lights: x, y and heading, one after another.
+ * The ghost of each Hot Lap track's #1, for everyone to race: today's #1 on today's track, a past track's
+ * record holder on a past one. The site sends a lap's path once the lap is saved, and it's kept when the lap
+ * is its tag's best on the track's board, to the millisecond, and faster than the ghost kept so far. A path
+ * is where the car was ten times a second from the lights: x, y and heading, one after another. The #1
+ * is always told, path or not: a lap saved before laps sent their paths, or from an old copy of the site,
+ * has none, and the site then drives the blue car's line at the #1's time.
  */
 
 /** Samples a second in a kept path. */
@@ -45,23 +47,31 @@ export function ghostProblem(timeMs: number, splits: unknown, path: unknown): st
   return null
 }
 
-/** The track's ghost, while its tag is still on the track's board with a lap at least that fast. */
-export async function ghostFor(game: GameSlug, track: number): Promise<LapGhost | null> {
+/** The track's #1, and their lap's path if it came with one. Null while nobody has a lap on the track. */
+export async function ghostFor(
+  game: GameSlug,
+  track: number,
+): Promise<{ name: string; timeMs: number; ghost: LapGhost | null } | null> {
+  const board = await trackBoard(game, track)
+  const top = board[0]
+  if (!top) return null
+  const timeMs = TIME_SCORE_BASE - top.score
   const [row] = await db()
     .select()
     .from(lapGhosts)
     .where(and(eq(lapGhosts.game, game), eq(lapGhosts.track, track)))
     .limit(1)
-  if (!row) return null
-  const board = await trackBoard(game, track)
-  const entry = board.find((e) => e.name === row.name)
-  if (!entry || entry.score < TIME_SCORE_BASE - row.timeMs) return null
-  return { name: row.name, timeMs: row.timeMs, splits: row.splits as number[], path: row.path as number[], at: row.at }
+  const theirs = row && row.name === top.name && row.timeMs === timeMs
+  return {
+    name: top.name,
+    timeMs,
+    ghost: theirs ? { name: row.name, timeMs: row.timeMs, splits: row.splits as number[], path: row.path as number[], at: row.at } : null,
+  }
 }
 
 /**
  * Keep a lap's ghost if it's the track's fastest yet. `names` are the tags the sender plays under: the lap
- * must be on the board under one of them, with that tag's best at least as fast. Answers whether it was kept.
+ * must be the best on the board under one of them, to the millisecond. Answers whether it was kept.
  */
 export async function keepGhost(input: {
   game: GameSlug
@@ -76,12 +86,10 @@ export async function keepGhost(input: {
 }): Promise<boolean> {
   if (!input.names.includes(input.name)) return false
   const board = await trackBoard(input.game, input.track)
-  const onBoard = (name: string, timeMs: number) => {
-    const entry = board.find((e) => e.name === name)
-    return entry != null && entry.score >= TIME_SCORE_BASE - timeMs
-  }
+  // The tag's lap on the board: a slower lap of theirs would be a ghost the board doesn't show.
+  const onBoard = (name: string, timeMs: number) => board.some((e) => e.name === name && e.score === TIME_SCORE_BASE - timeMs)
   if (!onBoard(input.name, input.timeMs)) return false
-  // A ghost whose lap has left the board (a tag banned, a lap taken off) gives way to any lap.
+  // A ghost that's no longer its tag's lap on the board (beaten since, a tag banned, a lap taken off) gives way to any lap.
   const [held] = await db()
     .select({ name: lapGhosts.name, timeMs: lapGhosts.timeMs })
     .from(lapGhosts)

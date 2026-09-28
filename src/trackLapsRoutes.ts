@@ -19,7 +19,7 @@ import { addTrackLap, fastestBelievable, TRACK_GAMES, trackBoard, trackDayIso, t
  *   GET  /tracks/:game/:n/board?name=  a track's board: the top ten and where you stand
  *   POST /tracks/:game/:n/laps         a lap on a track after its day, checked as a day's lap is; into the
  *                                      track's record book too, and taking the record pays RECORD_TICKETS once
- *   GET  /tracks/:game/:n/ghost        the track's fastest lap with its path, for everyone to race (lapGhosts.ts)
+ *   GET  /tracks/:game/:n/ghost        the track's #1, and their lap's path if it came with one (lapGhosts.ts)
  *   POST /tracks/:game/:n/ghost        a saved lap's path, kept if it's the track's fastest yet
  */
 export const tracksRouter = Router()
@@ -210,22 +210,21 @@ tracksRouter.get('/:game/:n/ghost', async (req, res) => {
     res.status(404).json({ error: 'No such track' })
     return
   }
-  const ghost = await ghostFor(game, n)
-  if (!ghost) {
-    res.status(404).json({ error: 'No ghost on this track yet', code: 'NO_GHOST' })
+  const top = await ghostFor(game, n)
+  if (!top) {
+    res.status(404).json({ error: 'Nobody has a lap on this track yet', code: 'NO_GHOST' })
     return
   }
-  const [holder] = await withAvatarIds([{ name: ghost.name }])
+  const [holder] = await withAvatarIds([{ name: top.name }])
   res.setHeader('Cache-Control', 'public, max-age=30')
   res.json({
     game,
     track: n,
-    name: ghost.name,
+    name: top.name,
     avatarId: holder?.avatarId,
-    time: ghost.timeMs,
-    splits: ghost.splits,
-    rate: GHOST_RATE,
-    path: ghost.path,
+    time: top.timeMs,
+    // Without a path, the site drives the blue car's line at this time.
+    ...(top.ghost ? { splits: top.ghost.splits, rate: GHOST_RATE, path: top.ghost.path } : { path: null }),
   })
 })
 

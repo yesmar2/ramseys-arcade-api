@@ -46,7 +46,21 @@ export const AVATAR_PATTERNS = ['plain', 'rings', 'split', 'stripes', 'dots', 'b
 export type AvatarPattern = (typeof AVATAR_PATTERNS)[number]
 
 /** The four anyone can wear, then the prize counter's finishes (prizes.ts), which only their owner can. */
-export const AVATAR_BADGES = ['bold', 'deep', 'night', 'paper', 'glitter', 'starfield', 'pixels', 'neon', 'lava', 'holo', 'aurora'] as const
+export const AVATAR_BADGES = [
+  'bold',
+  'deep',
+  'night',
+  'paper',
+  'glitter',
+  'starfield',
+  'pixels',
+  'neon',
+  'lava',
+  'holo',
+  'aurora',
+  // Earned by a 30-day Today streak (today.ts), not traded for.
+  'gilded',
+] as const
 export type AvatarBadge = (typeof AVATAR_BADGES)[number]
 
 /** Worn around the badge, for how you've placed. */
@@ -73,7 +87,7 @@ export const AVATAR_GAME_PINS = [
 ] as const
 
 /** Worn on the badge's edge, for what you've done. */
-export const AVATAR_PINS = ['welcome', 'games', 'streak', 'crown', 'bugnet', ...AVATAR_GAME_PINS] as const
+export const AVATAR_PINS = ['welcome', 'games', 'streak', 'today', 'crown', 'bugnet', ...AVATAR_GAME_PINS] as const
 export type AvatarPin = (typeof AVATAR_PINS)[number]
 
 /** Palette size. Indices are what get saved, so this only ever grows. */

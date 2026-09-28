@@ -4,6 +4,7 @@ import { z } from 'zod'
 import { pageParams } from './paging.js'
 import { accountFromRequest } from './auth.js'
 import { clientOffset, secretsForRun } from './secrets.js'
+import { settleToday } from './today.js'
 import { isBanned } from './bans.js'
 import { clientIp, hashIp, takeToken } from './rateLimit.js'
 import { claimRun, peekRun } from './runs.js'
@@ -487,6 +488,13 @@ leaderboardsRouter.post('/:game', async (req, res) => {
     console.warn(`[secrets] ${game} run for ${claim.name}:`, err)
     return []
   })
+
+  // A daily of the Today set (today.ts) may finish the day's punch card and reach a streak reward.
+  if (game === 'hotlap' || game === 'findbug') {
+    await settleToday(account.id, result.entry.at).catch((err: unknown) => {
+      console.warn(`[today] ${game} run for ${claim.name}:`, err)
+    })
+  }
 
   res.status(201).json({
     game,

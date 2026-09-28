@@ -2,8 +2,10 @@ import { eq } from 'drizzle-orm'
 import { AVATAR_GAME_PINS, AVATAR_PINS, AVATAR_RINGS, type AvatarPin, type AvatarRing } from './avatars.js'
 import { db } from './db/client.js'
 import { leaderboardScores } from './db/schema.js'
+import { getClaim } from './names.js'
 import { listGameRecords } from './records.js'
 import { boardDateKey, previousBoardDateKey, rankForName, type GameSlug } from './store.js'
+import { bestTodayStreak } from './today.js'
 import { trophiesForName } from './trophies.js'
 
 /*
@@ -15,8 +17,9 @@ import { trophiesForName } from './trophies.js'
  *   silver for a week in its top two, gold for winning a week, the record ring
  *   for holding a record in a record book, the laurel for winning an event.
  *   Pins, for what you've done: welcome (everyone), five different games, a
- *   seven-day streak, the crown for winning a month, and one per game for its
- *   all-time top ten.
+ *   seven-day streak, a seven-day Today streak (all three of the day's dailies
+ *   each day, today.ts), the crown for winning a month, and one per game for
+ *   its all-time top ten.
  *
  * Trophies are kept for good, so what they give is kept too. A record or a
  * place in a top ten can be lost; an avatar already wearing one keeps it (see
@@ -36,6 +39,7 @@ export type Flair = { name: string; rings: FlairState[]; pins: FlairState[] }
 
 const GAMES_FOR_PIN = 5
 const STREAK_FOR_PIN = 7
+const TODAY_FOR_PIN = 7
 const TOP_FOR_PIN = 10
 const CACHE_MS = 60_000
 
@@ -52,6 +56,12 @@ function bestStreak(dayKeys: number[]): number {
     prev = day
   }
   return best
+}
+
+/** The best Today streak of the account behind a tag, or 0 for a tag with none. */
+async function todayBestFor(name: string, now: number): Promise<number> {
+  const claim = await getClaim(name)
+  return claim?.accountId ? bestTodayStreak(claim.accountId, now) : 0
 }
 
 async function recordStanding(name: string): Promise<{ held: boolean; best: FlairState['record'] }> {
@@ -73,7 +83,7 @@ export async function flairFor(rawName: string, now = Date.now()): Promise<Flair
   const hit = cache.get(name)
   if (hit && now - hit.at < CACHE_MS) return hit.flair
 
-  const [trophies, standing, runs, records] = await Promise.all([
+  const [trophies, standing, runs, records, todayBest] = await Promise.all([
     trophiesForName(name),
     rankForName(name, 0, 'all', now),
     db()
@@ -81,6 +91,7 @@ export async function flairFor(rawName: string, now = Date.now()): Promise<Flair
       .from(leaderboardScores)
       .where(eq(leaderboardScores.name, name)),
     recordStanding(name),
+    todayBestFor(name, now),
   ])
 
   const weekly = trophies.filter((t) => t.period === 'weekly').map((t) => t.rank)
@@ -114,6 +125,8 @@ export async function flairFor(rawName: string, now = Date.now()): Promise<Flair
         return { id, earned: games >= GAMES_FOR_PIN, best: games }
       case 'streak':
         return { id, earned: streak >= STREAK_FOR_PIN, best: streak }
+      case 'today':
+        return { id, earned: todayBest >= TODAY_FOR_PIN, best: todayBest }
       case 'crown':
         return { id, earned: bestMonth === 1, best: bestMonth }
       case 'bugnet':

@@ -28,6 +28,7 @@ import { feedbackRouter } from './feedbackRoutes.js'
 import { ticketsRouter } from './ticketsRoutes.js'
 import { tracksRouter } from './trackLapsRoutes.js'
 import { holesRouter } from './holesRoutes.js'
+import { todayRouter } from './todayRoutes.js'
 import { syncCourseRecords } from './courseRecords.js'
 import { seedArchiveOnce } from './seedArchive.js'
 import { dailyHoleRouter } from './dailyHoleRoutes.js'
@@ -187,6 +188,7 @@ async function main() {
   app.use('/tickets', ticketsRouter)
   app.use('/tracks', tracksRouter)
   app.use('/holes', holesRouter)
+  app.use('/today', todayRouter)
 
   logDbTarget()
 

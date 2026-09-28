@@ -1,5 +1,5 @@
 import crypto from 'node:crypto'
-import { and, desc, eq, gt, gte, sql } from 'drizzle-orm'
+import { and, desc, eq, gt, gte, ne, sql } from 'drizzle-orm'
 import { isBanned } from './bans.js'
 import { db } from './db/client.js'
 import { prizesOwned, ticketLedger, ticketWallets } from './db/schema.js'
@@ -56,7 +56,20 @@ export const DAY_TOP_TICKETS = [10, 6, 3] as const
 /** Players a daily's day needs before its top three are paid: a win in a field of one or two isn't one. */
 export const DAY_TOP_FIELD = 3
 
-export type TicketReason = 'run' | 'best' | 'pickup' | 'first' | 'streak' | 'daily' | 'hunt' | 'top' | 'record' | 'grant' | 'trade'
+export type TicketReason =
+  | 'run'
+  | 'best'
+  | 'pickup'
+  | 'first'
+  | 'streak'
+  | 'daily'
+  | 'hunt'
+  | 'top'
+  | 'record'
+  | 'grant'
+  | 'trade'
+  /** A Today streak's milestone (today.ts): its tickets, or a 0 that marks a look as given. */
+  | 'today'
 
 export type TicketLine = { reason: TicketReason; amount: number }
 
@@ -299,6 +312,7 @@ function refusal(message: string, status: number, code: string) {
 export async function tradePrize(accountId: string, prizeId: string, now = Date.now()): Promise<{ balance: number }> {
   const prize = prizeById(prizeId)
   if (!prize) throw refusal('There’s no such prize', 404, 'UNKNOWN_PRIZE')
+  if (prize.earned) throw refusal('That one’s earned with a Today streak, not traded for', 409, 'EARNED_ONLY')
   return db().transaction(async (tx) => {
     await lockWallet(tx, accountId, now)
     const [had] = await tx
@@ -328,6 +342,7 @@ export async function tradePrize(accountId: string, prizeId: string, now = Date.
 /** The prize a player is saving for, or none. */
 export async function setGoal(accountId: string, prizeId: string | null, now = Date.now()): Promise<string | null> {
   if (prizeId && !prizeById(prizeId)) throw refusal('There’s no such prize', 404, 'UNKNOWN_PRIZE')
+  if (prizeId && prizeById(prizeId)?.earned) throw refusal('That one’s earned with a Today streak, not traded for', 409, 'EARNED_ONLY')
   await db()
     .insert(ticketWallets)
     .values({ accountId, goal: prizeId, updatedAt: now })
@@ -355,7 +370,8 @@ export async function ticketsFor(accountId: string, now = Date.now()): Promise<T
   const recent = await db()
     .select({ amount: ticketLedger.amount, reason: ticketLedger.reason, game: ticketLedger.game, at: ticketLedger.at })
     .from(ticketLedger)
-    .where(eq(ticketLedger.accountId, accountId))
+    // A Today milestone that gave a look, not tickets, is marked with a nought (today.ts): not a line to show.
+    .where(and(eq(ticketLedger.accountId, accountId), ne(ticketLedger.amount, 0)))
     .orderBy(desc(ticketLedger.at))
     .limit(12)
   const [todays] = await db()

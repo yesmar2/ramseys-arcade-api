@@ -8,6 +8,7 @@ import { namesOwnedByAccount, withAvatarIds } from './names.js'
 import { updateCrossRunStreakRecords } from './records.js'
 import { TRIES_SCORE_BASE } from './scoreLimits.js'
 import { secretsForHole, type SecretFound } from './secrets.js'
+import { settleToday } from './today.js'
 import { addScore, bestForName, type DeviceType } from './store.js'
 import { payRun } from './tickets.js'
 
@@ -274,6 +275,8 @@ export async function recordResult(
         tickets = (await onTheBoard(accountId, tag.name, input.tries, input.device ?? 'desktop', audit, now)).tickets
         secrets = await secretsForHole({ accountId, name: tag.name, tries: input.tries, at: now }).catch(() => [])
       }
+      // The hole is one of the Today set's three (today.ts): it may finish the day's card.
+      await settleToday(accountId, now).catch(() => undefined)
     }
   }
   const reply = await dailyReply(accountId, now)

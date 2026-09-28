@@ -12,7 +12,10 @@
 
 export type PrizeKind = 'finish' | 'name' | 'card' | 'confetti' | 'title' | 'sign'
 
-export type Prize = { id: string; kind: PrizeKind; price: number }
+/**
+ * `earned`: never for sale; a Today streak gives it (today.ts), and only that. Its price is nought.
+ */
+export type Prize = { id: string; kind: PrizeKind; price: number; earned?: true }
 
 export const PRIZES: readonly Prize[] = [
   { id: 'glitter', kind: 'finish', price: 450 },
@@ -69,6 +72,9 @@ export const PRIZES: readonly Prize[] = [
   { id: 'sign-marquee', kind: 'sign', price: 6500 },
   { id: 'sign', kind: 'sign', price: 10_000 },
   { id: 'sign-rooftop', kind: 'sign', price: 15_000 },
+  // Earned by a Today streak (today.ts), never traded for.
+  { id: 'gilded', kind: 'finish', price: 0, earned: true },
+  { id: 't-everyday', kind: 'title', price: 0, earned: true },
 ]
 
 const byId = new Map(PRIZES.map((p) => [p.id, p]))

@@ -8,7 +8,7 @@ export const HALFFULL_FIRST_DAY = '2026-09-28'
 export const HALFFULL_FIRST_KEY = Number(HALFFULL_FIRST_DAY.replace(/-/g, ''))
 
 /**
- * The day Today's Pour joins the Today set (today.ts), YYYY-MM-DD: null until Half Full's launch. The launch
- * sets it here and in the site's src/games/halffull/daily.ts TODAY_FROM (`npm run check:halffull`).
+ * The day Today's Pour joined the Today set (today.ts), YYYY-MM-DD: Half Full's launch. The same day as the
+ * site's src/games/halffull/daily.ts TODAY_FROM (`npm run check:halffull`).
  */
-export const HALFFULL_TODAY_FROM: string | null = null
+export const HALFFULL_TODAY_FROM: string | null = '2026-09-28'

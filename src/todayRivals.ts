@@ -4,25 +4,28 @@ import { dailyHoleResults, leaderboardScores, nameClaims } from './db/schema.js'
 import { listFriends } from './friends.js'
 import { assertGroupBoardAccess, listGroupsFor } from './groups.js'
 import { namesOwnedByAccount, withAvatarIds } from './names.js'
-import { BOARD_TZ, boardDateKey, previousBoardDateKey } from './store.js'
+import { BOARD_TZ, DAILY_SINCE, boardDateKey, previousBoardDateKey } from './store.js'
+import { keptDays, todayRule } from './today.js'
 
 /*
  * Rivals on the Today set (today.ts): how an account's friends, or one of its groups, are doing on the
- * day's three dailies, beside the account itself. Each player's result on each (tries on the hole, their
- * best lap, their run for the bugs) and their Today streak, for the site's rivals table under today's
- * ticket (components/TodayRivals.tsx). A player is a tag: a friend's is the one their account plays as,
- * a group's are its roster. The hole's results are kept by account, so a roster tag no account holds has
- * none.
+ * day's dailies, beside the account itself. Each player's result on each (tries on the hole, their best
+ * lap, their run for the bugs, their pour) and their Today streak, for the site's rivals table under
+ * today's ticket (components/TodayRivals.tsx). A pour is there whether or not it's on today's card yet;
+ * the site shows the dailies that are, and the streak counts only those (today.ts keptDay). A player is a
+ * tag: a friend's is the one their account plays as, a group's are its roster. The hole's results are kept
+ * by account, so a roster tag no account holds has none.
  */
 
 export type Rival = {
   name: string
   me: boolean
-  /** Tries on today's hole, the best lap's board score, the bug run's board score; null if not yet. */
+  /** Tries on today's hole, the best lap's board score, the bug run's and the pour's board scores; null if not yet. */
   hole: number | null
   track: number | null
   wanted: number | null
-  /** Today streak: from today once all three are done, else from yesterday. */
+  pour: number | null
+  /** Today streak: from today once today is kept, else from yesterday. */
   streak: number
 }
 
@@ -78,10 +81,10 @@ async function playersFor(
   return { players, scope: { kind: 'group', id: group.id, name: group.name } }
 }
 
-/** The streak a set of finished days makes, counting back from today, or from yesterday while today isn't done. */
-function currentStreak(full: ReadonlySet<number>, today: number): number {
+/** The streak a set of kept days makes, counting back from today, or from yesterday while today isn't kept. */
+function currentStreak(kept: ReadonlySet<number>, today: number): number {
   let n = 0
-  for (let day = full.has(today) ? today : previousBoardDateKey(today); full.has(day); day = previousBoardDateKey(day)) n++
+  for (let day = kept.has(today) ? today : previousBoardDateKey(today); kept.has(day); day = previousBoardDateKey(day)) n++
   return n
 }
 
@@ -97,7 +100,7 @@ export async function todayRivals(accountId: string, groupId: string | null, now
   const fromDay = dayOf(boardDateKey(fromMs))
 
   // One look at each daily for everyone: the day's result, per player per day.
-  const perDay = (game: 'hotlap' | 'findbug') =>
+  const perDay = (game: 'hotlap' | 'findbug' | 'halffull') =>
     names.length
       ? db()
           .select({ name: leaderboardScores.name, day: dayKeySql, best: sql<number>`max(${leaderboardScores.score})::int` })
@@ -105,7 +108,7 @@ export async function todayRivals(accountId: string, groupId: string | null, now
           .where(and(eq(leaderboardScores.game, game), inArray(leaderboardScores.name, names), gte(leaderboardScores.at, fromMs)))
           .groupBy(leaderboardScores.name, dayKeySql)
       : Promise.resolve([] as { name: string; day: number; best: number }[])
-  const [holes, laps, finds] = await Promise.all([
+  const [holes, laps, finds, pours] = await Promise.all([
     accounts.length
       ? db()
           .select({ accountId: dailyHoleResults.accountId, day: dailyHoleResults.day, tries: dailyHoleResults.tries })
@@ -114,6 +117,7 @@ export async function todayRivals(accountId: string, groupId: string | null, now
       : Promise.resolve([] as { accountId: string; day: string; tries: number }[]),
     perDay('hotlap'),
     perDay('findbug'),
+    perDay('halffull'),
   ])
 
   const holeDays = new Map<string, Map<number, number>>()
@@ -122,9 +126,11 @@ export async function todayRivals(accountId: string, groupId: string | null, now
     days.set(Number(h.day.replace(/-/g, '')), h.tries)
     holeDays.set(h.accountId, days)
   }
-  const byName = (rows: { name: string; day: number; best: number }[]) => {
+  const byName = (rows: { name: string; day: number; best: number }[], since = 0) => {
     const out = new Map<string, Map<number, number>>()
     for (const row of rows) {
+      // As on the player's own card (today.ts): a run from before its game was a daily isn't a day of it.
+      if (Number(row.day) < since) continue
       const days = out.get(row.name) ?? new Map<number, number>()
       days.set(Number(row.day), Number(row.best))
       out.set(row.name, days)
@@ -132,23 +138,27 @@ export async function todayRivals(accountId: string, groupId: string | null, now
     return out
   }
   const lapDays = byName(laps)
-  const findDays = byName(finds)
+  const findDays = byName(finds, DAILY_SINCE.findbug)
+  const pourDays = byName(pours, DAILY_SINCE.halffull)
 
   const rivals: Rival[] = players.map((p) => {
     const hole = (p.accountId && holeDays.get(p.accountId)) || new Map<number, number>()
     const track = lapDays.get(p.name) ?? new Map<number, number>()
     const wanted = findDays.get(p.name) ?? new Map<number, number>()
-    const full = new Set([...hole.keys()].filter((day) => track.has(day) && wanted.has(day)))
+    const pour = pourDays.get(p.name) ?? new Map<number, number>()
     return {
       name: p.name,
       me: p.me,
       hole: hole.get(today) ?? null,
       track: track.get(today) ?? null,
       wanted: wanted.get(today) ?? null,
-      streak: currentStreak(full, today),
+      pour: pour.get(today) ?? null,
+      streak: currentStreak(keptDays({ hole, track, wanted, pour }), today),
     }
   })
-  const doneCount = (r: Rival) => (r.hole != null ? 1 : 0) + (r.track != null ? 1 : 0) + (r.wanted != null ? 1 : 0)
+  // Whoever has done most of today's card first.
+  const { live } = todayRule(today)
+  const doneCount = (r: Rival) => live.filter((key) => r[key] != null).length
   rivals.sort((a, b) => doneCount(b) - doneCount(a) || b.streak - a.streak || a.name.localeCompare(b.name))
   return { day: dayOf(today), scope, rivals: await withAvatarIds(rivals), groups }
 }

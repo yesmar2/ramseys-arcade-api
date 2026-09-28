@@ -1,23 +1,79 @@
 import { and, eq, gte, inArray } from 'drizzle-orm'
 import { db } from './db/client.js'
 import { dailyHoleResults, leaderboardScores, prizesOwned, ticketLedger } from './db/schema.js'
+import { HALFFULL_TODAY_FROM } from './halffull/launch.js'
 import { namesOwnedByAccount } from './names.js'
 import { notify } from './notifications.js'
-import { DAILY_SINCE, boardDateKey, previousBoardDateKey } from './store.js'
+import { DAILY_SINCE, boardDateKey, previousBoardDateKey, type GameSlug } from './store.js'
 import { awardTickets } from './tickets.js'
 
 /*
- * The Today set: the day's three dailies on one punch card, and a streak of days an account finished all
- * three. The three are Ace Chase's Today's Hole (a result in daily_hole_results), Hot Lap's Today's Track
- * (a lap on the day's board) and Find the Bug's Today's Wanted (the day's first run, claimed in
- * run_claims). A day is the boards' day, New York time. The Daily, the One Shot and the bug hunt are the
+ * The Today set: the day's dailies on one punch card, and a streak of the days an account kept. The dailies
+ * are Ace Chase's Today's Hole (a result in daily_hole_results), Hot Lap's Today's Track (a lap on the day's
+ * board), Find the Bug's Today's Wanted (the day's first run, on its board) and, from the day it joins
+ * (halffull/launch.ts HALFFULL_TODAY_FROM), Half Full's Today's Pour (the day's first run, on its board). A
+ * day is kept once any three of that day's dailies are done (TODAY_KEEP), so every day from before the pour
+ * joined still needs all three it had. A day with more than three on the card and every one of them done
+ * is a Full ticket. todayRule says which dailies are on a day's card and how many keep it; nothing else
+ * decides a day. A day is the boards' day, New York time. The Daily, the One Shot and the bug hunt are the
  * card's bonus punches and don't count.
  *
  * The streak earns looks at milestones, once an account however often it breaks: tickets, the Today pin
  * (flair.ts reads the best streak), the gilded badge finish and the "Every Day" title (prizes.ts: earned,
- * never for sale). The site draws the card from GET /today (todayRoutes.ts) and keeps the same
+ * never for sale). The site draws the card from GET /today (todayRoutes.ts) and keeps the same rule and
  * milestones (its lib/today.ts).
  */
+
+export type TodayKey = 'hole' | 'track' | 'wanted' | 'pour'
+
+/** How many of a day's dailies keep it. A day with this many or fewer on the card needs every one. */
+export const TODAY_KEEP = 3
+
+const keyOf = (day: string) => Number(day.replace(/-/g, ''))
+
+/**
+ * The Today set's dailies, in the card's order, and the first board day (YYYYMMDD) each is on the card: 0
+ * for from the start, null for not yet. The first three have been on it from the start, so no day before
+ * the pour joined is judged differently.
+ */
+export const TODAY_DAILIES: readonly { key: TodayKey; game: GameSlug; from: number | null }[] = [
+  { key: 'hole', game: 'acechase', from: 0 },
+  { key: 'track', game: 'hotlap', from: 0 },
+  { key: 'wanted', game: 'findbug', from: 0 },
+  { key: 'pour', game: 'halffull', from: HALFFULL_TODAY_FROM ? keyOf(HALFFULL_TODAY_FROM) : null },
+]
+
+/** A day's card: the dailies on it (live), in order, and how many of them keep the day. */
+export function todayRule(dayKey: number): { live: TodayKey[]; need: number } {
+  const live = TODAY_DAILIES.filter((d) => d.from != null && d.from <= dayKey).map((d) => d.key)
+  return { live, need: Math.min(TODAY_KEEP, live.length) }
+}
+
+/** Whether a day was kept: at least as many of its card's dailies done as keep it. */
+export function keptDay(done: ReadonlySet<TodayKey>, dayKey: number): boolean {
+  const { live, need } = todayRule(dayKey)
+  return live.filter((key) => done.has(key)).length >= need
+}
+
+/** Whether a day was a Full ticket: more dailies on its card than keep it, and every one of them done. */
+export function fullDay(done: ReadonlySet<TodayKey>, dayKey: number): boolean {
+  const { live } = todayRule(dayKey)
+  return live.length > TODAY_KEEP && live.every((key) => done.has(key))
+}
+
+/** What was done of each daily, day by day: board day key → the day's result. */
+export type TodayPlayed = Record<TodayKey, ReadonlyMap<number, number>>
+
+/** The dailies done on a day. */
+function doneOn(played: TodayPlayed, dayKey: number): Set<TodayKey> {
+  return new Set(TODAY_DAILIES.filter((d) => played[d.key].has(dayKey)).map((d) => d.key))
+}
+
+/** The days kept, of every day anything was done. */
+export function keptDays(played: TodayPlayed): Set<number> {
+  const days = new Set(TODAY_DAILIES.flatMap((d) => [...played[d.key].keys()]))
+  return new Set([...days].filter((day) => keptDay(doneOn(played, day), day)))
+}
 
 export type TodayMilestone =
   | { day: number; kind: 'tickets'; amount: number }
@@ -40,48 +96,53 @@ const WEEK_DAYS = 7
 export type TodayState = {
   /** The boards' day, YYYY-MM-DD. */
   day: string
-  done: { hole: boolean; track: boolean; wanted: boolean }
-  /** Today's results, as the boards keep them: tries, and board scores for the lap and the run. */
-  results: { hole: { tries: number } | null; track: { score: number } | null; wanted: { score: number } | null }
+  /** Which dailies are done today, on the card or not yet on it (`live` says which count). */
+  done: Record<TodayKey, boolean>
+  /** Today's results, as the boards keep them: tries, and board scores for the lap and the runs. */
+  results: {
+    hole: { tries: number } | null
+    track: { score: number } | null
+    wanted: { score: number } | null
+    pour: { score: number } | null
+  }
+  /** Today's card (todayRule): its dailies in order, how many of them keep the day, and how many there are. */
+  live: TodayKey[]
+  need: number
+  count: number
+  /** Whether today is a Full ticket (fullDay). */
+  full: boolean
   streak: { current: number; best: number }
-  /** The last seven days, oldest first, ending today: whether each was a streak day. */
-  week: { day: string; kept: boolean }[]
+  /** The last seven days, oldest first, ending today: whether each was a streak day, and a Full ticket. */
+  week: { day: string; kept: boolean; full: boolean }[]
 }
 
 const dayOf = (key: number) => {
   const s = String(key)
   return `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}`
 }
-const keyOf = (day: string) => Number(day.replace(/-/g, ''))
 
-type Played = {
-  /** Board day key → the day's result. */
-  hole: Map<number, number>
-  track: Map<number, number>
-  wanted: Map<number, number>
-}
-
-/** What an account has done of the three, day by day, over the lookback. */
-async function playedDays(accountId: string, now: number): Promise<Played> {
+/** What an account has done of the dailies, day by day, over the lookback. */
+async function playedDays(accountId: string, now: number): Promise<Record<TodayKey, Map<number, number>>> {
   const fromMs = now - LOOKBACK_DAYS * 86_400_000
   const fromDay = dayOf(boardDateKey(fromMs))
   const tags = (await namesOwnedByAccount(accountId)).map((t) => t.name)
-  const runs = (game: 'hotlap' | 'findbug') =>
+  const runs = (game: 'hotlap' | 'findbug' | 'halffull') =>
     tags.length
       ? db()
           .select({ score: leaderboardScores.score, at: leaderboardScores.at })
           .from(leaderboardScores)
           .where(and(eq(leaderboardScores.game, game), inArray(leaderboardScores.name, tags), gte(leaderboardScores.at, fromMs)))
       : Promise.resolve([] as { score: number; at: number }[])
-  const [holes, laps, finds] = await Promise.all([
+  const [holes, laps, finds, pours] = await Promise.all([
     db()
       .select({ day: dailyHoleResults.day, tries: dailyHoleResults.tries })
       .from(dailyHoleResults)
       .where(and(eq(dailyHoleResults.accountId, accountId), gte(dailyHoleResults.day, fromDay))),
     runs('hotlap'),
     runs('findbug'),
+    runs('halffull'),
   ])
-  const played: Played = { hole: new Map(), track: new Map(), wanted: new Map() }
+  const played: Record<TodayKey, Map<number, number>> = { hole: new Map(), track: new Map(), wanted: new Map(), pour: new Map() }
   for (const h of holes) played.hole.set(keyOf(h.day), h.tries)
   // A lap's board score is higher the faster it was: the day's best is its highest.
   for (const lap of laps) {
@@ -95,17 +156,23 @@ async function playedDays(accountId: string, now: number): Promise<Played> {
     if (key < (DAILY_SINCE.findbug ?? 0)) continue
     played.wanted.set(key, Math.max(played.wanted.get(key) ?? 0, run.score))
   }
+  // Half Full takes only the day's first run too, so its rows are its days, from Half Full #1.
+  for (const run of pours) {
+    const key = boardDateKey(run.at)
+    if (key < (DAILY_SINCE.halffull ?? 0)) continue
+    played.pour.set(key, Math.max(played.pour.get(key) ?? 0, run.score))
+  }
   return played
 }
 
-/** The current streak (from today once it's finished, else from yesterday) and the best one. */
-function streaksOf(full: ReadonlySet<number>, today: number): { current: number; best: number } {
+/** The current streak (from today once it's kept, else from yesterday) and the best one. */
+function streaksOf(kept: ReadonlySet<number>, today: number): { current: number; best: number } {
   let current = 0
-  for (let day = full.has(today) ? today : previousBoardDateKey(today); full.has(day); day = previousBoardDateKey(day)) current++
+  for (let day = kept.has(today) ? today : previousBoardDateKey(today); kept.has(day); day = previousBoardDateKey(day)) current++
   let best = 0
   let run = 0
   let prev: number | null = null
-  for (const day of [...full].sort((a, b) => a - b)) {
+  for (const day of [...kept].sort((a, b) => a - b)) {
     run = prev != null && previousBoardDateKey(day) === prev ? run + 1 : 1
     if (run > best) best = run
     prev = day
@@ -116,20 +183,34 @@ function streaksOf(full: ReadonlySet<number>, today: number): { current: number;
 export async function todayState(accountId: string, now = Date.now()): Promise<TodayState> {
   const today = boardDateKey(now)
   const played = await playedDays(accountId, now)
-  const full = new Set([...played.hole.keys()].filter((key) => played.track.has(key) && played.wanted.has(key)))
+  const kept = keptDays(played)
   const week: TodayState['week'] = []
-  for (let i = 0, key = today; i < WEEK_DAYS; i++, key = previousBoardDateKey(key)) week.unshift({ day: dayOf(key), kept: full.has(key) })
+  for (let i = 0, key = today; i < WEEK_DAYS; i++, key = previousBoardDateKey(key)) {
+    week.unshift({ day: dayOf(key), kept: kept.has(key), full: fullDay(doneOn(played, key), key) })
+  }
+  const { live, need } = todayRule(today)
   const lap = played.track.get(today)
   const find = played.wanted.get(today)
+  const pour = played.pour.get(today)
   return {
     day: dayOf(today),
-    done: { hole: played.hole.has(today), track: played.track.has(today), wanted: played.wanted.has(today) },
+    done: {
+      hole: played.hole.has(today),
+      track: played.track.has(today),
+      wanted: played.wanted.has(today),
+      pour: played.pour.has(today),
+    },
     results: {
       hole: played.hole.has(today) ? { tries: played.hole.get(today)! } : null,
       track: lap != null ? { score: lap } : null,
       wanted: find ? { score: find } : null,
+      pour: pour != null ? { score: pour } : null,
     },
-    streak: streaksOf(full, today),
+    live,
+    need,
+    count: live.length,
+    full: fullDay(doneOn(played, today), today),
+    streak: streaksOf(kept, today),
     week,
   }
 }

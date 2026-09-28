@@ -2,19 +2,32 @@
  * Half Full's day plan and scoring live twice: in the site (ramseys-arcade/src/games/halffull) and here
  * (src/halffull), and the API checks a player's score by building the day again. This builds a year and
  * a half of days both ways and scores a spread of pours on each, and fails on any difference, to the bit.
+ * It also fails when the two sides differ on Half Full #1 or on the day Today's Pour joins the Today set.
  *
  * Run from this repo with the site checked out beside it: `npm run check:halffull`.
  */
-import { HALFFULL_FIRST_DAY } from '../src/halffull/launch.js'
+import { HALFFULL_FIRST_DAY, HALFFULL_TODAY_FROM } from '../src/halffull/launch.js'
 import * as apiPlan from '../src/halffull/plan.js'
 import * as apiScore from '../src/halffull/score.js'
 import * as webPlan from '../../ramseys-arcade/src/games/halffull/plan.js'
 import * as webScore from '../../ramseys-arcade/src/games/halffull/score.js'
-import { FIRST_DAY as WEB_FIRST_DAY } from '../../ramseys-arcade/src/games/halffull/daily.js'
+import { FIRST_DAY as WEB_FIRST_DAY, TODAY_FROM as WEB_TODAY_FROM } from '../../ramseys-arcade/src/games/halffull/daily.js'
 
 // Half Full #1 is one day on both sides: the board and the book count from it, and the site numbers from it.
 if (HALFFULL_FIRST_DAY !== WEB_FIRST_DAY) {
   console.error(`Half Full's first day is ${HALFFULL_FIRST_DAY} here and ${WEB_FIRST_DAY} on the site.`)
+  process.exit(1)
+}
+// Today's Pour joins the Today set on one day on both sides (null on both until the launch), or the site's
+// ticket and the API's streak would judge a day by different cards.
+if (HALFFULL_TODAY_FROM !== WEB_TODAY_FROM) {
+  const said = (day: string | null) => day ?? 'not set'
+  console.error(`Today's Pour joins the Today set on ${said(HALFFULL_TODAY_FROM)} here and ${said(WEB_TODAY_FROM)} on the site.`)
+  process.exit(1)
+}
+// The API reads it as a board day (today.ts TODAY_DAILIES), so it's a whole YYYY-MM-DD, and no day before Half Full #1.
+if (HALFFULL_TODAY_FROM != null && (!/^\d{4}-\d{2}-\d{2}$/.test(HALFFULL_TODAY_FROM) || HALFFULL_TODAY_FROM < HALFFULL_FIRST_DAY)) {
+  console.error(`HALFFULL_TODAY_FROM should be a day, YYYY-MM-DD, from ${HALFFULL_FIRST_DAY} on: ${HALFFULL_TODAY_FROM}`)
   process.exit(1)
 }
 const FIRST = HALFFULL_FIRST_DAY

@@ -276,7 +276,7 @@ export async function recordResult(
         tickets = (await onTheBoard(accountId, tag.name, input.tries, input.device ?? 'desktop', audit, now)).tickets
         secrets = await secretsForHole({ accountId, name: tag.name, tries: input.tries, at: now }).catch(() => [])
       }
-      // The hole is one of the Today set's three (today.ts): it may finish the day's card.
+      // The hole is one of the Today set's dailies (today.ts): it may keep the day, or make it a Full ticket.
       await settleToday(accountId, now).catch(() => undefined)
       // And it may beat a friend's hole today (todayBeaten.ts). The result doesn't wait: a push can take a moment.
       void tellBeatenFriends({ accountId, game: 'acechase', now }).catch(() => 0)

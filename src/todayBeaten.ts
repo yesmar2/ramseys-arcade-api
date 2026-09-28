@@ -5,35 +5,39 @@ import { listFriends } from './friends.js'
 import { namesOwnedByAccount } from './names.js'
 import { notify } from './notifications.js'
 import { boardDateKey, dayStartMs } from './store.js'
+import { TODAY_DAILIES, todayRule } from './today.js'
 import { scoreFigure } from './words.js'
 
 /*
- * A friend beat you on one of today's three (the Today set, today.ts). When a player's result on Today's
- * Hole, Today's Track or Today's Wanted is better than a friend's on it today, that friend hears so in
- * their inbox: once a day for each daily and each friend who beats them. Only a friend who has played it
- * today is told; someone who hasn't isn't beaten yet. A lap can be driven again the same day, so its
- * note says there's still time; the hole and the bugs count once a day. That's why the lap is a topic of
- * its own in the player's notification settings, and one that goes to their phone by default
- * (notificationSettings.ts). The saves of the three call this (routes.ts for the lap and the bugs,
- * dailyHole.ts for the hole), without waiting on it, since a push can take a moment.
+ * A friend beat you on one of today's dailies (the Today set, today.ts). When a player's result on Today's
+ * Hole, Today's Track, Today's Wanted or Today's Pour is better than a friend's on it today, that friend
+ * hears so in their inbox: once a day for each daily and each friend who beats them. Only a friend who has
+ * played it today is told; someone who hasn't isn't beaten yet. Only a daily on today's card counts, so
+ * Half Full says nothing before its day on the card (halffull/launch.ts HALFFULL_TODAY_FROM). A lap can be
+ * driven again the same day, so its note says there's still time; the hole, the bugs and the pour count
+ * once a day. That's why the lap is a topic of its own in the player's notification settings, and one that
+ * goes to their phone by default (notificationSettings.ts). The dailies' saves call this (routes.ts for the
+ * lap, the bugs and the pour, dailyHole.ts for the hole), without waiting on it, since a push can take a
+ * moment.
  */
 
-export type TodayGame = 'acechase' | 'hotlap' | 'findbug'
+export type TodayGame = 'acechase' | 'hotlap' | 'findbug' | 'halffull'
 
 const WHAT: Record<TodayGame, { daily: string; mine: string }> = {
   acechase: { daily: 'Today’s Hole', mine: 'you on' },
   hotlap: { daily: 'Today’s Track', mine: 'your lap on' },
   findbug: { daily: 'Today’s Wanted', mine: 'you on' },
+  halffull: { daily: 'Today’s Pour', mine: 'you on' },
 }
 
 const tries = (n: number) => `${n} ${n === 1 ? 'try' : 'tries'}`
 
-/** A result in words: tries on the hole, a lap or a run's time. */
+/** A result in words: tries on the hole, a lap or a run's time, a pour's figure. */
 function resultWords(game: TodayGame, value: number): string {
   return game === 'acechase' ? tries(value) : scoreFigure(game, value)
 }
 
-/** Whether `a` beats `b`: fewer tries on the hole, a higher board score (a quicker time) on the others. */
+/** Whether `a` beats `b`: fewer tries on the hole, a higher board score (a quicker time, a closer pour) on the others. */
 function beats(game: TodayGame, a: number, b: number): boolean {
   return game === 'acechase' ? a < b : a > b
 }
@@ -41,6 +45,8 @@ function beats(game: TodayGame, a: number, b: number): boolean {
 export async function tellBeatenFriends(opts: { accountId: string; game: TodayGame; now?: number }): Promise<number> {
   const now = opts.now ?? Date.now()
   const today = boardDateKey(now)
+  const key = TODAY_DAILIES.find((d) => d.game === opts.game)?.key
+  if (!key || !todayRule(today).live.includes(key)) return 0
   const start = dayStartMs(today)
   // Thirty hours on is always the next day, however long a day is when the clocks change.
   const end = dayStartMs(boardDateKey(start + 30 * 3_600_000))

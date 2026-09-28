@@ -22,7 +22,7 @@ export type NotificationKind =
   | 'event-result'
   | 'challenge-beaten'
   | 'challenge-taken'
-  /** A friend beat your result on one of today's three (todayBeaten.ts). */
+  /** A friend beat your result on one of today's dailies (todayBeaten.ts). */
   | 'today-beaten'
 
 export const MATCH_KINDS: ReadonlySet<NotificationKind> = new Set<NotificationKind>([

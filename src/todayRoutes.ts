@@ -6,8 +6,9 @@ import { todayRivals } from './todayRivals.js'
 export const todayRouter = Router()
 
 /**
- * The signed-in account's Today set (today.ts): which of the day's three are done, their results, the
- * streak and the week. Asking settles any streak reward that's due, so a reward never waits on a save.
+ * The signed-in account's Today set (today.ts): the day's dailies and how many of them keep the day, which
+ * are done, their results, whether it's a Full ticket, the streak and the week. Asking settles any streak
+ * reward that's due, so a reward never waits on a save.
  */
 todayRouter.get('/', async (req, res) => {
   const account = await accountFromRequest(req)
@@ -24,7 +25,7 @@ todayRouter.get('/', async (req, res) => {
 })
 
 /**
- * How the account's friends, or one of its groups (`?group=<id>`), are doing on today's three, beside the
+ * How the account's friends, or one of its groups (`?group=<id>`), are doing on today's dailies, beside the
  * account (todayRivals.ts). A group has to be one the account is in.
  */
 todayRouter.get('/rivals', async (req, res) => {

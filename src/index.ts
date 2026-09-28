@@ -30,7 +30,6 @@ import { tracksRouter } from './trackLapsRoutes.js'
 import { holesRouter } from './holesRoutes.js'
 import { todayRouter } from './todayRoutes.js'
 import { syncCourseRecords } from './courseRecords.js'
-import { seedArchiveOnce } from './seedArchive.js'
 import { dailyHoleRouter } from './dailyHoleRoutes.js'
 import { publicVapidKey } from './push.js'
 import { statsRouter } from './statsRoutes.js'
@@ -213,13 +212,6 @@ async function main() {
         await applyDataRepairs()
       } catch (err) {
         console.error('[repair] failed', err)
-      }
-
-      // The seeded players' past days on the dailies, once, for the archives to have something in them.
-      try {
-        await seedArchiveOnce()
-      } catch (err) {
-        console.error('[seed archive] failed', err)
       }
     },
     { ttlMs: 5 * 60_000, waitMs: 5 * 60_000 },

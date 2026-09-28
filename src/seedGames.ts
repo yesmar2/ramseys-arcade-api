@@ -16,7 +16,7 @@
  * what the API itself would accept for the time it took.
  */
 
-import { rateAllowance, TIME_SCORE_BASE } from './scoreLimits.js'
+import { rateAllowance } from './scoreLimits.js'
 import type { GameSlug } from './store.js'
 
 export type Rng = () => number
@@ -37,8 +37,8 @@ export type SeedRun = {
 }
 
 /**
- * Every game on the site except Simon, which retired, Spotter, which is hidden, and the dailies (Ace
- * Chase, Hot Lap, Find the Bug), whose boards are each day's own: a seeded world is played once.
+ * Every game on the site except Simon, which retired, Spotter, which is hidden, and the dailies, whose
+ * boards are each day's own: they're played by the day (SEEDED_DAILIES, below).
  */
 export const SEEDED_GAMES: readonly GameSlug[] = [
   'asteroids',
@@ -293,17 +293,6 @@ const crumbtrail: Model = (q, rng) => {
   return finish('crumbtrail', rng, score, play, records)
 }
 
-/** Five scenes against the clock; the board keeps the base minus the time. */
-const findbug: Model = (q, rng) => {
-  // Luck works on the time above a floor no sweep beats: five finds in 25s.
-  // Here a bad run is a slow one, so it is the long side that adds time.
-  const secs = Math.min(400, 25 + (curve(q, 118, 56, 31) - 25) / luck(rng, 0.3))
-  const ms = Math.round(secs * 1000)
-  // Each scene opens with its wanted card and closes on the find.
-  const play = secs + 5 * between(rng, 1.8, 3)
-  return finish('findbug', rng, TIME_SCORE_BASE - ms, play, [])
-}
-
 const bop: Model = (q, rng) => {
   const score = Math.max(1, Math.round(soften(curve(q, 11, 34, 80) * luck(rng, 0.26), 115, 160)))
   const play = score * lerp(0.8, 0.58, q) * between(rng, 0.9, 1.1) + between(rng, 1, 3)
@@ -413,7 +402,6 @@ const MODELS: Partial<Record<GameSlug, Model>> = {
   centroid,
   pop,
   pellets,
-  findbug,
   crumbtrail,
   bop,
   putt,
@@ -427,4 +415,74 @@ export function playRun(game: GameSlug, q: number, rng: Rng): SeedRun {
   const model = MODELS[game]
   if (!model) throw new Error(`No seed model for ${game}`)
   return model(clamp(q, 0, 1), rng)
+}
+
+/* ---------- the dailies ---------- */
+
+/**
+ * The dailies: the same track, hole, scenes or glasses for everyone each day, so seedWorld.ts plays them by
+ * the day, from each one's first. `hard` is the day's own difficulty, the same for everyone: 1 an ordinary
+ * day, more a harder one.
+ */
+export const SEEDED_DAILIES: readonly GameSlug[] = ['hotlap', 'acechase', 'findbug', 'halffull']
+
+/**
+ * A Hot Lap lap in milliseconds, on a track whose blue car goes round in `pace`: a middling driver about
+ * level with the blue car, the day's best seeded lap about 85% of its time (the site's own best laps so
+ * far are 81 to 85%), a first go a good way behind. A slip or a wall costs seconds and a clean lap gains
+ * little, and the laps of a sitting learn the track a bit.
+ */
+export function hotLapMs(q: number, pace: number, lap: number, rng: Rng): number {
+  const g = gauss(rng)
+  const form = g > 0 ? 1 + g * 0.05 : 1 + g * 0.012
+  const share = curve(clamp(q, 0, 1), 1.3, 0.97, 0.74) * (1 - 0.006 * Math.min(lap, 3)) * form
+  return Math.round(pace * Math.max(0.815, share))
+}
+
+/**
+ * The tries a player's first bullseye takes at Today's Hole. An ace is rare, two is a very good day, and
+ * past that the tries run long for a new player: the ticket ladder (3 to 15 tries) reads the same way.
+ */
+export function aceChaseTries(q: number, hard: number, rng: Rng): number {
+  const u = rng()
+  const ace = (0.003 + 0.012 * q * q) / hard
+  const two = (0.03 + 0.08 * q * q) / hard
+  if (u < ace) return 1
+  if (u < ace + two) return 2
+  const mean = (0.8 + 7 * Math.pow(1 - clamp(q, 0, 1), 1.3)) * hard
+  return Math.min(30, 3 + Math.floor(-Math.log(1 - rng() * 0.999) * mean))
+}
+
+/** A day's tries as letters, as Today's Hole keeps them (b bull, i inner, o outer, x off, l lost): closer as it goes. */
+export function aceChasePattern(tries: number, rng: Rng): string {
+  let out = ''
+  for (let i = 0; i < tries - 1; i++) {
+    const near = (i + 1) / tries
+    const r = rng()
+    out += r < 0.06 ? 'l' : r < 0.35 - near * 0.2 ? 'x' : r < 0.75 - near * 0.1 ? 'o' : 'i'
+  }
+  return `${out}b`
+}
+
+/** Today's Wanted's five scenes, in milliseconds: the old sweep's shape, on the day's scenes. */
+export function findBugMs(q: number, hard: number, rng: Rng): number {
+  const secs = Math.min(400, 25 + ((curve(clamp(q, 0, 1), 118, 56, 31) - 25) * hard) / luck(rng, 0.3))
+  return Math.round(secs * 1000)
+}
+
+/**
+ * Today's Pour, as its board keeps it: hundredths of a point (9124 is 91.2%). Each of five pours lands
+ * some way off half, a steady hand within a point or two and a first go five or ten off, and now and then
+ * a glass is judged by its height rather than what it holds. A pour scores 100 less two a point off, to a
+ * tenth, and the day is their mean (the API's halffull/score.ts).
+ */
+export function halfFullFigure(q: number, hard: number, rng: Rng): number {
+  const spread = curve(clamp(q, 0, 1), 11, 4.5, 1.6) * hard
+  let total = 0
+  for (let i = 0; i < 5; i++) {
+    let off = Math.abs(gauss(rng)) * spread
+    if (rng() < 0.22 * (1 - q)) off += between(rng, 6, 24)
+    total += Math.max(0, 100 - 2 * (Math.round(off * 10) / 10))
+  }
+  return Math.floor((100 * total) / 5 + 1e-6)
 }

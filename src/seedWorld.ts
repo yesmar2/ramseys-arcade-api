@@ -3,16 +3,23 @@
  *
  * About 150 players, each with a skill, favourite games, a time of day they
  * tend to play and a habit of coming back, play the site day by day from the
- * day they joined. Every run is one of the game's own shapes (seedGames.ts),
- * and everything else is only what those runs would have made:
+ * day they joined, up to now. Every run is one of the game's own shapes
+ * (seedGames.ts), and everything else is only what those runs would have made:
  *
  *   - the boards are the runs;
+ *   - the dailies (Hot Lap, Ace Chase, Find the Bug, Half Full) are played on
+ *     their days from each one's first: a few laps of the day's track, the
+ *     day's hole to its first bullseye, the day's first sweep and first pour.
+ *     Some come back to a past track or hole from its archive, onto its own
+ *     board (track_laps, hole_results);
  *   - the record books are what each run posted, kept the way the API keeps
  *     them (only a value that beat the player's own best for the day, the
- *     week, the month or all time), and the streak books are counted from
- *     the runs themselves;
- *   - the daily and weekly events hold the runs of the players who joined
- *     them, and the hosted events and brackets were played by their rosters;
+ *     week, the month or all time), the dailies' track, hole and day records
+ *     among them, and the streak books are counted from the runs themselves;
+ *   - the daily, One Shot and weekly events hold the runs of the players who
+ *     joined them, and the hosted events and brackets were played by their
+ *     rosters;
+ *   - the bug hunt's catches are from the days they visited;
  *   - weekly and monthly trophies are ranked from the boards, and event wins
  *     from the events.
  *
@@ -26,16 +33,20 @@
  *                                       all game data, real players' too, and
  *                                       seed
  *
- * --fresh keeps accounts, sign-ins, tags, bans and push subscriptions, and
- * empties the boards, record books, events, challenges, trophies, groups,
- * friends and notifications for everyone.
+ * --fresh keeps accounts, sign-ins, tags, bans, push subscriptions and
+ * notification settings, what players have found and earned (the bug hunt's
+ * catches, secret and hunt trophies, tickets and prizes) and what they've told
+ * us, and empties the boards, record books, the dailies' results, laps and
+ * ghosts, events, challenges, the other trophies, groups, friends and
+ * notifications for everyone.
  *
  * Everything it writes is marked: ids start with `seed-`, accounts use the
  * `@seed.skermix.dev` domain, and trophies belong to seeded tags. The daily and
  * weekly events are the arcade's own, so their seeded seats carry `seed-` ids.
  */
 
-import { and, eq, inArray, like, or, sql } from 'drizzle-orm'
+import { and, eq, inArray, like, notInArray, or, sql } from 'drizzle-orm'
+import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -48,46 +59,75 @@ import {
   maybeEndWhenBracketFinished,
   resolveReadyMatches,
 } from './bracket.js'
+import { bugForDay } from './bugHunt.js'
+import { ACECHASE_FIRST_DAY } from './courseNames.js'
 import { closeDb, db } from './db/client.js'
 import { announceRewrite } from './feed.js'
 import { runMigrations } from './db/migrate.js'
 import {
   accounts,
   appMeta,
+  bugHuntFinds,
   challengeResults,
   challenges,
+  clientErrors,
+  dailyHoleResults,
   directedInvites,
+  feedback,
   friendRequests,
   friendships,
   gameRuns,
   groupMembers,
   groups,
+  holeResults,
+  lapGhosts,
   leaderboardScores,
   magicLinks,
   nameBans,
   nameClaims,
   notifications,
+  notificationSettings,
+  prizesOwned,
   pushLedger,
   pushSubscriptions,
   recordScores,
   runClaims,
   scoreFlags,
   sessions,
+  ticketLedger,
+  ticketWallets,
   tournamentPlayers,
   tournamentScores,
   tournaments as tournamentsTable,
+  trackLaps,
   trophyAwards,
   trophyCursor,
 } from './db/schema.js'
 import { assertNotProduction, dbTarget } from './env.js'
+import { HALFFULL_FIRST_KEY } from './halffull/launch.js'
+import { holeNumber } from './holes.js'
+import { HOTLAP_FIRST_DAY, HOTLAP_PACE_MS } from './hotlapPace.js'
 import {
   computePlayDaysStreak,
+  courseOnDay,
+  FINDBUG_FIRST_DAY,
   getRecordDef,
   PLAY_DAYS_STREAK_ID,
   SCORE_STREAK_THRESHOLDS,
   THRESHOLD_STREAK_ID,
 } from './records.js'
-import { playRun, SEEDED_GAMES, type RunRecord } from './seedGames.js'
+import { TIME_SCORE_BASE, TRIES_SCORE_BASE } from './scoreLimits.js'
+import {
+  aceChasePattern,
+  aceChaseTries,
+  findBugMs,
+  halfFullFigure,
+  hotLapMs,
+  playRun,
+  SEEDED_DAILIES,
+  SEEDED_GAMES,
+  type RunRecord,
+} from './seedGames.js'
 import {
   BOARD_TZ,
   boardDateKey,
@@ -102,13 +142,15 @@ import {
 } from './store.js'
 import {
   buildDailyEvent,
+  buildOneShotEvent,
   buildWeeklyEvent,
   computeStandings,
   tournamentWinner,
   type Tournament,
   type TournamentPlayer,
 } from './tournaments.js'
-import { awardEventWin, ensurePeriodTrophies } from './trophies.js'
+import { dayNumberOf, trackOfDay } from './trackLaps.js'
+import { ensurePeriodTrophies } from './trophies.js'
 
 /* ---------- env ---------- */
 
@@ -208,6 +250,64 @@ const hourOf = (at: number) => (at - dayStart(boardDateKey(at))) / HOUR
 
 const TODAY = boardDateKey(NOW)
 
+/* ---------- the dailies' calendar ---------- */
+
+const keyOfDay = (day: string) => Number(day.replace(/-/g, ''))
+const dayOfKey = (key: number) =>
+  `${Math.floor(key / 10_000)}-${String(Math.floor(key / 100) % 100).padStart(2, '0')}-${String(key % 100).padStart(2, '0')}`
+
+/** Each daily's first day (YYYYMMDD): Hot Lap's track #1, Ace Chase's hole #1, the first Today's Wanted and Today's Pour. */
+const DAILY_FROM: Record<string, number> = {
+  hotlap: keyOfDay(HOTLAP_FIRST_DAY),
+  acechase: keyOfDay(ACECHASE_FIRST_DAY),
+  findbug: keyOfDay(FINDBUG_FIRST_DAY),
+  halffull: HALFFULL_FIRST_KEY,
+}
+const DAILY_SET: ReadonlySet<GameSlug> = new Set(SEEDED_DAILIES)
+
+/** How much a daily draws a player who does the dailies. */
+const DAILY_LIKE: Record<string, number> = { hotlap: 0.85, acechase: 0.9, findbug: 0.95, halffull: 0.85 }
+
+/** The bug hunt's first full day: its finds were kept from the evening before (bugHunt.ts). */
+const HUNT_FROM = 20260925
+
+/** Where the hunt's bug hides, as the site's pages name their panels (data-hunt). */
+const HUNT_SPOTS = [
+  'home-hero',
+  'home-onnow',
+  'home-records',
+  'home-standings',
+  'home-groups',
+  'boards-moves',
+  'boards-you',
+  'records-latest',
+  'events-how',
+  'groups-start',
+  'groups-link',
+]
+
+/** A string's 32-bit hash (FNV-1a). */
+function hash(text: string): number {
+  let h = 0x811c9dc5
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i)
+    h = Math.imul(h, 0x01000193)
+  }
+  return h >>> 0
+}
+
+/**
+ * A daily's day's own difficulty, the same for everyone: 1 an ordinary day. Hot Lap's is its track's
+ * blue car already; the hole, the scenes and the glasses vary from day to day.
+ */
+function dayHardness(game: GameSlug, key: number): number {
+  const r = mulberry32(hash(`${game}:${key}`))()
+  if (game === 'acechase') return 0.7 + 0.8 * r
+  if (game === 'findbug') return 0.85 + 0.45 * r
+  if (game === 'halffull') return 0.85 + 0.35 * r
+  return 1
+}
+
 /* ---------- who ---------- */
 
 /**
@@ -247,6 +347,24 @@ type Run = {
   records: RunRecord[]
   /** Played from a bracket's match card, which posts nothing to the record books. */
   inMatch?: boolean
+  /** A daily's run: at Ace Chase, the tries its first bullseye took and how each ended. */
+  hole?: { tries: number; pattern: string }
+}
+
+/** A past track or hole played from a daily's archive, after its day: onto its own board, not the game's. */
+type ArchivePlay = {
+  game: 'hotlap' | 'acechase'
+  /** The track's or hole's number. */
+  n: number
+  /** Its day, YYYY-MM-DD. */
+  day: string
+  at: number
+  device: DeviceType
+  /** Hot Lap: the lap. */
+  ms?: number
+  /** Ace Chase: the tries, and how each ended. */
+  tries?: number
+  pattern?: string
 }
 
 type Player = {
@@ -270,6 +388,11 @@ type Player = {
   hour: number
   practice: Record<string, number>
   runs: Run[]
+  /** 0 never … about 1.25 nearly every visit: how much the dailies are part of coming by. */
+  dailyTaste: number
+  archive: ArchivePlay[]
+  /** The days they caught the bug hunt's bug, when, and where it was hiding. */
+  finds: { day: string; at: number; spot: string }[]
 }
 
 /** A time to play, on a day, a little before `NOW` if the day is today. */
@@ -306,6 +429,9 @@ function makePlayers(existing: Set<string>): Player[] {
       const fav = favorites.indexOf(g)
       aptitude[g] = clamp(skill + gauss() * 0.14 + (fav === 0 ? 0.07 : fav > 0 ? 0.03 : 0), 0.03, fav === 0 ? 0.96 : 0.9)
     }
+    for (const g of SEEDED_DAILIES) aptitude[g] = clamp(skill + gauss() * 0.14, 0.03, 0.9)
+    // Most do the dailies when they come by, some every time, and a few never touch them.
+    const dailyTaste = chance(0.1) ? 0 : between(0.45, 1.3)
     const r = rand()
     const hour = r < 0.7 ? between(18.5, 22.5) : r < 0.85 ? between(11.8, 13.5) : between(7.5, 17)
     // More joined lately than long ago.
@@ -332,6 +458,9 @@ function makePlayers(existing: Set<string>): Player[] {
       hour,
       practice: {},
       runs: [],
+      dailyTaste,
+      archive: [],
+      finds: [],
     }
   })
 }
@@ -375,22 +504,203 @@ function playOne(p: Player, game: GameSlug, startAt: number, form: number, inMat
   return run
 }
 
-type Sitting = { at: number; games: GameSlug[]; goes?: number }
+/**
+ * `games` can hold the dailies, played as the day has them. `archive`: a past track or hole from a daily's
+ * archive after the rest. `hunt`: they spot the bug hunt's bug while they're about.
+ */
+type Sitting = { at: number; games: GameSlug[]; goes?: number; archive?: boolean; hunt?: boolean }
 
 /** A sitting: a few goes at each game, one after another. */
 function playSitting(p: Player, s: Sitting, notBefore: number): number {
-  let t = Math.max(s.at, notBefore)
+  const start = Math.max(s.at, notBefore)
+  let t = start
   const form = between(0.94, 1.05)
+  const done = () => {
+    if (s.hunt && t > start) catchBug(p, start, t)
+    return t
+  }
   for (const game of s.games) {
+    if (DAILY_SET.has(game)) {
+      const end = playDaily(p, game, t, form)
+      if (end == null) return done()
+      if (end > t) t = end + between(0.5, 6) * MINUTE
+      continue
+    }
     const goes = s.goes ?? goesInSitting(p)
     for (let i = 0; i < goes; i++) {
       const run = playOne(p, game, t, form)
-      if (!run) return t
+      if (!run) return done()
       t = run.at + between(6, 50) * 1000
     }
     t += between(1, 12) * MINUTE
   }
-  return t
+  if (s.archive) t = playArchive(p, t)
+  return done()
+}
+
+/* ---------- the dailies ---------- */
+
+/** Where a player is at a daily: their aptitude, a little less on their first goes (each day is new to everyone). */
+function dailyAbility(p: Player, game: GameSlug) {
+  const practice = p.practice[game] ?? 0
+  return (p.aptitude[game] ?? p.skill) * (0.85 + 0.15 * (1 - Math.exp(-practice / 8)))
+}
+
+/** A daily's run onto its day's board, or nothing if it would end in the future. */
+function dailyRun(
+  p: Player,
+  game: GameSlug,
+  startAt: number,
+  durationMs: number,
+  score: number,
+  records: RunRecord[],
+  hole?: Run['hole'],
+): Run | null {
+  const at = startAt + durationMs
+  if (at > NOW - 2 * MINUTE) return null
+  const run: Run = {
+    game,
+    score,
+    startAt,
+    at,
+    durationMs,
+    device: chance(0.9) ? p.device : pick(DEVICES),
+    records,
+    ...(hole ? { hole } : {}),
+  }
+  p.runs.push(run)
+  p.practice[game] = (p.practice[game] ?? 0) + 1
+  return run
+}
+
+/**
+ * Today's Track, Hole, Wanted or Pour, as each is played: a few laps of the day's track, each one on the
+ * board; the hole until its first bullseye, the tries as one result; the day's first sweep and first pour,
+ * the only ones that count, so nobody plays those twice. When it ended, the start again if there was
+ * nothing to play, or nothing if it would have ended in the future.
+ */
+function playDaily(p: Player, game: GameSlug, startAt: number, form: number): number | null {
+  const key = boardDateKey(startAt)
+  if (key < (DAILY_FROM[game] ?? Number.POSITIVE_INFINITY)) return startAt
+  const q = dailyAbility(p, game) * form
+  const hard = dayHardness(game, key)
+  if (game === 'hotlap') {
+    const track = trackOfDay(dayNumberOf(key))
+    const pace = HOTLAP_PACE_MS[track - 1]
+    if (!pace) return startAt
+    const laps = 1 + Math.floor(rand() * (1.5 + 2.5 * Math.min(1, p.dailyTaste)))
+    let t = startAt
+    for (let lap = 0; lap < laps; lap++) {
+      const ms = hotLapMs(q, pace, lap, rand)
+      // The lights, the lap, and the line.
+      const durationMs = ms + Math.round(between(3.2, 6) * 1000)
+      // A day's laps stay in its day.
+      if (boardDateKey(t + durationMs) !== key) break
+      const run = dailyRun(p, game, t, durationMs, TIME_SCORE_BASE - ms, [
+        { recordId: `track-${track}`, value: ms, atMs: durationMs },
+      ])
+      if (!run) return lap ? t : null
+      t = run.at + between(8, 60) * 1000
+    }
+    return t
+  }
+  if (p.runs.some((r) => r.game === game && boardDateKey(r.startAt) === key)) return startAt
+  if (game === 'acechase') {
+    const n = holeNumber(dayOfKey(key))
+    const tries = aceChaseTries(q, hard, rand)
+    // Each try's aim, shot and flight, and the bullseye's cheer.
+    const durationMs = Math.round((tries * between(9, 22) + between(4, 10)) * 1000)
+    const run = dailyRun(p, game, startAt, durationMs, TRIES_SCORE_BASE - tries, [{ recordId: `hole-${n}`, value: tries, atMs: durationMs }], {
+      tries,
+      pattern: aceChasePattern(tries, rand),
+    })
+    return run ? run.at : null
+  }
+  if (game === 'findbug') {
+    const n = courseOnDay('findbug', key)
+    const ms = findBugMs(q, hard, rand)
+    // Each scene opens on its wanted card and closes on the find.
+    const durationMs = ms + Math.round((5 * between(1.8, 3) + between(2.5, 6)) * 1000)
+    const run = dailyRun(p, game, startAt, durationMs, TIME_SCORE_BASE - ms, [{ recordId: `day-${n}`, value: ms, atMs: durationMs }])
+    return run ? run.at : null
+  }
+  if (game === 'halffull') {
+    const n = courseOnDay('halffull', key)
+    const figure = halfFullFigure(q, hard, rand)
+    // Five glasses: a look, a pour, the reveal.
+    const durationMs = Math.round((5 * between(6, 15) + between(3, 6)) * 1000)
+    const run = dailyRun(p, game, startAt, durationMs, figure, [{ recordId: `pour-${n}`, value: figure, atMs: durationMs }])
+    return run ? run.at : null
+  }
+  return startAt
+}
+
+/**
+ * The dailies someone plays when they sit down on day `key`, in the card's order: the ones out by then,
+ * each as likely as their taste for the dailies and how often they come by.
+ */
+function dailiesFor(p: Player, key: number): GameSlug[] {
+  if (!p.dailyTaste) return []
+  const keen = p.dailyTaste * (0.55 + 0.4 * p.activity)
+  return (['acechase', 'hotlap', 'findbug', 'halffull'] as GameSlug[]).filter(
+    (g) => key >= DAILY_FROM[g]! && chance(clamp(keen * DAILY_LIKE[g]!, 0, 0.97)),
+  )
+}
+
+/**
+ * Now and then, a past track or hole from a daily's archive: a lap or three at a past track, some to
+ * better their own lap and some on a day they missed, or a past hole they never played (a hole keeps an
+ * account's first result only). Kept on the track's or hole's own board.
+ */
+function playArchive(p: Player, from: number): number {
+  const key = boardDateKey(from)
+  const options: { game: 'hotlap' | 'acechase'; n: number; day: string }[] = []
+  for (let d = 1; d < dayNumberOf(key); d++) {
+    const track = trackOfDay(d)
+    const day = dayOfKey(addDays(DAILY_FROM.hotlap!, d - 1))
+    options.push({ game: 'hotlap', n: track, day })
+  }
+  for (let k = DAILY_FROM.acechase!; k < key; k = nextDay(k)) {
+    const day = dayOfKey(k)
+    const played =
+      p.runs.some((r) => r.game === 'acechase' && boardDateKey(r.startAt) === k) ||
+      p.archive.some((a) => a.game === 'acechase' && a.day === day)
+    if (!played) options.push({ game: 'acechase', n: holeNumber(day), day })
+  }
+  if (!options.length) return from
+  const choice = pick(options)
+  const device = chance(0.9) ? p.device : pick(DEVICES)
+  let t = from + between(0.5, 4) * MINUTE
+  if (choice.game === 'hotlap') {
+    const pace = HOTLAP_PACE_MS[choice.n - 1]
+    if (!pace) return from
+    const laps = 1 + Math.floor(rand() * 3)
+    for (let lap = 0; lap < laps; lap++) {
+      const ms = hotLapMs(dailyAbility(p, 'hotlap'), pace, lap + 1, rand)
+      const end = t + ms + between(3.2, 6) * 1000
+      if (end > NOW - 2 * MINUTE) break
+      p.archive.push({ ...choice, at: end, device, ms })
+      p.practice.hotlap = (p.practice.hotlap ?? 0) + 1
+      t = end + between(8, 60) * 1000
+    }
+    return t
+  }
+  const tries = aceChaseTries(dailyAbility(p, 'acechase'), dayHardness('acechase', keyOfDay(choice.day)), rand)
+  const end = t + (tries * between(9, 22) + between(4, 10)) * 1000
+  if (end > NOW - 2 * MINUTE) return from
+  p.archive.push({ ...choice, at: end, device, tries, pattern: aceChasePattern(tries, rand) })
+  p.practice.acechase = (p.practice.acechase ?? 0) + 1
+  return end
+}
+
+/** The bug hunt's bug, spotted some time in a sitting on a day it was out: one catch a day. */
+function catchBug(p: Player, from: number, to: number) {
+  const at = between(from, to)
+  const key = boardDateKey(at)
+  if (key < HUNT_FROM || at > NOW - 2 * MINUTE) return
+  const day = dayOfKey(key)
+  if (p.finds.some((f) => f.day === day)) return
+  p.finds.push({ day, at, spot: pick(HUNT_SPOTS) })
 }
 
 /** The days someone plays: habits run in streaks, and weekends pull people back. */
@@ -440,15 +750,19 @@ function chooseGames(p: Player, key: number, events: Tournament[]): GameSlug[] {
   const daily = events.find((t) => t.cadence === 'daily' && noon >= t.startsAt && noon < t.endsAt)
   const featured = daily?.games[0]
   if (featured && !out.includes(featured) && chance(0.4 + 0.3 * p.activity)) out.push(featured)
+  // The One Shot's one try, for those who make a point of it: first, before any warming up.
+  const shot = events.find((t) => t.cadence === 'oneshot' && noon >= t.startsAt && noon < t.endsAt)?.games[0]
+  if (shot && !out.includes(shot) && p.activity > 0.3 && chance(0.2 + 0.3 * p.activity)) out.unshift(shot)
   return out
 }
 
 /* ---------- events ---------- */
 
-/** The arcade's own events still on the list: today's daily and the two before, this week's and last. */
+/** The arcade's own events still on the list: today's Daily and One Shot and the two before each, this week's and last. */
 function officialEvents(): Tournament[] {
   const out: Tournament[] = []
   for (let back = 2; back >= 0; back--) out.push(buildDailyEvent(dayStart(addDays(TODAY, -back)) + 12 * HOUR))
+  for (let back = 2; back >= 0; back--) out.push(buildOneShotEvent(dayStart(addDays(TODAY, -back)) + 12 * HOUR))
   const thisWeek = weekStartKey(NOW)
   out.push(buildWeeklyEvent(dayStart(addDays(thisWeek, -7)) + 36 * HOUR))
   out.push(buildWeeklyEvent(dayStart(thisWeek) + 36 * HOUR))
@@ -666,9 +980,12 @@ function weeklySittings(t: Tournament, players: Player[]): { entrants: Set<strin
   return { entrants, sittings }
 }
 
-/** The arcade's events: whoever played its games while it ran, and chose to join. */
+/**
+ * The arcade's events: whoever played its games while it ran, and chose to join. A One Shot's one try is
+ * the first run of its game after joining.
+ */
 function fillOfficial(t: Tournament, players: Player[], meant: Set<string> = new Set()) {
-  const rate = t.cadence === 'weekly' ? 0.25 : 0.75
+  const rate = t.cadence === 'weekly' ? 0.25 : t.cadence === 'oneshot' ? 0.6 : 0.75
   const entrants: { p: Player; joinedAt: number }[] = []
   for (const p of players) {
     const first = p.runs
@@ -835,7 +1152,18 @@ function recordBooks(players: Player[]): RecordRow[] {
     }
     const days = new Map<GameSlug, number[]>()
     const streak = new Map<GameSlug, number>()
-    for (const run of p.runs) {
+    // A lap or result from a daily's archive goes in its track's or hole's book, in its place among the runs.
+    const steps = [
+      ...p.runs.map((run) => ({ at: run.startAt, run, play: null })),
+      ...p.archive.map((play) => ({ at: play.at, run: null, play })),
+    ].sort((a, b) => a.at - b.at)
+    for (const { run, play } of steps) {
+      if (play) {
+        const id = play.game === 'hotlap' ? `track-${play.n}` : `hole-${play.n}`
+        post(play.game, id, play.game === 'hotlap' ? play.ms! : play.tries!, play.at, play.device)
+        continue
+      }
+      if (!run) continue
       if (!run.inMatch) {
         for (const r of run.records) post(run.game, r.recordId, r.value, run.startAt + r.atMs, run.device)
       }
@@ -862,17 +1190,31 @@ function recordBooks(players: Player[]): RecordRow[] {
  */
 type Db = Pick<ReturnType<typeof db>, 'select' | 'insert' | 'update' | 'delete'>
 
-async function insertRows<T extends object>(d: Db, table: Parameters<Db['insert']>[0], rows: T[]) {
+async function insertRows<T extends object>(d: Db, table: Parameters<Db['insert']>[0], rows: T[], keepExisting = false) {
   const chunk = 250
   for (let i = 0; i < rows.length; i += chunk) {
-    await d.insert(table).values(rows.slice(i, i + chunk) as never)
+    const insert = d.insert(table).values(rows.slice(i, i + chunk) as never)
+    await (keepExisting ? insert.onConflictDoNothing() : insert)
   }
+}
+
+/** A run kept the old way, in an event's JSON with no id: named as the API names it (tournaments.ts legacyScoreId). */
+function legacyRunId(tournamentId: string, r: Tournament['scores'][number]) {
+  const key = [tournamentId, r.playerId, r.game, r.score, r.at, r.attempt ?? '', r.matchId ?? ''].join('|')
+  return `ls-${crypto.createHash('sha1').update(key).digest('base64url').slice(0, 22)}`
 }
 
 /** Remove what this script added before, and nothing else. */
 async function clearSeed(d: Db) {
   await d.delete(leaderboardScores).where(like(leaderboardScores.id, 'seed-%'))
   await d.delete(recordScores).where(like(recordScores.id, 'seed-%'))
+  // And what an API put in the books for the seeded tags since: at its start it copies each track's, hole's
+  // and day's bests into their record books (courseRecords.ts), under ids of its own.
+  const seededTags = d
+    .select({ name: nameClaims.name })
+    .from(nameClaims)
+    .where(like(nameClaims.accountId, 'seed-acct-%'))
+  await d.delete(recordScores).where(inArray(recordScores.name, seededTags))
   await d.delete(tournamentsTable).where(like(tournamentsTable.id, 'seed-%'))
   await d
     .delete(trophyAwards)
@@ -940,6 +1282,17 @@ const EVERY_TABLE = {
   push_ledger: pushLedger,
   challenges,
   challenge_results: challengeResults,
+  bug_hunt_finds: bugHuntFinds,
+  daily_hole_results: dailyHoleResults,
+  hole_results: holeResults,
+  track_laps: trackLaps,
+  lap_ghosts: lapGhosts,
+  ticket_wallets: ticketWallets,
+  ticket_ledger: ticketLedger,
+  prizes_owned: prizesOwned,
+  notification_settings: notificationSettings,
+  feedback,
+  client_errors: clientErrors,
 }
 
 /** Every row of every table, to a file, before anything is removed. */
@@ -961,9 +1314,10 @@ async function backUp(): Promise<string> {
 }
 
 /**
- * Every score, record, event, challenge, trophy, group, friend and
- * notification, for everyone. Accounts, sign-ins, tags, bans and push
- * subscriptions stay, so nobody is signed out and every tag keeps its owner.
+ * Every score, record, daily result, lap, ghost, event, challenge, board trophy, group, friend and
+ * notification, for everyone. Accounts, sign-ins, tags, bans, push subscriptions and notification
+ * settings stay, so nobody is signed out and every tag keeps its owner, and so does what players found
+ * and earned: the bug hunt's catches, secret and hunt trophies, tickets and prizes.
  */
 async function wipeGameData(d: Db) {
   for (const table of [
@@ -975,18 +1329,23 @@ async function wipeGameData(d: Db) {
     scoreFlags,
     leaderboardScores,
     recordScores,
+    dailyHoleResults,
+    holeResults,
+    trackLaps,
+    lapGhosts,
     tournamentsTable,
     groupMembers,
     groups,
     directedInvites,
     friendRequests,
     friendships,
-    trophyAwards,
     notifications,
     pushLedger,
   ]) {
     await d.delete(table)
   }
+  // The boards' and events' trophies go with them; a secret found or a hunt's set caught stays.
+  await d.delete(trophyAwards).where(notInArray(trophyAwards.period, ['secret', 'hunt']))
   await d
     .insert(trophyCursor)
     .values({ id: 'default', weeklyInitialized: false, monthlyInitialized: false })
@@ -1074,7 +1433,7 @@ function closedAt(period: string, key: number): number {
   return dayStart(next) + 7 * MINUTE
 }
 
-async function seedTrophies(events: Tournament[]) {
+async function seedTrophies() {
   // Weekly and monthly: ranked from the boards as they now stand, the last
   // eight weeks and six months, stamped with when each period closed.
   await db()
@@ -1094,25 +1453,7 @@ async function seedTrophies(events: Tournament[]) {
       .set({ awardedAt: Math.min(NOW, closedAt(period, Number(periodKey))) })
       .where(sql`${trophyAwards.period} = ${period} and ${trophyAwards.periodKey} = ${Number(periodKey)}`)
   }
-
-  // Event wins: every event that is over.
-  let wins = 0
-  for (const t of events) {
-    const winner = tournamentWinner(t, NOW)
-    if (!winner) continue
-    const top = computeStandings(t).find((row) => row.name === winner)
-    const ok = await awardEventWin({
-      eventId: t.id,
-      eventTitle: t.title,
-      periodKey: boardDateKey(t.startsAt),
-      name: winner,
-      score: top?.totalPoints ?? 0,
-      games: t.games.length,
-      awardedAt: Math.round(Math.min(NOW - MINUTE, t.endsAt + between(5, 90) * MINUTE)),
-    })
-    if (ok) wins += 1
-  }
-  return { periods: keys.size, wins }
+  return keys.size
 }
 
 /* ---------- main ---------- */
@@ -1153,8 +1494,8 @@ async function main() {
 
   // After the commit, from the boards as everyone now sees them.
   console.log('Handing out trophies…')
-  const trophies = await seedTrophies(events)
-  console.log(`  ${trophies.periods} weekly and monthly podiums, ${trophies.wins} event wins`)
+  const periods = await seedTrophies()
+  console.log(`  ${periods} weekly and monthly podiums`)
 
   const wk = weekStartKey(NOW)
   const top = (await globalRanksForClosedPeriod('weekly', wk)).slice(0, 3)
@@ -1185,12 +1526,25 @@ async function buildWorld(d: Db): Promise<Tournament[]> {
   for (const p of players) {
     const plan: Sitting[] = [...(sittingsFor.get(p.tag) ?? [])]
     for (const key of playDays(p)) {
+      // Today is still going: most who play in the evening haven't come by yet.
+      if (key === TODAY && dayStart(key) + p.hour * HOUR > NOW - 25 * MINUTE && !chance(0.3)) continue
       const at = timeOnDay(key, clamp(p.hour + gauss() * 1.2, 7, 23.6), p.joinedAt + between(1, 6) * MINUTE)
-      if (at != null) plan.push({ at, games: chooseGames(p, key, official) })
-      // The keenest come back later the same day now and then.
+      if (at != null) {
+        // The day's dailies first, as the front page has them; some come by for those alone.
+        const dailies = dailiesFor(p, key)
+        const alone = dailies.length > 0 && chance(0.15 + 0.2 * Math.min(1, p.dailyTaste))
+        plan.push({
+          at,
+          games: [...dailies, ...(alone ? [] : chooseGames(p, key, official))],
+          archive: key > DAILY_FROM.hotlap! && chance(0.12 + 0.15 * p.dailyTaste),
+          hunt: key >= HUNT_FROM && chance(0.3 + 0.35 * p.activity + 0.1 * Math.min(1, p.dailyTaste)),
+        })
+      }
+      // The keenest come back later the same day now and then, some for another go at the day's track.
       if (at != null && p.activity > 0.7 && chance(0.2)) {
         const later = timeOnDay(key, Math.min(23.5, hourOf(at) + between(2, 5)), at + 2 * HOUR)
-        if (later != null) plan.push({ at: later, games: chooseGames(p, key, official) })
+        const lap = key >= DAILY_FROM.hotlap! && p.dailyTaste > 0.6 && chance(0.35)
+        if (later != null) plan.push({ at: later, games: [...(lap ? (['hotlap'] as GameSlug[]) : []), ...chooseGames(p, key, official)] })
       }
     }
     plan.sort((a, b) => a.at - b.at)
@@ -1255,8 +1609,11 @@ async function buildWorld(d: Db): Promise<Tournament[]> {
           ...(r.matchId != null ? { matchId: r.matchId } : {}),
         })),
     ]
-    t.players = [...seats, ...t.players]
-    t.scores = [...runs, ...t.scores]
+    // An event part moved to its tables can hold a seat or run in both: each once.
+    const seen = new Set<string>()
+    const once = (id: string | undefined) => !id || (!seen.has(id) && Boolean(seen.add(id)))
+    t.players = [...seats.filter((p) => once(`seat:${p.id}`)), ...t.players]
+    t.scores = [...runs.filter((r) => once(r.id && `run:${r.id}`)), ...t.scores]
   }
 
   console.log('Creating accounts and tags…')
@@ -1271,11 +1628,67 @@ async function buildWorld(d: Db): Promise<Tournament[]> {
       score: r.score,
       at: Math.round(r.at),
       device: r.device,
-      durationMs: r.durationMs,
+      // Today's Hole's result reaches the board as a result, with no run timed around it (dailyHole.ts).
+      durationMs: r.game === 'acechase' ? null : r.durationMs,
     })),
   )
   await insertRows(d, leaderboardScores, scoreRows)
-  console.log(`  ${scoreRows.length} runs across ${SEEDED_GAMES.length} games`)
+  const dailyRuns = scoreRows.filter((r) => DAILY_SET.has(r.game)).length
+  console.log(`  ${scoreRows.length} runs across ${SEEDED_GAMES.length} games and ${SEEDED_DAILIES.length} dailies (${dailyRuns} of them the dailies')`)
+
+  console.log('Keeping the dailies…')
+  const holeDays = players.flatMap((p) =>
+    p.runs
+      .filter((r) => r.hole)
+      .map((r) => ({
+        accountId: p.accountId,
+        day: dayOfKey(boardDateKey(r.startAt)),
+        tries: r.hole!.tries,
+        pattern: r.hole!.pattern,
+        name: p.tag,
+        solvedAt: Math.round(r.at),
+      })),
+  )
+  await insertRows(d, dailyHoleResults, holeDays)
+  const laps = players.flatMap((p) =>
+    p.archive
+      .filter((a) => a.game === 'hotlap')
+      .map((a) => ({
+        id: sid('tl'),
+        game: 'hotlap',
+        track: a.n,
+        accountId: p.accountId,
+        name: p.tag,
+        score: TIME_SCORE_BASE - a.ms!,
+        device: a.device,
+        runId: null,
+        durationMs: a.ms! + 4_000,
+        at: Math.round(a.at),
+      })),
+  )
+  await insertRows(d, trackLaps, laps)
+  const holesLater = players.flatMap((p) =>
+    p.archive
+      .filter((a) => a.game === 'acechase')
+      .map((a) => ({
+        accountId: p.accountId,
+        game: 'acechase',
+        day: a.day,
+        name: p.tag,
+        tries: a.tries!,
+        pattern: a.pattern!,
+        device: a.device,
+        at: Math.round(a.at),
+      })),
+  )
+  await insertRows(d, holeResults, holesLater)
+  const finds = players.flatMap((p) =>
+    p.finds.map((f) => ({ accountId: p.accountId, day: f.day, bug: bugForDay(f.day), spot: f.spot, foundAt: Math.round(f.at), counted: true })),
+  )
+  await insertRows(d, bugHuntFinds, finds)
+  console.log(
+    `  ${holeDays.length} Today's Hole results, ${laps.length} laps and ${holesLater.length} hole results from the archives, ${finds.length} bugs caught`,
+  )
 
   console.log('Filling record books…')
   const records = recordBooks(players).map((r) => ({ ...r, at: Math.round(r.at) }))
@@ -1285,9 +1698,14 @@ async function buildWorld(d: Db): Promise<Tournament[]> {
   console.log('Running events…')
   const events = [...official, ...hosted.map((h) => h.t), ...draws]
   for (const t of events) {
+    // As the API keeps an event: its settings in the row, its roster and runs in their own tables. A
+    // running API holds its own copy and writes only what changed in it since it last wrote, so a roster
+    // left in the JSON would be lost to its next write; in the tables it stays. The stamp changes the row,
+    // which is how a running API knows to read the event again.
+    const { players: seats, scores: runs, ...meta } = t
     const row = {
       id: t.id,
-      data: t as unknown as Record<string, unknown>,
+      data: { ...meta, rowsChangedAt: NOW } as unknown as Record<string, unknown>,
       official: Boolean(t.official),
       cadence: t.cadence ?? null,
       startsAt: t.startsAt,
@@ -1299,9 +1717,52 @@ async function buildWorld(d: Db): Promise<Tournament[]> {
       .insert(tournamentsTable)
       .values(row)
       .onConflictDoUpdate({ target: tournamentsTable.id, set: { ...row, id: undefined } })
+    // A real seat or run already in the tables stays as it is; one still in the JSON the old way moves over.
+    const seatRows = [...seats]
+      .sort((a, b) => a.joinedAt - b.joinedAt)
+      .map((p) => ({ tournamentId: t.id, id: p.id, name: p.name, joinedAt: Math.round(p.joinedAt), accountId: p.accountId ?? null }))
+    await insertRows(d, tournamentPlayers, seatRows, true)
+    const runRows = [...runs]
+      .sort((a, b) => a.at - b.at)
+      .map((r) => ({
+        id: r.id ?? (r.playerId.startsWith('seed-') ? sid('er') : legacyRunId(t.id, r)),
+        tournamentId: t.id,
+        playerId: r.playerId,
+        game: r.game,
+        score: Math.round(r.score),
+        at: Math.round(r.at),
+        attempt: r.attempt ?? null,
+        matchId: r.matchId ?? null,
+      }))
+    await insertRows(d, tournamentScores, runRows, true)
   }
   for (const t of official) console.log(`  ${t.title} (${t.id}): ${t.players.length} players, ${t.scores.length} scores`)
   console.log(`  ${hosted.length} hosted events and ${draws.length} brackets`)
+
+  // Each finished event's win, in the same breath as the events and stamped a little after each ended. A
+  // running API that finds an event over awards its win itself, stamped when it looked; this way it finds
+  // the win given.
+  const wins = events.flatMap((t) => {
+    const winner = tournamentWinner(t, NOW)
+    if (!winner) return []
+    const top = computeStandings(t).find((row) => row.name === winner)
+    return [
+      {
+        id: `event-${t.id}-${winner}`,
+        period: 'event',
+        periodKey: boardDateKey(t.startsAt),
+        name: winner,
+        rank: 1,
+        score: Math.max(0, Math.floor(top?.totalPoints ?? 0)),
+        games: t.games.length,
+        eventId: t.id,
+        eventTitle: t.title.slice(0, 60),
+        awardedAt: Math.round(Math.min(NOW - MINUTE, t.endsAt + between(5, 90) * MINUTE)),
+      },
+    ]
+  })
+  if (wins.length) await d.insert(trophyAwards).values(wins).onConflictDoNothing()
+  console.log(`  ${wins.length} event wins`)
 
   console.log('Making friends…')
   const social = await seedSocial(d, players)

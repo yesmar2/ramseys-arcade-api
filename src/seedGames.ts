@@ -311,7 +311,7 @@ const bop: Model = (q, rng) => {
 }
 
 /** Putt's five short holes and their pars (the site's games/putt/course.ts). */
-const PUTT_PARS = [2, 2, 2, 2, 3]
+const PUTT_PARS = [2, 2, 2, 2, 2]
 
 /** Each hole pays 100 a stroke under par plus two, and an ace 200 more. */
 const putt: Model = (q, rng) => {

@@ -240,7 +240,7 @@ export const SCORE_STREAK_THRESHOLDS: Record<GameSlug, number> = {
   findbug: 940_000, // ≈ a full five-scene run under 60s
   crumbtrail: 10_000,
   bop: 25,
-  // Putt's five short holes are par 11, and a round at par pays 1,000: this is four under, or fewer with aces.
+  // Putt's five short holes are par 10, and a round at par pays 1,000: this is four under, or fewer with aces.
   putt: 1400,
   fireflies: 60,
   // Dailies: none kept (see buildCrossRunStreakRecords).

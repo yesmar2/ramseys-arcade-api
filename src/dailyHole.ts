@@ -53,6 +53,8 @@ export type DailyReply = {
     tag: string | null
     /** Today's result is on the board. */
     board: boolean
+    /** Today's result's tries, 'o' a miss and 'b' the bullseye, so another device can show and share it. */
+    pattern: string | null
   }
   /** What today's result paid for the prize counter, as it went on the board. */
   tickets?: { earned: number; balance: number }
@@ -157,6 +159,7 @@ export async function dailyReply(accountId: string | null, now = Date.now()): Pr
       streak: await streakOf(accountId, day),
       tag: caught.tag,
       board: caught.board,
+      pattern: mine?.pattern ?? null,
     },
     ...(caught.tickets ? { tickets: caught.tickets } : {}),
   }

@@ -10,6 +10,7 @@ import { assertCanUseName, withAvatarId, withAvatarIds } from './names.js'
 import {
   addRecord,
   bestRecordForName,
+  courseOfRecord,
   getRecordBoard,
   getRecordBoardPage,
   getRecordDef,
@@ -197,6 +198,12 @@ recordsRouter.post('/:game/:recordId', async (req, res) => {
   const def = getRecordDef(game, recordId)
   if (!def) {
     res.status(404).json({ error: 'Unknown record' })
+    return
+  }
+  // A daily's track, hole and day records are kept by the game's own save, from a result the API has
+  // checked: nobody can post one here.
+  if (courseOfRecord(game, recordId) != null) {
+    res.status(403).json({ error: 'That record is kept by the game itself', code: 'COURSE_RECORD' })
     return
   }
 

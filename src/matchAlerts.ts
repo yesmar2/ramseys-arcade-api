@@ -9,8 +9,7 @@ import {
 } from './bracket.js'
 import { db } from './db/client.js'
 import { notifications } from './db/schema.js'
-import { MATCH_KINDS, type NotificationKind, type NotificationMeta } from './notifications.js'
-import { fileAndPush } from './push.js'
+import { MATCH_KINDS, notify, type NotificationKind, type NotificationMeta } from './notifications.js'
 import type { GameSlug } from './store.js'
 import type { Tournament } from './tournaments.js'
 import { andList, gameLabel, scoreFigure, timeLeft } from './words.js'
@@ -176,7 +175,7 @@ export async function fileMatchAlerts(tournaments: Tournament[], now: number) {
   const live = new Set(alerts.map((a) => `${a.accountId}|${a.key}`))
 
   for (const alert of alerts) {
-    await fileAndPush({
+    await notify({
       accountId: alert.accountId,
       kind: alert.kind,
       title: alert.title,

@@ -2,6 +2,7 @@ import { Router } from 'express'
 import { z } from 'zod'
 import { accountFromRequest } from './auth.js'
 import { listNotifications, markRead, unreadCount } from './notifications.js'
+import { isTopic, levelsFor, saveLevels, type NotificationLevels } from './notificationSettings.js'
 import {
   disablePush,
   publicVapidKey,
@@ -69,6 +70,42 @@ notificationsRouter.post('/read', async (req, res) => {
   try {
     await markRead(account.id, parsed.data.ids)
     res.json({ unread: await unreadCount(account.id) })
+  } catch (err) {
+    fail(err, res)
+  }
+})
+
+/* ------------------------------------------------------------ settings --- */
+
+/** What the player hears about, and how: every topic's level, their choice or the default. */
+notificationsRouter.get('/settings', async (req, res) => {
+  const account = await requireAccount(req, res)
+  if (!account) return
+  try {
+    res.json({ levels: await levelsFor(account.id) })
+  } catch (err) {
+    fail(err, res)
+  }
+})
+
+const settingsSchema = z.object({
+  levels: z.record(z.string(), z.enum(['push', 'inbox', 'off'])),
+})
+
+/** Change some topics' levels; the rest stay as they were. */
+notificationsRouter.put('/settings', async (req, res) => {
+  const account = await requireAccount(req, res)
+  if (!account) return
+  const parsed = settingsSchema.safeParse(req.body ?? {})
+  const changes = Object.fromEntries(
+    Object.entries(parsed.success ? parsed.data.levels : {}).filter(([topic]) => isTopic(topic)),
+  ) as Partial<NotificationLevels>
+  if (!parsed.success || !Object.keys(changes).length) {
+    res.status(400).json({ error: 'Invalid settings', code: 'INVALID_SETTINGS' })
+    return
+  }
+  try {
+    res.json({ levels: await saveLevels(account.id, changes) })
   } catch (err) {
     fail(err, res)
   }

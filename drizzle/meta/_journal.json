@@ -148,6 +148,13 @@
       "when": 1790545264341,
       "tag": "0020_hole_results",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1790604397953,
+      "tag": "0021_notification_settings",
+      "breakpoints": true
     }
   ]
 }

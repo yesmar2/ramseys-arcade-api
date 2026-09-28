@@ -435,7 +435,8 @@ export const notifications = pgTable(
 /**
  * Web push endpoints, one row per device that opted in.
  *
- * Only bracket match clocks are ever delivered here — see `pushPolicy`.
+ * What goes out to them is each player's choice, kind by kind
+ * (notificationSettings.ts), within push.ts's quiet hours and daily cap.
  */
 export const pushSubscriptions = pgTable(
   'push_subscriptions',
@@ -758,3 +759,17 @@ export const holeResults = pgTable(
   },
   (t) => [primaryKey({ columns: [t.accountId, t.game, t.day] }), index('hole_results_game_day_idx').on(t.game, t.day, t.tries, t.at)],
 )
+
+/**
+ * What each player wants to hear about, and how (notificationSettings.ts). For each topic: the inbox and
+ * an alert on their devices, the inbox alone, or nothing. Only what the player has chosen is kept here;
+ * every other topic follows the defaults.
+ */
+export const notificationSettings = pgTable('notification_settings', {
+  accountId: text('account_id')
+    .primaryKey()
+    .references(() => accounts.id, { onDelete: 'cascade' }),
+  /** Topic to level: 'push', 'inbox' or 'off'. */
+  levels: jsonb('levels').notNull(),
+  updatedAt: bigint('updated_at', { mode: 'number' }).notNull(),
+})

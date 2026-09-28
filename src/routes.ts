@@ -497,8 +497,8 @@ leaderboardsRouter.post('/:game', async (req, res) => {
     await settleToday(account.id, result.entry.at).catch((err: unknown) => {
       console.warn(`[today] ${game} run for ${claim.name}:`, err)
     })
-    // And it may beat a friend's result on it today (todayBeaten.ts).
-    await tellBeatenFriends({ accountId: account.id, game, now: result.entry.at }).catch((err: unknown) => {
+    // And it may beat a friend's result on it today (todayBeaten.ts). The save doesn't wait: a push can take a moment.
+    void tellBeatenFriends({ accountId: account.id, game, now: result.entry.at }).catch((err: unknown) => {
       console.warn(`[today] telling ${claim.name}'s friends:`, err)
     })
   }

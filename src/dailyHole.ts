@@ -278,8 +278,8 @@ export async function recordResult(
       }
       // The hole is one of the Today set's three (today.ts): it may finish the day's card.
       await settleToday(accountId, now).catch(() => undefined)
-      // And it may beat a friend's hole today (todayBeaten.ts).
-      await tellBeatenFriends({ accountId, game: 'acechase', now }).catch(() => 0)
+      // And it may beat a friend's hole today (todayBeaten.ts). The result doesn't wait: a push can take a moment.
+      void tellBeatenFriends({ accountId, game: 'acechase', now }).catch(() => 0)
     }
   }
   const reply = await dailyReply(accountId, now)

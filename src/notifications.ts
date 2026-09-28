@@ -2,13 +2,15 @@ import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm'
 import { db } from './db/client.js'
 import { friendRequests, notifications } from './db/schema.js'
 import { resolveAvatarId } from './names.js'
+import { levelsFor, topicOf, type NotificationLevel } from './notificationSettings.js'
 
 /**
  * Everything the arcade can tell a player.
  *
- * Only the match kinds and a beaten challenge are ever delivered to a device —
- * see `PUSHABLE`. The rest live in the inbox, where they cost the player
- * nothing to miss.
+ * Each player chooses, kind by kind, whether a note is also sent to their
+ * devices, only filed in the inbox, or not filed at all. See
+ * notificationSettings.ts, which has the defaults: what a player can act on
+ * is pushed, and the rest waits in the inbox.
  */
 export type NotificationKind =
   | 'match-open'
@@ -22,23 +24,6 @@ export type NotificationKind =
   | 'challenge-taken'
   /** A friend beat your result on one of today's three (todayBeaten.ts). */
   | 'today-beaten'
-
-/**
- * The push allow-list.
- *
- * A bracket match has a clock and a forfeit on the other side of it, so missing
- * one costs a player their run. A beaten challenge is the other exception: it
- * is a friend answering something the player sent them, and the answer back
- * is the whole point. Nothing else goes to a phone: a beaten record is still
- * beaten when you next open the app, and telling someone about it on their
- * phone buys them nothing they can act on. The daily cap and quiet hours in
- * push.ts hold for every kind.
- */
-export const PUSHABLE: ReadonlySet<NotificationKind> = new Set<NotificationKind>([
-  'match-open',
-  'match-closing',
-  'challenge-beaten',
-])
 
 export const MATCH_KINDS: ReadonlySet<NotificationKind> = new Set<NotificationKind>([
   'match-open',
@@ -146,17 +131,46 @@ async function rowByKey(accountId: string, digestKey: string): Promise<Notificat
   return (row as NotificationRow | undefined) ?? null
 }
 
+export type Filed =
+  | { row: NotificationRow; created: boolean; changed: boolean }
+  /** The player turned this kind off, so nothing was filed. */
+  | { row: null; created: false; changed: false }
+
 /**
- * File one notification.
+ * Out to the player's devices as well. push.ts imports this module, so it's
+ * loaded here only when a note first needs to go out.
+ */
+async function pushOut(row: NotificationRow, now: number, level: NotificationLevel) {
+  try {
+    const { deliver } = await import('./push.js')
+    await deliver(row, now, level)
+  } catch (err) {
+    console.warn(`[push] ${row.kind} for ${row.accountId} failed:`, err)
+  }
+}
+
+/**
+ * File one notification, the way the player asked to hear about its kind
+ * (notificationSettings.ts): in the inbox and on their devices, in the inbox
+ * only, or not at all.
  *
  * Returns the row, whether this call created it, and whether it changed what
- * the player sees. Callers that also push only care about `created`: an
- * update is a newer version of something the player was already told.
+ * the player sees. Only a new row is pushed: an update is a newer version of
+ * something the player was already told.
  */
-export async function notify(
-  input: NotifyInput,
-): Promise<{ row: NotificationRow; created: boolean; changed: boolean }> {
+export async function notify(input: NotifyInput): Promise<Filed> {
   const now = input.now ?? Date.now()
+  const level = (await levelsFor(input.accountId))[topicOf(input.kind, input.meta)]
+  if (level === 'off') return { row: null, created: false, changed: false }
+  const filed = await file(input, now)
+  if (filed.created && level === 'push') await pushOut(filed.row, now, level)
+  return filed
+}
+
+async function file(
+  input: NotifyInput,
+  now: number,
+): Promise<{ row: NotificationRow; created: boolean; changed: boolean }> {
   const content: Content = {
     kind: input.kind,
     title: input.title,

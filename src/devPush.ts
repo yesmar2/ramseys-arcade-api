@@ -15,15 +15,14 @@ import webpush from 'web-push'
 import { db } from './db/client.js'
 import { pushSubscriptions } from './db/schema.js'
 import { getClaim } from './names.js'
-import { sendPush } from './push.js'
+import { DAILY_PUSH_CAP, sendPush } from './push.js'
 
 const OUTCOMES: Record<string, string> = {
   sent: 'Delivered to the push service. It should appear on the device.',
   'not-configured': 'VAPID keys are missing from .env.',
-  'not-pushable': 'That kind is inbox-only and can never be pushed.',
-  'no-devices': 'Nobody has turned match alerts on for this account yet.',
+  'no-devices': 'Nobody has turned alerts on for this account yet.',
   'quiet-hours': 'Held: it is between 22:00 and 08:00 on the device.',
-  capped: 'Held: this account already had its 2 pushes today.',
+  capped: `Held: this account already had its ${DAILY_PUSH_CAP} pushes today.`,
   duplicate: 'Held: same match transition already pushed today.',
 }
 

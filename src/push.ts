@@ -2,15 +2,8 @@ import { and, eq, gt, inArray, isNull, sql } from 'drizzle-orm'
 import webpush from 'web-push'
 import { db } from './db/client.js'
 import { notifications, pushLedger, pushSubscriptions } from './db/schema.js'
-import {
-  MATCH_KINDS,
-  PUSHABLE,
-  markPushed,
-  notify,
-  type NotificationKind,
-  type NotificationRow,
-  type NotifyInput,
-} from './notifications.js'
+import { MATCH_KINDS, markPushed, type NotificationKind, type NotificationRow } from './notifications.js'
+import { levelsFor, levelsForAccounts, topicOf, type NotificationLevel } from './notificationSettings.js'
 import { timeLeft } from './words.js'
 
 /**
@@ -19,7 +12,9 @@ import { timeLeft } from './words.js'
  * Three things keep this from becoming spam, and all three are enforced here
  * rather than left to callers:
  *
- *  1. Only `PUSHABLE` kinds are ever sent (bracket clocks, a beaten challenge).
+ *  1. Only what the player asked for is sent: each kind's level in their
+ *     notification settings (notificationSettings.ts). By default, that's what
+ *     they can act on: bracket clocks, a beaten challenge, a beaten lap.
  *  2. Quiet hours — a 24h match window otherwise fires at 3am. What quiet
  *     hours hold back goes out when they end, if it still matters then.
  *  3. A hard daily cap per account, so a future caller that forgets the rules
@@ -33,8 +28,11 @@ import { timeLeft } from './words.js'
 const QUIET_START_HOUR = 22
 const QUIET_END_HOUR = 8
 
-/** Hard ceiling per account per day, regardless of what callers ask for. */
-export const DAILY_PUSH_CAP = 2
+/** Hard ceiling per account per day, whatever the player chose and whatever callers ask for. */
+export const DAILY_PUSH_CAP = 8
+
+/** The last of a day's pushes are kept for a match clock: missing one of those costs a player their run. */
+const KEPT_FOR_MATCHES = 2
 
 let configured: boolean | null = null
 
@@ -188,7 +186,6 @@ export type PushPayload = {
 export type PushOutcome =
   | 'sent'
   | 'not-configured'
-  | 'not-pushable'
   | 'no-devices'
   | 'quiet-hours'
   | 'capped'
@@ -196,6 +193,7 @@ export type PushOutcome =
 
 /**
  * Deliver one notification to a player's devices, if every guardrail agrees.
+ * Whether the player wants it pushed at all is `deliver`'s question.
  *
  * Returns why it did not send rather than throwing, so callers can log the
  * reason without having to care.
@@ -205,7 +203,6 @@ export async function sendPush(
   payload: PushPayload,
   now = Date.now(),
 ): Promise<PushOutcome> {
-  if (!PUSHABLE.has(payload.kind)) return 'not-pushable'
   if (!ensureConfigured()) return 'not-configured'
 
   const devices = await db()
@@ -224,7 +221,8 @@ export async function sendPush(
     .where(and(eq(pushLedger.accountId, accountId), eq(pushLedger.dayKey, key)))
 
   if (ledger?.lastKey === payload.dedupeKey) return 'duplicate'
-  if ((ledger?.sent ?? 0) >= DAILY_PUSH_CAP) return 'capped'
+  const cap = MATCH_KINDS.has(payload.kind) ? DAILY_PUSH_CAP : DAILY_PUSH_CAP - KEPT_FOR_MATCHES
+  if ((ledger?.sent ?? 0) >= cap) return 'capped'
 
   const body = JSON.stringify({
     title: payload.title,
@@ -293,9 +291,10 @@ function pushTitle(row: NotificationRow, now: number): string {
   return row.title
 }
 
-/** Whether a row still deserves a buzz: pushable, unsent, unanswered, and not over. */
+/** Whether a row still deserves a buzz: unsent, unread, unanswered, and not over. */
 function stillWorthPushing(row: NotificationRow, now: number): boolean {
-  if (!PUSHABLE.has(row.kind) || row.pushedAt != null || row.resolvedAt != null) return false
+  // Seen in the inbox already, it has nothing left to tell a lock screen.
+  if (row.pushedAt != null || row.readAt != null || row.resolvedAt != null) return false
   if (now - row.createdAt > HOLD_FOR_MS) return false
   const endsAt = row.meta?.endsAt
   // A match with minutes left is better told in the inbox than on a lock screen.
@@ -303,9 +302,18 @@ function stillWorthPushing(row: NotificationRow, now: number): boolean {
   return true
 }
 
-/** Push one row to its player's devices, once. */
-export async function deliver(row: NotificationRow, now = Date.now()): Promise<PushOutcome | 'skipped'> {
+/**
+ * Push one row to its player's devices, once, if they asked for its kind on
+ * their devices. `level` is their choice for it, when the caller has it already.
+ */
+export async function deliver(
+  row: NotificationRow,
+  now = Date.now(),
+  level?: NotificationLevel,
+): Promise<PushOutcome | 'skipped'> {
   if (!stillWorthPushing(row, now)) return 'skipped'
+  const wanted = level ?? (await levelsFor(row.accountId))[topicOf(row.kind, row.meta)]
+  if (wanted !== 'push') return 'skipped'
   const key = row.digestKey ?? row.id
   const outcome = await sendPush(
     row.accountId,
@@ -317,50 +325,34 @@ export async function deliver(row: NotificationRow, now = Date.now()): Promise<P
   return outcome
 }
 
-/** File a notification and, when it's new and one of the kinds that buzz, push it. */
-export async function fileAndPush(input: NotifyInput) {
-  const now = input.now ?? Date.now()
-  const filed = await notify(input)
-  if (filed.created && PUSHABLE.has(input.kind)) {
-    await deliver(filed.row, now).catch((err: unknown) => {
-      console.warn(`[push] ${input.kind} for ${input.accountId} failed:`, err)
-    })
-  }
-  return filed
-}
-
 /**
  * Send what quiet hours or the daily cap held back, now that they allow it.
- * Runs from the sweep; only players with a device are looked at.
+ * Runs from the sweep; only players with a device are looked at, and only
+ * what they asked to be pushed goes.
  */
 export async function pushHeld(now = Date.now()): Promise<number> {
   if (!ensureConfigured()) return 0
+  const withDevices = db().selectDistinct({ accountId: pushSubscriptions.accountId }).from(pushSubscriptions)
   const rows = (await db()
     .select()
     .from(notifications)
     .where(
       and(
-        inArray(notifications.kind, [...PUSHABLE]),
+        inArray(notifications.accountId, withDevices),
         isNull(notifications.pushedAt),
+        isNull(notifications.readAt),
         isNull(notifications.resolvedAt),
         gt(notifications.createdAt, now - HOLD_FOR_MS),
       ),
     )) as NotificationRow[]
   const due = rows.filter((row) => stillWorthPushing(row, now))
   if (!due.length) return 0
-  const accounts = [...new Set(due.map((r) => r.accountId))]
-  const withDevices = new Set(
-    (
-      await db()
-        .selectDistinct({ accountId: pushSubscriptions.accountId })
-        .from(pushSubscriptions)
-        .where(inArray(pushSubscriptions.accountId, accounts))
-    ).map((r) => r.accountId),
-  )
+  const levels = await levelsForAccounts([...new Set(due.map((r) => r.accountId))])
   let sent = 0
   for (const row of due.sort((a, b) => a.createdAt - b.createdAt)) {
-    if (!withDevices.has(row.accountId)) continue
-    if ((await deliver(row, now)) === 'sent') sent++
+    const level = levels.get(row.accountId)?.[topicOf(row.kind, row.meta)]
+    if (level !== 'push') continue
+    if ((await deliver(row, now, level)) === 'sent') sent++
   }
   return sent
 }

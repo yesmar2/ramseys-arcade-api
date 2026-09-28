@@ -12,8 +12,10 @@ import { scoreFigure } from './words.js'
  * Hole, Today's Track or Today's Wanted is better than a friend's on it today, that friend hears so in
  * their inbox: once a day for each daily and each friend who beats them. Only a friend who has played it
  * today is told; someone who hasn't isn't beaten yet. A lap can be driven again the same day, so its
- * note says there's still time; the hole and the bugs count once a day. The saves of the three call this
- * (routes.ts for the lap and the bugs, dailyHole.ts for the hole).
+ * note says there's still time; the hole and the bugs count once a day. That's why the lap is a topic of
+ * its own in the player's notification settings, and one that goes to their phone by default
+ * (notificationSettings.ts). The saves of the three call this (routes.ts for the lap and the bugs,
+ * dailyHole.ts for the hole), without waiting on it, since a push can take a moment.
  */
 
 export type TodayGame = 'acechase' | 'hotlap' | 'findbug'

@@ -419,8 +419,9 @@ export async function awardEventWin(opts: {
 /**
  * Congratulate the winner in the inbox.
  *
- * Inbox only. Winning is good news that keeps, and the player almost always
- * just watched it happen on the bracket page anyway. A first win also
+ * In the inbox unless the player asks for trophies on their phone too
+ * (notificationSettings.ts). Winning is good news that keeps, and the player
+ * almost always just watched it happen on the bracket page anyway. A first win also
  * unlocks the laurel ring, which the row offers to put on.
  */
 async function notifyEventWin(name: string, eventTitle: string, eventId: string) {

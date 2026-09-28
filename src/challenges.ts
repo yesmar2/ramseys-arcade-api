@@ -3,7 +3,6 @@ import { and, eq } from 'drizzle-orm'
 import { db } from './db/client.js'
 import { challengeResults, challenges, leaderboardScores } from './db/schema.js'
 import { notify } from './notifications.js'
-import { fileAndPush } from './push.js'
 import { boardDateKey, DAILY_GAMES, type GameSlug } from './store.js'
 import { gameLabel, gapWords, isTime, scoreFigure, scoreWords } from './words.js'
 
@@ -198,7 +197,7 @@ async function tellChallenger(
   if (what.won) {
     // Once a win: a later, higher win is still the same news.
     if (!what.firstWin) return
-    await fileAndPush({
+    await notify({
       accountId: challenge.accountId,
       kind: 'challenge-beaten',
       title: `${run.name} beat your ${scoreWords(game, challenge.score)} on ${gameLabel(game)}`,

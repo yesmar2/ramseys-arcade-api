@@ -1261,8 +1261,9 @@ function recordValue(def: RecordDef, value: number): string {
  * One row per record: losing three in a day is three rows, each naming who
  * took it and by how much, rather than one row named after the last.
  *
- * Inbox only — never pushed. The record will still be gone when they next open
- * the app, so there is nothing here worth a buzz.
+ * In the inbox, unless the player asks for it on their phone too
+ * (notificationSettings.ts). The record will still be gone when they next open
+ * the app, so by default there is nothing here worth a buzz.
  */
 async function notifyRecordTaken(
   game: GameSlug,

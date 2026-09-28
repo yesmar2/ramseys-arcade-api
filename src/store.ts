@@ -1459,6 +1459,8 @@ export async function qualifies(
   now = Date.now(),
 ): Promise<boolean> {
   if (score <= 0) return false
+  // A run goes on a daily's board for its day; the longer boards are day points (see DAILY_GAMES).
+  if (DAILY_GAMES.has(game) && period !== 'daily') return false
   const board = await getBoard(game, period, now)
   if (board.length < BOARD_CUT) return true
   return score > board[board.length - 1].score
@@ -1483,6 +1485,7 @@ export async function rankForScore(
   now = Date.now(),
 ): Promise<number | null> {
   if (score <= 0) return null
+  if (DAILY_GAMES.has(game) && period !== 'daily') return null
   // The board is in score order, highest first: count the scores above this one by halving.
   const { entries } = await poolView(game, period, now)
   let lo = 0

@@ -1,9 +1,9 @@
-import { and, eq, gte, inArray, like } from 'drizzle-orm'
+import { and, eq, gte, inArray } from 'drizzle-orm'
 import { db } from './db/client.js'
-import { dailyHoleResults, leaderboardScores, prizesOwned, runClaims, ticketLedger } from './db/schema.js'
+import { dailyHoleResults, leaderboardScores, prizesOwned, ticketLedger } from './db/schema.js'
 import { namesOwnedByAccount } from './names.js'
 import { notify } from './notifications.js'
-import { boardDateKey, previousBoardDateKey } from './store.js'
+import { DAILY_SINCE, boardDateKey, previousBoardDateKey } from './store.js'
 import { awardTickets } from './tickets.js'
 
 /*
@@ -73,16 +73,12 @@ async function playedDays(accountId: string, now: number): Promise<Played> {
           .from(leaderboardScores)
           .where(and(eq(leaderboardScores.game, game), inArray(leaderboardScores.name, tags), gte(leaderboardScores.at, fromMs)))
       : Promise.resolve([] as { score: number; at: number }[])
-  const [holes, laps, claims, finds] = await Promise.all([
+  const [holes, laps, finds] = await Promise.all([
     db()
       .select({ day: dailyHoleResults.day, tries: dailyHoleResults.tries })
       .from(dailyHoleResults)
       .where(and(eq(dailyHoleResults.accountId, accountId), gte(dailyHoleResults.day, fromDay))),
     runs('hotlap'),
-    db()
-      .select({ ref: runClaims.ref })
-      .from(runClaims)
-      .where(and(eq(runClaims.runId, `account:${accountId}`), eq(runClaims.surface, 'daily'), like(runClaims.ref, 'findbug:%'))),
     runs('findbug'),
   ])
   const played: Played = { hole: new Map(), track: new Map(), wanted: new Map() }
@@ -92,14 +88,12 @@ async function playedDays(accountId: string, now: number): Promise<Played> {
     const key = boardDateKey(lap.at)
     played.track.set(key, Math.max(played.track.get(key) ?? 0, lap.score))
   }
-  // The day's first run is claimed when it saves; its board row is the result.
-  for (const claim of claims) {
-    const key = Number(claim.ref.slice('findbug:'.length))
-    if (Number.isFinite(key)) played.wanted.set(key, 0)
-  }
+  // Since it became a daily, Find the Bug takes only the day's first run (firstRun.ts), so every row of
+  // it is a day played; before that it was an endless hunt, whose rows aren't days.
   for (const run of finds) {
     const key = boardDateKey(run.at)
-    if (played.wanted.has(key)) played.wanted.set(key, Math.max(played.wanted.get(key) ?? 0, run.score))
+    if (key < (DAILY_SINCE.findbug ?? 0)) continue
+    played.wanted.set(key, Math.max(played.wanted.get(key) ?? 0, run.score))
   }
   return played
 }

@@ -1,5 +1,5 @@
 import crypto from 'node:crypto'
-import { and, eq, lt, sql } from 'drizzle-orm'
+import { and, eq, lt, ne, or, sql } from 'drizzle-orm'
 import { db } from './db/client.js'
 import { gameRuns, runClaims } from './db/schema.js'
 import type { GameSlug } from './store.js'
@@ -20,6 +20,8 @@ export const RUN_TTL_MS = 6 * 60 * 60 * 1000
 /** Spent and expired rows are swept opportunistically, on roughly 1 start in 50. */
 const SWEEP_ODDS = 0.02
 const SWEEP_AFTER_MS = 24 * 60 * 60 * 1000
+/** A daily's day claim is the lock on its first run and the record of a day played: kept far longer. */
+const DAILY_CLAIMS_KEPT_MS = 400 * 24 * 60 * 60 * 1000
 
 export type RunTicket = { runId: string; startedAt: number }
 
@@ -111,8 +113,17 @@ export async function sweepOldRuns(): Promise<void> {
   const cutoff = Date.now() - SWEEP_AFTER_MS
   try {
     await db().delete(gameRuns).where(lt(gameRuns.startedAt, cutoff))
-    // Claims outlive nothing useful once the run they name is gone.
-    await db().delete(runClaims).where(lt(runClaims.claimedAt, cutoff))
+    // Claims outlive nothing useful once the run they name is gone, but for a daily's day claims
+    // (firstRun.ts): those lock the day's first run, and a day that's barely a day old (a 25-hour one,
+    // when the clocks go back) must keep its lock to the end.
+    await db()
+      .delete(runClaims)
+      .where(
+        and(
+          lt(runClaims.claimedAt, cutoff),
+          or(ne(runClaims.surface, 'daily'), lt(runClaims.claimedAt, Date.now() - DAILY_CLAIMS_KEPT_MS)),
+        ),
+      )
   } catch (err) {
     console.error('[runs] sweep failed', err)
   }

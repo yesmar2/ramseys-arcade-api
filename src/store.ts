@@ -435,7 +435,7 @@ export const DAILY_GAMES: ReadonlySet<GameSlug> = new Set<GameSlug>(['hotlap', '
  * it was Today's Hole, and Find the Bug's an endless hunt, whose days weren't the same for everyone. Day
  * points count from here.
  */
-const DAILY_SINCE: Partial<Record<GameSlug, number>> = { hotlap: 20260926, acechase: 20260927, findbug: 20260927 }
+export const DAILY_SINCE: Partial<Record<GameSlug, number>> = { hotlap: 20260926, acechase: 20260927, findbug: 20260927 }
 
 /**
  * A daily's board for more than a day: one row a player, their day points (each day's board pays by

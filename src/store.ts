@@ -25,6 +25,7 @@ export const ALLOWED_GAMES = [
   'acechase',
   'hotlap',
   'halffull',
+  'marblerun',
 ] as const
 export type GameSlug = (typeof ALLOWED_GAMES)[number]
 
@@ -103,6 +104,7 @@ function emptyStore(): Store {
     acechase: [],
     hotlap: [],
     halffull: [],
+    marblerun: [],
   }
 }
 
@@ -156,6 +158,7 @@ export async function replaceAllBoards(next: Store) {
     acechase: Array.isArray(next.acechase) ? next.acechase : [],
     hotlap: Array.isArray(next.hotlap) ? next.hotlap : [],
     halffull: Array.isArray(next.halffull) ? next.halffull : [],
+    marblerun: Array.isArray(next.marblerun) ? next.marblerun : [],
   }
   await db().transaction(async (tx) => {
     await tx.delete(leaderboardScores)
@@ -432,7 +435,7 @@ export type ClosedPeriod = 'weekly' | 'monthly'
  * `daily` in its data/games.ts, and prints a daily's board for longer than a day in points. Find the
  * Bug's and Half Full's boards take only a day's first run (firstRun.ts).
  */
-export const DAILY_GAMES: ReadonlySet<GameSlug> = new Set<GameSlug>(['hotlap', 'acechase', 'findbug', 'halffull'])
+export const DAILY_GAMES: ReadonlySet<GameSlug> = new Set<GameSlug>(['hotlap', 'acechase', 'findbug', 'halffull', 'marblerun'])
 
 /**
  * The first day (YYYYMMDD) each daily's board was a day's: Ace Chase's held rounds of three holes before
@@ -444,6 +447,8 @@ export const DAILY_SINCE: Partial<Record<GameSlug, number>> = {
   acechase: 20260927,
   findbug: 20260927,
   halffull: HALFFULL_FIRST_KEY,
+  // Marble Run's course #1 (marblerunPace.ts MARBLERUN_FIRST_DAY).
+  marblerun: 20260929,
 }
 
 /**

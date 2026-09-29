@@ -1,4 +1,5 @@
 import { HOTLAP_FIRST_DAY, HOTLAP_PACE_MS } from './hotlapPace.js'
+import { MARBLERUN_FIRST_DAY, MARBLERUN_PACE_MS } from './marblerunPace.js'
 import { TIME_SCORE_BASE, TIME_SCORED_GAMES, TRIES_SCORE_BASE } from './scoreLimits.js'
 import { GAME_BANDS } from './seedBoards.js'
 import { ALLOWED_GAMES, boardDateKey, runScores, type GameSlug } from './store.js'
@@ -17,7 +18,8 @@ import { ALLOWED_GAMES, boardDateKey, runScores, type GameSlug } from './store.j
  * The dailies have their own. Ace Chase goes by the tries, since every day's
  * hole is held to the same difficulty. Hot Lap goes by the day's blue car
  * (the pace car), since its track changes every day: the plan's own, kept in
- * hotlapPace.ts, so the site can't say a slower one. A daily pays its best
+ * hotlapPace.ts, so the site can't say a slower one; Marble Run by the day's
+ * blue ball (its pace ball), from marblerunPace.ts. A daily pays its best
  * step of the day once, as it's reached (tickets.ts).
  */
 
@@ -142,17 +144,52 @@ export function hotlapLadder(paceMs: number | null | undefined): Ladder {
 }
 
 /**
- * The day's blue car from the plan: day 1 is the first day, and past the last planned day the days come
- * round again, as the site's dailyTrack has them. Null with no plan.
+ * A day's pace from a plan: day 1 is the first day, and past the last planned day the days come round
+ * again, as the site's dailyTrack and dailyCourse have them. Null with no plan.
  */
-export function plannedPace(now = Date.now()): number | null {
-  if (!HOTLAP_PACE_MS.length) return null
+function paceOnDay(firstDay: string, paces: readonly number[], now: number): number | null {
+  if (!paces.length) return null
   const key = boardDateKey(now)
-  const [y0, m0, d0] = HOTLAP_FIRST_DAY.split('-').map(Number)
+  const [y0, m0, d0] = firstDay.split('-').map(Number)
   const days = Math.round(
     (Date.UTC(Math.floor(key / 10_000), (Math.floor(key / 100) % 100) - 1, key % 100) - Date.UTC(y0!, m0! - 1, d0!)) / 86_400_000,
   )
-  return HOTLAP_PACE_MS[Math.max(0, days) % HOTLAP_PACE_MS.length] ?? null
+  return paces[Math.max(0, days) % paces.length] ?? null
+}
+
+/** The day's blue car from Hot Lap's plan. */
+export function plannedPace(now = Date.now()): number | null {
+  return paceOnDay(HOTLAP_FIRST_DAY, HOTLAP_PACE_MS, now)
+}
+
+/** The day's blue ball from Marble Run's plan. */
+export function marblerunPlannedPace(now = Date.now()): number | null {
+  return paceOnDay(MARBLERUN_FIRST_DAY, MARBLERUN_PACE_MS, now)
+}
+
+/** Where a blue ball can roll: the plan's courses pace 42–63 s. */
+const BALL_MIN_MS = 30_000
+const BALL_MAX_MS = 90_000
+
+/**
+ * Marble Run, on a day whose blue ball rolls down in `paceMs`: slower than it 3, within 2% of it 5,
+ * beating it 8, by 3% 11, by 6% 15, as Hot Lap pays against its blue car. Without a blue ball, a run pays
+ * the 3 alone.
+ */
+export function marblerunLadder(paceMs: number | null | undefined): Ladder {
+  const base = { base: 3, baseLabel: 'a run today' }
+  if (!paceMs) return { ...base, steps: [] }
+  const pace = Math.min(BALL_MAX_MS, Math.max(BALL_MIN_MS, Math.round(paceMs)))
+  const run = (ms: number) => TIME_SCORE_BASE - Math.round(ms)
+  return {
+    ...base,
+    steps: [
+      { at: run(pace * 1.02), tickets: 5, label: 'within 2% of the blue ball' },
+      { at: run(pace) + 1, tickets: 8, label: 'beating the blue ball' },
+      { at: run(pace * 0.97), tickets: 11, label: 'beating it by 3%' },
+      { at: run(pace * 0.94), tickets: 15, label: 'beating it by 6%' },
+    ],
+  }
 }
 
 /** A game's ladder today. Hot Lap's goes by the plan's blue car for the day, or else the one the site says. */
@@ -160,6 +197,7 @@ export async function ladderFor(game: GameSlug, now = Date.now(), paceMs?: numbe
   if (game === 'acechase') return ACECHASE_LADDER
   if (game === 'halffull') return HALFFULL_LADDER
   if (game === 'hotlap') return hotlapLadder(plannedPace(now) ?? paceMs)
+  if (game === 'marblerun') return marblerunLadder(marblerunPlannedPace(now) ?? paceMs)
   return drawnLadder(game, now)
 }
 

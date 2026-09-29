@@ -1,4 +1,4 @@
-import { checkScoreRate, scoreCeiling, TRIES_SCORE_BASE, TRIES_SCORED_GAMES } from './scoreLimits.js'
+import { checkScoreRate, scoreCeiling, TIME_SCORE_BASE, TRIES_SCORE_BASE, TRIES_SCORED_GAMES } from './scoreLimits.js'
 import { Router } from 'express'
 import { z } from 'zod'
 import { pageParams } from './paging.js'
@@ -18,6 +18,7 @@ import { updateCrossRunStreakRecords } from './records.js'
 import { noteDayRun } from './courseRecords.js'
 import { recordChallengeRun } from './challenges.js'
 import { payRun, plausiblePickups, type RunTickets } from './tickets.js'
+import { marblerunPlannedPace } from './ticketLadders.js'
 import {
   addScore,
   ALLOWED_GAMES,
@@ -368,6 +369,14 @@ leaderboardsRouter.post('/:game', async (req, res) => {
    * keep working through the deploy. REQUIRE_RUN_TOKEN closes that door once
    * the site has caught up.
    */
+  // A day's Marble Run can't be rolled much faster than the day's blue ball, the plan's own (marblerunPace.ts): a
+  // time under 60% of it is refused, whatever the clock says. The loosest guess at the best a hand could do.
+  if (game === 'marblerun' && TIME_SCORE_BASE - score < 0.6 * (marblerunPlannedPace() ?? 42_000)) {
+    console.warn(`[anticheat] rejected marblerun ${score} from account ${account.id}: faster than the day's course allows`)
+    res.status(400).json({ error: 'That score is not possible in the time the run took', code: 'SCORE_IMPLAUSIBLE' })
+    return
+  }
+
   const firstRunOnly = FIRST_RUN_DAILIES.has(game)
   let durationMs: number | null = null
   if (runId) {
@@ -516,7 +525,7 @@ leaderboardsRouter.post('/:game', async (req, res) => {
         score,
         priorBest,
         pickups: game === 'crosswalk' ? plausiblePickups(score, pickups) : 0,
-        paceMs: game === 'hotlap' ? pace : null,
+        paceMs: game === 'hotlap' || game === 'marblerun' ? pace : null,
       }).catch((err: unknown) => {
         console.warn(`[tickets] ${game} run ${payRef}:`, err)
         return null

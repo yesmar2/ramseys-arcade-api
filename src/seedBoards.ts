@@ -67,6 +67,8 @@ export const GAME_BANDS: Record<GameSlug, ScoreProfile> = {
   hotlap: { min: 925_000, max: 950_000, step: 100 },
   // Half Full's day in hundredths of a point (a day is always a multiple of 4): Spill Hazard to Steady Hand.
   halffull: { min: 6_800, max: 9_300, step: 4 },
+  // A run down the day's course: 65 seconds to 42, about the blue ball's range.
+  marblerun: { min: 935_000, max: 958_000, step: 100 },
 }
 
 function lerp(a: number, b: number, t: number) {
@@ -171,6 +173,7 @@ export function buildSeed(seed = 20260904) {
     acechase: [],
     hotlap: [],
     halffull: [],
+    marblerun: [],
   }
 
   NAMES.forEach((name, i) => {

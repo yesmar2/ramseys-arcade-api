@@ -21,13 +21,14 @@ import { scoreFigure } from './words.js'
  * moment.
  */
 
-export type TodayGame = 'acechase' | 'hotlap' | 'findbug' | 'halffull'
+export type TodayGame = 'acechase' | 'hotlap' | 'findbug' | 'halffull' | 'marblerun'
 
 const WHAT: Record<TodayGame, { daily: string; mine: string }> = {
   acechase: { daily: 'Today’s Hole', mine: 'you on' },
   hotlap: { daily: 'Today’s Track', mine: 'your lap on' },
   findbug: { daily: 'Today’s Wanted', mine: 'you on' },
   halffull: { daily: 'Today’s Pour', mine: 'you on' },
+  marblerun: { daily: 'Today’s Course', mine: 'your run on' },
 }
 
 const tries = (n: number) => `${n} ${n === 1 ? 'try' : 'tries'}`
@@ -93,14 +94,15 @@ export async function tellBeatenFriends(opts: { accountId: string; game: TodayGa
   for (const friend of friends) {
     const theirResult = theirs.get(friend.accountId)
     if (theirResult == null || !beats(opts.game, yours, theirResult)) continue
-    const again = opts.game === 'hotlap' ? ' There’s still time to take it back today.' : ''
+    // A lap or a run can be had again the same day; the rest count once.
+    const again = opts.game === 'hotlap' || opts.game === 'marblerun' ? ' There’s still time to take it back today.' : ''
     const filed = await notify({
       accountId: friend.accountId,
       kind: 'today-beaten',
       title: `${mine.name} beat ${what.mine} ${what.daily}`,
       body: `${resultWords(opts.game, yours)} to your ${resultWords(opts.game, theirResult)}.${again}`,
       href: '/today',
-      meta: { actor: mine.name, game: opts.game, ...(opts.game === 'hotlap' ? { playHref: '/games/hotlap/play' } : {}) },
+      meta: { actor: mine.name, game: opts.game, ...(again ? { playHref: `/games/${opts.game}/play` } : {}) },
       digestKey: `today-beaten:${day}:${opts.game}:${opts.accountId}`,
       once: true,
       now,

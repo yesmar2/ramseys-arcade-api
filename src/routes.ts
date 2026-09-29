@@ -548,7 +548,7 @@ leaderboardsRouter.post('/:game', async (req, res) => {
   })
 
   // A daily of the Today set (today.ts) may keep the day, or make it a Full ticket, and reach a streak reward.
-  if (game === 'hotlap' || game === 'findbug' || game === 'halffull') {
+  if (game === 'hotlap' || game === 'findbug' || game === 'halffull' || game === 'marblerun') {
     await settleToday(account.id, result.entry.at).catch((err: unknown) => {
       console.warn(`[today] ${game} run for ${claim.name}:`, err)
     })

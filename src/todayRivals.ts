@@ -10,7 +10,7 @@ import { keptDays, todayRule } from './today.js'
 /*
  * Rivals on the Today set (today.ts): how an account's friends, or one of its groups, are doing on the
  * day's dailies, beside the account itself. Each player's result on each (tries on the hole, their best
- * lap, their run for the bugs, their pour) and their Today streak, for the site's rivals table under
+ * lap, their run for the bugs, their pour, their best run down the course) and their Today streak, for the site's rivals table under
  * today's ticket (components/TodayRivals.tsx). A pour is there whether or not it's on today's card yet;
  * the site shows the dailies that are, and the streak counts only those (today.ts keptDay). A player is a
  * tag: a friend's is the one their account plays as, a group's are its roster. The hole's results are kept
@@ -20,11 +20,12 @@ import { keptDays, todayRule } from './today.js'
 export type Rival = {
   name: string
   me: boolean
-  /** Tries on today's hole, the best lap's board score, the bug run's and the pour's board scores; null if not yet. */
+  /** Tries on today's hole, the best lap's board score, the bug run's, the pour's and the best marble run's; null if not yet. */
   hole: number | null
   track: number | null
   wanted: number | null
   pour: number | null
+  course: number | null
   /** Today streak: from today once today is kept, else from yesterday. */
   streak: number
 }
@@ -100,7 +101,7 @@ export async function todayRivals(accountId: string, groupId: string | null, now
   const fromDay = dayOf(boardDateKey(fromMs))
 
   // One look at each daily for everyone: the day's result, per player per day.
-  const perDay = (game: 'hotlap' | 'findbug' | 'halffull') =>
+  const perDay = (game: 'hotlap' | 'findbug' | 'halffull' | 'marblerun') =>
     names.length
       ? db()
           .select({ name: leaderboardScores.name, day: dayKeySql, best: sql<number>`max(${leaderboardScores.score})::int` })
@@ -108,7 +109,7 @@ export async function todayRivals(accountId: string, groupId: string | null, now
           .where(and(eq(leaderboardScores.game, game), inArray(leaderboardScores.name, names), gte(leaderboardScores.at, fromMs)))
           .groupBy(leaderboardScores.name, dayKeySql)
       : Promise.resolve([] as { name: string; day: number; best: number }[])
-  const [holes, laps, finds, pours] = await Promise.all([
+  const [holes, laps, finds, pours, courses] = await Promise.all([
     accounts.length
       ? db()
           .select({ accountId: dailyHoleResults.accountId, day: dailyHoleResults.day, tries: dailyHoleResults.tries })
@@ -118,6 +119,7 @@ export async function todayRivals(accountId: string, groupId: string | null, now
     perDay('hotlap'),
     perDay('findbug'),
     perDay('halffull'),
+    perDay('marblerun'),
   ])
 
   const holeDays = new Map<string, Map<number, number>>()
@@ -140,12 +142,14 @@ export async function todayRivals(accountId: string, groupId: string | null, now
   const lapDays = byName(laps)
   const findDays = byName(finds, DAILY_SINCE.findbug)
   const pourDays = byName(pours, DAILY_SINCE.halffull)
+  const courseDays = byName(courses, DAILY_SINCE.marblerun)
 
   const rivals: Rival[] = players.map((p) => {
     const hole = (p.accountId && holeDays.get(p.accountId)) || new Map<number, number>()
     const track = lapDays.get(p.name) ?? new Map<number, number>()
     const wanted = findDays.get(p.name) ?? new Map<number, number>()
     const pour = pourDays.get(p.name) ?? new Map<number, number>()
+    const course = courseDays.get(p.name) ?? new Map<number, number>()
     return {
       name: p.name,
       me: p.me,
@@ -153,7 +157,8 @@ export async function todayRivals(accountId: string, groupId: string | null, now
       track: track.get(today) ?? null,
       wanted: wanted.get(today) ?? null,
       pour: pour.get(today) ?? null,
-      streak: currentStreak(keptDays({ hole, track, wanted, pour }), today),
+      course: course.get(today) ?? null,
+      streak: currentStreak(keptDays({ hole, track, wanted, pour, course }), today),
     }
   })
   // Whoever has done most of today's card first.

@@ -9,7 +9,7 @@ import {
   monthKey,
   weekStartKey,
 } from './store.js'
-import { ordinal, pts } from './words.js'
+import { ordinal } from './words.js'
 
 /**
  * `hunt`: every bug of a month's bug hunt caught, one award a month (periodKey YYYYMM). `secret`: a
@@ -135,7 +135,7 @@ async function awardClosedPeriod(
     if (!given.length) continue
     changed = true
     if (announce && accountId) {
-      await notifyPlace(accountId, { id, period, periodKey, name: row.name, rank: row.rank, score: row.score }).catch(
+      await notifyPlace(accountId, { id, period, periodKey, name: row.name, rank: row.rank }).catch(
         (err: unknown) => console.warn(`[trophies] telling ${row.name} about ${id} failed:`, err),
       )
     }
@@ -157,7 +157,7 @@ function monthName(periodKey: number): string {
  */
 async function notifyPlace(
   accountId: string,
-  award: { id: string; period: 'weekly' | 'monthly'; periodKey: number; name: string; rank: number; score: number },
+  award: { id: string; period: 'weekly' | 'monthly'; periodKey: number; name: string; rank: number },
 ) {
   const before = (await trophiesForName(award.name)).filter((t) => t.id !== award.id && t.period === award.period)
   const bestBefore = before.length ? Math.min(...before.map((t) => t.rank)) : Infinity
@@ -174,7 +174,8 @@ async function notifyPlace(
     accountId,
     kind: 'trophy',
     title: `You finished ${ordinal(award.rank)} in the arcade ${when}`,
-    body: `${pts(award.score)}. ${prize}${unlock}.`,
+    // The place and the prize, not the points behind them: those are on the How your rank works page.
+    body: `${prize}${unlock}.`,
     href: '/rank/all?focus=trophies',
     meta: {
       trophy: { period: award.period, rank: award.rank },

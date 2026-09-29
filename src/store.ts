@@ -868,35 +868,69 @@ function bestIndexOfName(view: PoolView, name: string): number {
   return bestIndexOf(view, playerRefs.get(name))
 }
 
+/** `name`'s best run of a daily's day, with its place that day and the day points it earned (null before DAILY_SINCE). */
+export type DailyDayYou = LeaderboardEntry & { place: number | null; points: number | null }
+
 /**
  * A daily game's days, newest first: how many runs and players each had, its best run (a tie going to
- * whoever got there first), and `name`'s best that day if they played. What the site's archive of past
- * days shows. `keep` says which runs are a day's result at all.
+ * whoever got there first), and `name`'s best that day if they played, with the place it earned and the
+ * points that place paid toward the week (placePoints). What the site's archive of past days shows, and
+ * the day-by-day workings of a daily's week. `keep` says which runs are a day's result at all.
+ *
+ * The place and points are counted as dayPointsBoard counts them, from DAILY_SINCE, over every run of
+ * the day, so a player's days' points over a week add up to their score on its board.
  */
 export async function dailyDays(
   game: GameSlug,
   name?: string | null,
   keep: (score: number) => boolean = () => true,
-): Promise<{ day: number; runs: number; players: number; top: LeaderboardEntry; you: LeaderboardEntry | null }[]> {
+): Promise<{ day: number; runs: number; players: number; top: LeaderboardEntry; you: DailyDayYou | null }[]> {
   const copy = await loadCopy()
   const who = name ? name.trim().slice(0, 12).toUpperCase() : null
-  const days = new Map<number, { runs: number; names: Set<string>; top: LeaderboardEntry; you: LeaderboardEntry | null }>()
+  const since = DAILY_SINCE[game] ?? 0
+  const days = new Map<
+    number,
+    {
+      runs: number
+      names: Set<string>
+      top: LeaderboardEntry | null
+      you: LeaderboardEntry | null
+      /** The day's players as the day points count them, and where `who` came among them. */
+      field: Set<string>
+      place: number
+    }
+  >()
   // Board order, best first: a day's first run met is its best, and a player's first their best.
   for (const entry of copy.byGame.get(game) ?? []) {
-    if (!keep(entry.score)) continue
     const key = keyOf(entry.at)
     let day = days.get(key)
     if (!day) {
-      day = { runs: 0, names: new Set(), top: entry, you: null }
+      day = { runs: 0, names: new Set(), top: null, you: null, field: new Set(), place: 0 }
       days.set(key, day)
     }
+    if (key >= since && !day.field.has(entry.name)) {
+      day.field.add(entry.name)
+      if (entry.name === who) day.place = day.field.size
+    }
+    if (!keep(entry.score)) continue
     day.runs++
     day.names.add(entry.name)
+    day.top ??= entry
     if (who && !day.you && entry.name === who) day.you = entry
   }
-  return [...days.entries()]
-    .sort((a, b) => b[0] - a[0])
-    .map(([day, d]) => ({ day, runs: d.runs, players: d.names.size, top: d.top, you: d.you }))
+  const out: { day: number; runs: number; players: number; top: LeaderboardEntry; you: DailyDayYou | null }[] = []
+  for (const [day, d] of days) {
+    if (!d.top) continue
+    const place = d.place || null
+    out.push({
+      day,
+      runs: d.runs,
+      players: d.names.size,
+      top: d.top,
+      you: d.you ? { ...d.you, place, points: place ? placePoints(place, d.field.size) : null } : null,
+    })
+  }
+  return out.sort((a, b) => b.day - a.day)
 }
 
 /** Every run's score on a game, best first, all time: what its ticket ladder is drawn from (ticketLadders.ts). */
@@ -998,7 +1032,7 @@ export async function boardsSummary(
   return out
 }
 
-export type YouEntry = LeaderboardEntry & { rank: number }
+export type YouEntry = LeaderboardEntry & { rank: number; place: number }
 
 export async function bestForName(
   game: GameSlug,
@@ -1012,11 +1046,14 @@ export async function bestForName(
   const view = await poolView(game, period, now)
   if (!scope) {
     const at = bestIndexOfName(view, cleaned)
-    return at < 0 ? null : { ...view.entries[at], rank: at + 1 }
+    return at < 0 ? null : { ...view.entries[at], rank: at + 1, place: view.placeAt[at] }
   }
   const pool = filterByNames(view.entries, scope)
   const at = pool.findIndex((e) => e.name === cleaned)
-  return at < 0 ? null : { ...pool[at], rank: at + 1 }
+  if (at < 0) return null
+  const ahead = new Set<string>()
+  for (let i = 0; i < at; i++) ahead.add(pool[i].name)
+  return { ...pool[at], rank: at + 1, place: ahead.size + 1 }
 }
 
 export async function bestsForName(

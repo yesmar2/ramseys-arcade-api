@@ -37,7 +37,7 @@ import { notify, type NotificationMeta } from './notifications.js'
 import { RUN_TTL_MS } from './runs.js'
 import { awardEventWin } from './trophies.js'
 import { ALLOWED_GAMES, BOARD_TZ, canonicalizeGameSlug, DAILY_GAMES, isAllowedGame, resolveGameSlug, type GameSlug } from './store.js'
-import { GAME_LABELS, ordinal, pts, scoreWords } from './words.js'
+import { GAME_LABELS, ordinal, scoreWords } from './words.js'
 
 export type { TournamentKind } from './bracket.js'
 export type { PublicBracket, PublicBracketMatch, PublicBracketSide } from './bracket.js'
@@ -203,7 +203,8 @@ export const TOP_PLACE_POINTS = 10
 
 export const FORMAT_LABELS: Record<TournamentFormat, string> = {
   open: 'Open · Best score',
-  'place-points': 'Place points',
+  // Said as the site says it (web lib/tournaments.ts): how it's won, not the points that decide it.
+  'place-points': 'All-round',
   'attempt-limited': 'Limited attempts',
   'single-run': 'One run only',
   cumulative: 'Total score',
@@ -672,7 +673,7 @@ export function buildWeeklyEvent(now = Date.now()): Tournament {
   return {
     id: `weekly-${week.key}`,
     title: 'Weekly Triple',
-    blurb: `This week’s games: ${labels}. Places earn points — highest total wins.`,
+    blurb: `This week’s games: ${labels}. Play all three; best all-round wins.`,
     games,
     startsAt: zonedDateTimeToUtc(week.y, week.m, week.d, 0, 0),
     endsAt: zonedDateTimeToUtc(end.y, end.m, end.d, 0, 0),
@@ -752,7 +753,13 @@ function upsertRollingEvent(store: Store, next: Tournament): boolean {
     return true
   }
   const cur = store.tournaments[idx]!
-  if (eventGamesReady(cur.games)) return false
+  if (eventGamesReady(cur.games)) {
+    // The words are the builder's: a copy change reaches the running event, not only next week's.
+    const sameGames = cur.games.length === next.games.length && cur.games.every((g, i) => g === next.games[i])
+    if (!sameGames || (cur.blurb === next.blurb && cur.title === next.title)) return false
+    store.tournaments[idx] = { ...cur, blurb: next.blurb, title: next.title }
+    return true
+  }
   // Rebuild if a prior seed included an unfinished game (e.g. Crosswalk).
   store.tournaments[idx] = {
     ...next,
@@ -1792,19 +1799,20 @@ async function tellEventResults(t: Tournament, winner: string, standings: Standi
   const top = field[0]
   if (!top) return
   const single = t.games.length === 1 ? t.games[0]! : null
-  const said = (row: StandingRow) => {
-    if (!single) return pts(row.totalPoints)
-    const score = row.byGame[single]?.score
-    return score != null ? scoreWords(single, score) : pts(row.totalPoints)
-  }
+  const players = `${field.length} ${field.length === 1 ? 'player' : 'players'}`
+  const topScore = single ? top.byGame[single]?.score : null
   for (const [i, row] of field.entries()) {
     const place = i + 1
     if (row.name === winner) continue
     if ((t.cadence === 'daily' || t.cadence === 'oneshot') && place > 3) break
+    // A one-game event says the scores; one across several games says the place, not the points behind it.
+    const score = single ? row.byGame[single]?.score : null
     await tell(
       row.playerId,
       `You finished ${ordinal(place)} in ${t.title}`,
-      `${said(row)}, out of ${field.length} ${field.length === 1 ? 'player' : 'players'}. ${top.name} won with ${said(top)}.`,
+      single && score != null && topScore != null
+        ? `${scoreWords(single, score)}, out of ${players}. ${top.name} won with ${scoreWords(single, topScore)}.`
+        : `${ordinal(place)} of ${players}. ${top.name} won.`,
       { place, field: field.length, ...(single ? { game: single } : {}) },
     )
   }
@@ -2556,7 +2564,7 @@ export async function createTournament(
             : `${gameLabel(games[0]!)}.`
         }`
       : games.length > 1
-        ? `Private event: ${games.map(gameLabel).join(', ')}. Place points across games — highest total wins.`
+        ? `Private event: ${games.map(gameLabel).join(', ')}. Every game counts — best all-round wins.`
         : defaultCommunityBlurb(games, maxAttempts))
   const rules: TournamentRules = {
     maxAttempts: maxAttempts > 0 ? maxAttempts : 0,

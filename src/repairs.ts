@@ -1,7 +1,8 @@
-import { and, eq, gt, gte, inArray, like } from 'drizzle-orm'
+import { and, eq, gt, gte, inArray, like, sql } from 'drizzle-orm'
 import { db } from './db/client.js'
-import { appMeta, leaderboardScores } from './db/schema.js'
+import { appMeta, leaderboardScores, notifications, tournaments } from './db/schema.js'
 import { seedScoreCap, TIME_SCORE_BASE, TIME_SCORED_GAMES } from './scoreLimits.js'
+import { ordinal } from './words.js'
 
 /**
  * One-time fixes to data that is already in the database, run at boot and
@@ -52,6 +53,47 @@ const REPAIRS: Repair[] = [
         removed += gone.length
       }
       return `removed ${removed} seeded time-scored rows above their band`
+    },
+  },
+  {
+    // Events and notices saved before rank was put in plain words still said
+    // their points. Only the old default lines change; a host's own blurb stays.
+    id: '2026-09-29-plain-rank-copy',
+    run: async () => {
+      const events = await db()
+        .update(tournaments)
+        .set({
+          data: sql`jsonb_set(${tournaments.data}, '{blurb}', to_jsonb(replace(replace(${tournaments.data}->>'blurb',
+            'Place points across games — highest total wins.', 'Every game counts — best all-round wins.'),
+            'Places earn points — highest total wins.', 'Play all three; best all-round wins.')))`,
+        })
+        .where(sql`${tournaments.data}->>'blurb' like '%highest total wins.%'`)
+        .returning({ id: tournaments.id })
+      // A trophy notice: "412 pts. The bronze medal…" -> "The bronze medal…"
+      const trophies = await db()
+        .update(notifications)
+        .set({ body: sql`regexp_replace(${notifications.body}, '^[0-9,]+ pts?[.] ', '')` })
+        .where(and(eq(notifications.kind, 'trophy'), sql`${notifications.body} ~ '^[0-9,]+ pts?[.] '`))
+        .returning({ id: notifications.id })
+      // An all-round event's result: "212 pts, out of 12 players. SAM won with 350 pts." -> "4th of 12 players. SAM won."
+      const old = await db()
+        .select({ id: notifications.id, body: notifications.body, meta: notifications.meta })
+        .from(notifications)
+        .where(and(eq(notifications.kind, 'event-result'), sql`${notifications.body} ~ '^[0-9,]+ pts?, out of '`))
+      const reworded: { id: string; body: string }[] = []
+      for (const n of old) {
+        const m = /^[0-9,]+ pts?, out of (\d+ players?)\. (.+) won with [0-9,]+ pts?\.$/.exec(n.body ?? '')
+        const place = (n.meta as { place?: number } | null)?.place
+        if (m && place) reworded.push({ id: n.id, body: `${ordinal(place)} of ${m[1]}. ${m[2]} won.` })
+      }
+      for (let i = 0; i < reworded.length; i += 10) {
+        await Promise.all(
+          reworded
+            .slice(i, i + 10)
+            .map((n) => db().update(notifications).set({ body: n.body }).where(eq(notifications.id, n.id))),
+        )
+      }
+      return `reworded ${events.length} event blurbs, ${trophies.length} trophy notices, ${reworded.length} event results`
     },
   },
 ]

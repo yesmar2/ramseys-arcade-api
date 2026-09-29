@@ -873,7 +873,7 @@ function hostedScoreEvents(players: Player[]): HostedPlan[] {
       id: sid('ev'),
       title: d.title,
       blurb: multi
-        ? 'Place points across games — highest total wins.'
+        ? 'Every game counts — best all-round wins.'
         : d.tries
           ? `${d.tries} tries. Best score wins.`
           : 'Best score wins.',

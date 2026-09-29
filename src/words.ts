@@ -97,10 +97,6 @@ export function ordinal(n: number): string {
   }
 }
 
-export function pts(n: number): string {
-  return `${n.toLocaleString('en-US')} ${n === 1 ? 'pt' : 'pts'}`
-}
-
 /** Time left on a clock, rounded the way a person says it: 2 hours, 45 minutes. */
 export function timeLeft(ms: number): string {
   const minutes = Math.max(1, Math.round(ms / 60_000))

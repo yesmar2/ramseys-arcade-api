@@ -225,14 +225,26 @@ leaderboardsRouter.get('/:game', async (req, res) => {
 })
 
 /**
- * A daily game's days, newest first, for the site's archive of past days: each day's runs and players,
- * its best run, and with `name`, that tag's best that day. A tries-scored game's runs from before it
- * counted tries (a round of Ace Chase's old three holes) aren't a day's result, so they're left out.
+ * A daily game's days, newest first, for the site's archive of past days and the day-by-day workings of
+ * a daily's week: each day's runs and players, its best run, and with `name`, that tag's best that day,
+ * its place and the day points it earned (null on a day before the game's days counted, DAILY_SINCE).
+ * A tries-scored game's runs from before it counted tries (a round of Ace Chase's old three holes)
+ * aren't a day's result, so they're left out.
+ *
+ * `group` is checked as on every board, but changes nothing here: a group's week board keeps each
+ * member's day points from the whole day's field and ranks them among the group, so a day's place and
+ * points are the whole field's in a group too, and still add up to that board's score.
  */
 leaderboardsRouter.get('/:game/days', async (req, res) => {
   const game = resolveGameSlug(req.params.game)
   if (!game || !DAILY_GAMES.has(game)) {
     res.status(404).json({ error: 'Not a daily game' })
+    return
+  }
+  try {
+    await boardAccess(req)
+  } catch (err) {
+    scopeError(err, res)
     return
   }
   const name = typeof req.query.name === 'string' && req.query.name.trim() ? req.query.name : null
@@ -248,7 +260,7 @@ leaderboardsRouter.get('/:game/days', async (req, res) => {
       runs: d.runs,
       players: d.players,
       top: { name: tops[i]!.name, score: tops[i]!.score, ...(tops[i]!.avatarId ? { avatarId: tops[i]!.avatarId } : {}) },
-      you: d.you ? { score: d.you.score } : null,
+      you: d.you ? { score: d.you.score, place: d.you.place, points: d.you.points } : null,
     })),
   })
 })

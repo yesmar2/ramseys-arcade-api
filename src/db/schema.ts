@@ -776,7 +776,8 @@ export const notificationSettings = pgTable('notification_settings', {
 
 /**
  * The ghost of the fastest lap on each track (lapGhosts.ts): where the car was, ten times a second, for
- * everyone to race. One a track, the fastest that came with its path; a lap on the board only.
+ * everyone to race. One a track, the fastest that came with its path; a lap on the board only. Marble
+ * Run's courses keep theirs here too, `track` a course's number.
  */
 export const lapGhosts = pgTable(
   'lap_ghosts',
@@ -789,9 +790,9 @@ export const lapGhosts = pgTable(
     /** The tag the lap is on the board under. */
     name: text('name').notNull(),
     timeMs: integer('time_ms').notNull(),
-    /** Where each sector ended, in seconds from the lights. */
+    /** Where each sector ended, in seconds from the lights (a marble run's checkpoints and goal). */
     splits: jsonb('splits').notNull(),
-    /** x, y and heading, one after another, ten times a second from the lights. */
+    /** x, y and heading, one after another, ten times a second from the lights (a marble's x, y and z). */
     path: jsonb('path').notNull(),
     at: bigint('at', { mode: 'number' }).notNull(),
   },

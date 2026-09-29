@@ -33,10 +33,10 @@ export const TODAY_KEEP = 3
 const keyOf = (day: string) => Number(day.replace(/-/g, ''))
 
 /**
- * The first day Marble Run's Today's Course is on the card: the day after the game came, so the day it came
- * is judged as it began (the site's games/marblerun/daily.ts TODAY_FROM says the same).
+ * The first day Marble Run's Today's Course is on the card: the day the game came, so its first course is
+ * on the ticket too (the site's games/marblerun/daily.ts TODAY_FROM says the same).
  */
-export const MARBLERUN_TODAY_FROM: string | null = '2026-09-30'
+export const MARBLERUN_TODAY_FROM: string | null = '2026-09-29'
 
 /**
  * The Today set's dailies, in the card's order, and the first board day (YYYYMMDD) each is on the card: 0

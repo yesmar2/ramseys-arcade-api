@@ -1,9 +1,10 @@
 import { and, eq, sql } from 'drizzle-orm'
 import { db } from './db/client.js'
 import { lapGhosts } from './db/schema.js'
+import { courseBoard, courseState } from './marbleCourses.js'
 import { TIME_SCORE_BASE } from './scoreLimits.js'
 import type { GameSlug } from './store.js'
-import { trackBoard } from './trackLaps.js'
+import { trackBoard, trackState } from './trackLaps.js'
 
 /*
  * The ghost of each Hot Lap track's #1, for everyone to race: today's #1 on today's track, a past track's
@@ -12,7 +13,24 @@ import { trackBoard } from './trackLaps.js'
  * is where the car was ten times a second from the lights: x, y and heading, one after another. The #1
  * is always told, path or not: a lap saved before laps sent their paths, or from an old copy of the site,
  * has none, and the site then drives the blue car's line at the #1's time.
+ *
+ * Marble Run's courses have theirs the same way (marbleCourses.ts): a course's #1 on its day's board, today's
+ * or a past day's as it closed. Its path is where the marble was ten times a second from the go, x, y
+ * (height) and z, with the goal's moment last, falls and all: a fall puts it back at a checkpoint.
  */
+
+/** The games whose #1 races as a ghost: Hot Lap's tracks, and Marble Run's courses. */
+export const GHOST_GAMES: ReadonlySet<GameSlug> = new Set<GameSlug>(['hotlap', 'marblerun'])
+
+/** Where a game's track or course stands today (trackLaps.ts trackState, marbleCourses.ts courseState). */
+export function ghostState(game: GameSlug, n: number, now = Date.now()): 'past' | 'today' | 'ahead' | 'none' {
+  return game === 'marblerun' ? courseState(n, now) : trackState(n, now)
+}
+
+/** A track's board, or a course's day's board: each player's best, best first. */
+function ghostBoard(game: GameSlug, n: number): Promise<{ name: string; score: number }[]> {
+  return game === 'marblerun' ? courseBoard(n) : trackBoard(game, n)
+}
 
 /** Samples a second in a kept path. */
 export const GHOST_RATE = 10
@@ -20,11 +38,18 @@ export const GHOST_RATE = 10
 const MOST_SAMPLES = 6000
 /** Metres a car can go between two samples: a tenth of a second at far more than its top speed. */
 const MOST_STEP = 15
+/** Metres a marble can go between two samples: a tenth of a second at far more than it ever rolls. */
+const MARBLE_STEP = 8
+/** Farther than that is a fall, back to a checkpoint: a run with more than this many isn't one. */
+const MOST_FALLS = 60
+/** Lines across a course: its checkpoints and the goal. */
+const MOST_LINES = 12
 
 export type LapGhost = { name: string; timeMs: number; splits: number[]; path: number[]; at: number }
 
-/** Why a lap's splits and path can't be a lap of `timeMs`, or null if they can. */
-export function ghostProblem(timeMs: number, splits: unknown, path: unknown): string | null {
+/** Why a lap's (or a marble run's) splits and path can't be one of `timeMs`, or null if they can. */
+export function ghostProblem(game: GameSlug, timeMs: number, splits: unknown, path: unknown): string | null {
+  if (game === 'marblerun') return runProblem(timeMs, splits, path)
   const time = timeMs / 1000
   if (!Array.isArray(splits) || splits.length !== 3 || !splits.every((s) => typeof s === 'number' && Number.isFinite(s))) {
     return 'splits'
@@ -47,12 +72,47 @@ export function ghostProblem(timeMs: number, splits: unknown, path: unknown): st
   return null
 }
 
-/** The track's #1, and their lap's path if it came with one. Null while nobody has a lap on the track. */
+/**
+ * Why a marble run's splits and path can't be a run of `timeMs`, or null if they can. Its splits are the
+ * moment it crossed each checkpoint and the goal, in order (a line jumped over is crossed with the next);
+ * its path is ten samples a second from the go, and the goal's moment last.
+ */
+function runProblem(timeMs: number, splits: unknown, path: unknown): string | null {
+  const time = timeMs / 1000
+  if (
+    !Array.isArray(splits) ||
+    splits.length < 1 ||
+    splits.length > MOST_LINES ||
+    !splits.every((s) => typeof s === 'number' && Number.isFinite(s))
+  ) {
+    return 'splits'
+  }
+  const at = splits as number[]
+  if (!(at[0]! > 0) || at.some((s, k) => k > 0 && s < at[k - 1]!) || Math.abs(at.at(-1)! - time) > 0.05) return 'splits'
+  if (!Array.isArray(path) || path.length % 3 !== 0 || !path.every((v) => typeof v === 'number' && Number.isFinite(v))) {
+    return 'path'
+  }
+  const samples = path.length / 3
+  if (samples > MOST_SAMPLES || samples < Math.floor(time * GHOST_RATE) || samples > Math.ceil(time * GHOST_RATE) + 2) {
+    return 'length'
+  }
+  const p = path as number[]
+  let falls = 0
+  for (let k = 0; k < samples; k++) {
+    if (Math.abs(p[k * 3]!) > 20_000 || Math.abs(p[k * 3 + 1]!) > 5_000 || Math.abs(p[k * 3 + 2]!) > 20_000) return 'range'
+    if (k > 0 && Math.hypot(p[k * 3]! - p[k * 3 - 3]!, p[k * 3 + 1]! - p[k * 3 - 2]!, p[k * 3 + 2]! - p[k * 3 - 1]!) > MARBLE_STEP) {
+      falls += 1
+    }
+  }
+  return falls > MOST_FALLS ? 'step' : null
+}
+
+/** The track's (or course's) #1, and their lap's path if it came with one. Null while nobody has a lap on it. */
 export async function ghostFor(
   game: GameSlug,
   track: number,
 ): Promise<{ name: string; timeMs: number; ghost: LapGhost | null } | null> {
-  const board = await trackBoard(game, track)
+  const board = await ghostBoard(game, track)
   const top = board[0]
   if (!top) return null
   const timeMs = TIME_SCORE_BASE - top.score
@@ -85,7 +145,7 @@ export async function keepGhost(input: {
   now?: number
 }): Promise<boolean> {
   if (!input.names.includes(input.name)) return false
-  const board = await trackBoard(input.game, input.track)
+  const board = await ghostBoard(input.game, input.track)
   // The tag's lap on the board: a slower lap of theirs would be a ghost the board doesn't show.
   const onBoard = (name: string, timeMs: number) => board.some((e) => e.name === name && e.score === TIME_SCORE_BASE - timeMs)
   if (!onBoard(input.name, input.timeMs)) return false

@@ -2,7 +2,7 @@ import { Router } from 'express'
 import { z } from 'zod'
 import { accountFromRequest } from './auth.js'
 import { isBanned } from './bans.js'
-import { GHOST_RATE, ghostFor, ghostProblem, keepGhost } from './lapGhosts.js'
+import { GHOST_GAMES, GHOST_RATE, ghostFor, ghostProblem, ghostState, keepGhost } from './lapGhosts.js'
 import { assertCanUseName, namesOwnedByAccount, withAvatarIds } from './names.js'
 import { takeToken } from './rateLimit.js'
 import { noteCourseRecord } from './courseRecords.js'
@@ -21,6 +21,9 @@ import { addTrackLap, fastestBelievable, TRACK_GAMES, trackBoard, trackDayIso, t
  *                                      track's record book too, and taking the record pays RECORD_TICKETS once
  *   GET  /tracks/:game/:n/ghost        the track's #1, and their lap's path if it came with one (lapGhosts.ts)
  *   POST /tracks/:game/:n/ghost        a saved lap's path, kept if it's the track's fastest yet
+ *
+ * The ghosts are Marble Run's too, a course's n for a track's (/tracks/marblerun/:n/ghost): a course has
+ * only its day's board, and no records of its own here.
  */
 export const tracksRouter = Router()
 
@@ -199,14 +202,20 @@ const GHOST_LIMIT = { limit: 30, windowMs: 10 * 60 * 1000 }
 const ghostSchema = z.object({
   name: z.string().min(1).max(12),
   score: z.number().int().positive().max(1_000_000),
-  splits: z.array(z.number()).length(3),
+  // A lap's three sectors; a marble run's checkpoints and goal (lapGhosts.ts checks which).
+  splits: z.array(z.number()).min(1).max(12),
   path: z.array(z.number()).max(18_000),
 })
 
+function ghostGame(raw: string): GameSlug | null {
+  const game = resolveGameSlug(raw)
+  return game && GHOST_GAMES.has(game) ? game : null
+}
+
 tracksRouter.get('/:game/:n/ghost', async (req, res) => {
-  const game = trackGame(req.params.game)
+  const game = ghostGame(req.params.game)
   const n = Number(req.params.n)
-  if (!game || trackState(n) === 'none') {
+  if (!game || ghostState(game, n) === 'none') {
     res.status(404).json({ error: 'No such track' })
     return
   }
@@ -229,9 +238,9 @@ tracksRouter.get('/:game/:n/ghost', async (req, res) => {
 })
 
 tracksRouter.post('/:game/:n/ghost', async (req, res) => {
-  const game = trackGame(req.params.game)
+  const game = ghostGame(req.params.game)
   const n = Number(req.params.n)
-  const state = trackState(n)
+  const state = game ? ghostState(game, n) : 'none'
   // A track still to come is only a test drive: no board, so no ghost.
   if (!game || state === 'none' || state === 'ahead') {
     res.status(404).json({ error: 'No such track' })
@@ -255,7 +264,7 @@ tracksRouter.post('/:game/:n/ghost', async (req, res) => {
   }
   const { name, score, splits, path } = parsed.data
   const timeMs = TIME_SCORE_BASE - score
-  const problem = ghostProblem(timeMs, splits, path)
+  const problem = ghostProblem(game, timeMs, splits, path)
   if (problem) {
     res.status(400).json({ error: 'That path isn’t a lap of that time', code: 'GHOST_INVALID', reason: problem })
     return

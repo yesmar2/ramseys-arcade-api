@@ -15,8 +15,10 @@ import { addTrackLap, fastestBelievable, TRACK_GAMES, trackBoard, trackDayIso, t
 /*
  * Track records (trackLaps.ts): every Hot Lap track's own board, for good.
  *
- *   GET  /tracks/:game/records?name=   every track that has had its day: its record, drivers, your best and place
- *   GET  /tracks/:game/:n/board?name=  a track's board: the top ten and where you stand
+ *   GET  /tracks/:game/records?name=   every track that has had its day: its record (and when it was driven),
+ *                                      drivers, your best and place
+ *   GET  /tracks/:game/:n/board?name=  a track's board: the top ten and where you stand (nobody's, for a track
+ *                                      still to come)
  *   POST /tracks/:game/:n/laps         a lap on a track after its day, checked as a day's lap is; into the
  *                                      track's record book too, and taking the record pays RECORD_TICKETS once
  *   GET  /tracks/:game/:n/ghost        the track's #1, and their lap's path if it came with one (lapGhosts.ts)
@@ -67,7 +69,10 @@ tracksRouter.get('/:game/records', async (req, res) => {
       track: r.track,
       day: r.day,
       drivers: r.drivers,
-      record: r.record ? { name: r.record.name, score: r.record.score, ...(holders[i]!.avatarId ? { avatarId: holders[i]!.avatarId } : {}) } : null,
+      // `at`: when the record was driven, on the track's day or since.
+      record: r.record
+        ? { name: r.record.name, score: r.record.score, at: r.record.at, ...(holders[i]!.avatarId ? { avatarId: holders[i]!.avatarId } : {}) }
+        : null,
       you: r.you,
     })),
   })
@@ -84,7 +89,7 @@ tracksRouter.get('/:game/:n/board', async (req, res) => {
   const board = state === 'ahead' ? [] : await trackBoard(game, n)
   const who = cleanName(req.query.name)
   const mine = who ? board.findIndex((e) => e.name === who) : -1
-  const top = await withAvatarIds(board.slice(0, 10))
+  const top = (await withAvatarIds(board.slice(0, 10))).map((e) => ({ name: e.name, score: e.score, ...(e.avatarId ? { avatarId: e.avatarId } : {}) }))
   res.setHeader('Cache-Control', 'public, max-age=15')
   res.json({
     game,
@@ -92,7 +97,10 @@ tracksRouter.get('/:game/:n/board', async (req, res) => {
     day: trackDayIso(n),
     state,
     drivers: board.length,
-    entries: top.map((e) => ({ name: e.name, score: e.score, ...(e.avatarId ? { avatarId: e.avatarId } : {}) })),
+    entries: top,
+    // The same again under the names every course board uses (a hole's has them too): the top ten, and how many are on it.
+    top,
+    players: board.length,
     you: mine >= 0 ? { score: board[mine]!.score, place: mine + 1 } : null,
   })
 })

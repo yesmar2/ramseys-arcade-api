@@ -1,4 +1,4 @@
-import { checkScoreRate, scoreCeiling, TIME_SCORE_BASE, TRIES_SCORE_BASE, TRIES_SCORED_GAMES } from './scoreLimits.js'
+import { checkScoreRate, scoreCeiling, TIME_SCORE_BASE } from './scoreLimits.js'
 import { Router } from 'express'
 import { z } from 'zod'
 import { pageParams } from './paging.js'
@@ -16,6 +16,7 @@ import { resolveBoardScope } from './groups.js'
 import { assertCanUseName, withAvatarId, withAvatarIds } from './names.js'
 import { updateCrossRunStreakRecords } from './records.js'
 import { noteDayRun } from './courseRecords.js'
+import { dailyRecords, dayResultKeep, standingOn, type DailyTally } from './dailyRecords.js'
 import { recordChallengeRun } from './challenges.js'
 import { payRun, plausiblePickups, type RunTickets } from './tickets.js'
 import { marblerunPlannedPace } from './ticketLadders.js'
@@ -228,7 +229,8 @@ leaderboardsRouter.get('/:game', async (req, res) => {
 /**
  * A daily game's days, newest first, for the site's archive of past days and the day-by-day workings of
  * a daily's week: each day's runs and players, its best run, and with `name`, that tag's best that day,
- * its place and the day points it earned (null on a day before the game's days counted, DAILY_SINCE).
+ * its place and the day points it earned (points are null on a day before the game's days counted,
+ * DAILY_SINCE: there the place is among the day's kept runs).
  * A tries-scored game's runs from before it counted tries (a round of Ace Chase's old three holes)
  * aren't a day's result, so they're left out.
  *
@@ -249,8 +251,7 @@ leaderboardsRouter.get('/:game/days', async (req, res) => {
     return
   }
   const name = typeof req.query.name === 'string' && req.query.name.trim() ? req.query.name : null
-  const keep = TRIES_SCORED_GAMES.has(game) ? (score: number) => score > TRIES_SCORE_BASE - 1000 : undefined
-  const days = await dailyDays(game, name, keep)
+  const days = await dailyDays(game, name, dayResultKeep(game))
   const tops = await withAvatarIds(days.map((d) => d.top))
   const iso = (key: number) => `${Math.floor(key / 10_000)}-${String(Math.floor(key / 100) % 100).padStart(2, '0')}-${String(key % 100).padStart(2, '0')}`
   res.setHeader('Cache-Control', 'public, max-age=60')
@@ -263,6 +264,50 @@ leaderboardsRouter.get('/:game/days', async (req, res) => {
       top: { name: tops[i]!.name, score: tops[i]!.score, ...(tops[i]!.avatarId ? { avatarId: tops[i]!.avatarId } : {}) },
       you: d.you ? { score: d.you.score, place: d.you.place, points: d.you.points } : null,
     })),
+  })
+})
+
+/**
+ * A daily's records of its own (dailyRecords.ts), for the Records tab of its page: who has won the most
+ * days (days that are over), and on Hot Lap and Ace Chase who holds the most past tracks' or holes'
+ * records, with the numbers of the ones they hold. With `name`, where that tag stands on each, or null when
+ * it has none. `place` is its place in the order shown; `tied` is how many others have as many.
+ * `leaders` is how many share the top count: `top` is only the first ten.
+ */
+leaderboardsRouter.get('/:game/daily-records', async (req, res) => {
+  const game = resolveGameSlug(req.params.game)
+  if (!game || !DAILY_GAMES.has(game)) {
+    res.status(404).json({ error: 'Not a daily game' })
+    return
+  }
+  const who = typeof req.query.name === 'string' && req.query.name.trim() ? req.query.name.trim().slice(0, 12).toUpperCase() : null
+  const { daysWon, courseRecords } = await dailyRecords(game)
+  const days = who ? standingOn(daysWon.ranked, who) : null
+  const courses = who && courseRecords ? standingOn(courseRecords.ranked, who) : null
+  const dayTop = await withAvatarIds(daysWon.ranked.slice(0, 10))
+  const courseTop = courseRecords ? await withAvatarIds(courseRecords.ranked.slice(0, 10)) : []
+  const atTop = (ranked: DailyTally[]) => (ranked[0] ? ranked.filter((t) => t.count === ranked[0]!.count).length : 0)
+  res.setHeader('Cache-Control', 'public, max-age=30')
+  res.json({
+    game,
+    daysWon: {
+      closedDays: daysWon.closedDays,
+      players: daysWon.ranked.length,
+      leaders: atTop(daysWon.ranked),
+      top: dayTop.map((t) => ({ name: t.name, days: t.count, avatarId: t.avatarId })),
+      you: days ? { days: days.tally.count, place: days.place, tied: days.tied } : null,
+    },
+    ...(courseRecords
+      ? {
+          courseRecords: {
+            pastCourses: courseRecords.pastCourses,
+            players: courseRecords.ranked.length,
+            leaders: atTop(courseRecords.ranked),
+            top: courseTop.map((t) => ({ name: t.name, count: t.count, courses: t.courses, avatarId: t.avatarId })),
+            you: courses ? { count: courses.tally.count, place: courses.place, tied: courses.tied, courses: courses.tally.courses } : null,
+          },
+        }
+      : {}),
   })
 })
 

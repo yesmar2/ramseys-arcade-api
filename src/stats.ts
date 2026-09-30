@@ -1,7 +1,7 @@
 import { and, eq, sql } from 'drizzle-orm'
 import { db } from './db/client.js'
 import { leaderboardScores, recordScores } from './db/schema.js'
-import { getRecordDef } from './records.js'
+import { courseOfRecord, getRecordDef } from './records.js'
 import {
   boardDateKey,
   DAILY_GAMES,
@@ -249,6 +249,8 @@ async function nearRecords(name: string, limit = 6): Promise<NearRecord[]> {
   for (const row of mine) {
     const def = getRecordDef(row.game, row.recordId)
     if (!def) continue
+    // A daily's track, hole or day record isn't in the books: its course's own board is where to chase it.
+    if (courseOfRecord(def.game, def.id) != null) continue
     const key = `${row.game}::${row.recordId}`
     const have = bestOf.get(key)
     const better =

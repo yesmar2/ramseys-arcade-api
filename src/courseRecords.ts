@@ -7,7 +7,8 @@ import { dayNumberOf, trackBoard, trackCount, trackOfDay } from './trackLaps.js'
 
 /*
  * Course records (records.ts): each Hot Lap track's, each Ace Chase hole's, each Find the Bug day's and each
- * Half Full day's record, in its game's record book. What goes in is what goes on the track's, hole's or day's own board
+ * Half Full day's record, kept with its game's records though players' books leave them out (each is just its
+ * course's #1): what goes by them is a record's tickets and the note to its last holder. What goes in is what goes on the track's, hole's or day's own board
  * (trackLaps.ts, holes.ts; a Find the Bug day's is its day's, first runs only), as it goes on: a lap or
  * result on its day, and one on it since. What was set before the books kept them is put in once, at
  * start (syncCourseRecords), with no one told their record was taken.

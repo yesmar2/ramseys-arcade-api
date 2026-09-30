@@ -4,6 +4,7 @@ import { db } from './db/client.js'
 import { recordScores } from './db/schema.js'
 import { HALFFULL_FIRST_DAY } from './halffull/launch.js'
 import { HOTLAP_FIRST_DAY } from './hotlapPace.js'
+import { trackState } from './trackLaps.js'
 import { announceRewrite, insertWithFeed, MULTI_INSTANCE, onChange, onRewrite } from './feed.js'
 import { getClaim } from './names.js'
 import { notify } from './notifications.js'
@@ -309,7 +310,8 @@ const DEFS_BY_KEY = new Map(
  * (courseNames.ts, from the site's plans; a Find the Bug or Half Full day by its date). What goes in them
  * is what goes on the course's own board (trackLaps.ts, holes.ts; a Find the Bug or Half Full day's is its
  * day's, where only a first run counts): its day's laps or results, and every one since, put in by
- * courseRecords.ts. A game's book lists those whose day has come, today's included.
+ * courseRecords.ts. They're kept, but players' books leave them out (bookRecordDefs): each is only its
+ * course's #1, which the course's own board shows.
  */
 type Course = {
   /** The record's id before its number. A Half Full day's is `pour-`, so the site can print it as a percent. */
@@ -416,9 +418,62 @@ function coursesSoFar(game: GameSlug, now = Date.now()): number {
   return Math.max(0, Math.min(course.count, courseOnDay(game, boardDateKey(now))))
 }
 
+/** Every record a game keeps, its tracks', holes' and days' included (whose day has come). */
 export function listRecordDefs(game: GameSlug): RecordDef[] {
   const courses = Array.from({ length: coursesSoFar(game) }, (_, i) => courseDef(game, i + 1))
-  return [...RECORD_DEFS.filter((def) => def.game === game), ...courses]
+  return [...bookRecordDefs(game), ...courses]
+}
+
+/**
+ * The records a game's book shows players. A daily's track, hole and day records stay out: each is just
+ * that course's #1, which its board on the game's Past tab already shows (and today's is 1st today). They're
+ * still kept, for what goes by them: a track's or hole's record tickets and the note to a record's last holder.
+ */
+function bookRecordDefs(game: GameSlug): RecordDef[] {
+  return RECORD_DEFS.filter((def) => def.game === game)
+}
+
+/** A course's day, YYYY-MM-DD: day `n` of a daily that began on `firstDay`. */
+function courseDayIso(firstDay: string, n: number): string {
+  const [y, m, d] = firstDay.split('-').map(Number)
+  return new Date(Date.UTC(y!, m! - 1, d! + n - 1)).toISOString().slice(0, 10)
+}
+
+/**
+ * A track's, hole's or day's row on its game's Past tab (the site's dailyTabHref): a Hot Lap track and an
+ * Ace Chase hole go by their number, a Find the Bug or Half Full day by its date. Null for any other game.
+ */
+export function coursePastHref(game: GameSlug, n: number): string | null {
+  const course = COURSES[game]
+  if (!course) return null
+  const id = course.prefix === 'track' || course.prefix === 'hole' ? String(n) : courseDayIso(course.firstDay, n)
+  return `/games/${game}/past#course-${id}`
+}
+
+/** Which track, hole or day a Past tab row's id is (coursePastHref's): its number, or its day's date. */
+export function courseOfPastId(game: GameSlug, id: string): number | null {
+  const course = COURSES[game]
+  if (!course) return null
+  const byNumber = course.prefix === 'track' || course.prefix === 'hole'
+  const n = byNumber
+    ? /^\d+$/.test(id) ? Number(id) : NaN
+    : /^\d{4}-\d{2}-\d{2}$/.test(id) ? courseOnDay(game, Number(id.replaceAll('-', ''))) : NaN
+  return Number.isInteger(n) && n >= 1 && n <= course.count ? n : null
+}
+
+/**
+ * Where to win back a course's record, if a run can: a past Hot Lap track takes any lap on its board. An
+ * Ace Chase hole's holder has their one result on it already, and a past Find the Bug or Half Full day is
+ * practice, so theirs have none. Nor has today's track: the note outlives the day, and tomorrow the site's
+ * play link is another track.
+ */
+export function courseWinBackHref(game: GameSlug, n: number): string | null {
+  return game === 'hotlap' && trackState(n) === 'past' ? `/games/hotlap/play?track=${n}` : null
+}
+
+/** Whether a course is today's: a Hot Lap track comes round again once the plan runs out. */
+function courseIsToday(game: GameSlug, n: number, now: number): boolean {
+  return game === 'hotlap' ? trackState(n, now) === 'today' : courseOnDay(game, boardDateKey(now)) === n
 }
 
 export function getRecordDef(game: string, recordId: string): RecordDef | null {
@@ -916,7 +971,8 @@ export type GameRecordSummary = RecordDef & {
 /**
  * Every record in a game's book with its holder, the runner-up and how many
  * players are on it, and, given a name, where that player stands on each, so
- * a book can be drawn in one request rather than one per record.
+ * a book can be drawn in one request rather than one per record. A daily's
+ * course records aren't in it (bookRecordDefs).
  */
 export async function listGameRecords(
   game: GameSlug,
@@ -927,7 +983,7 @@ export async function listGameRecords(
 ): Promise<{ records: GameRecordSummary[] }> {
   const cleaned = name?.trim().slice(0, 12).toUpperCase() ?? ''
   const records: GameRecordSummary[] = []
-  for (const def of listRecordDefs(game)) {
+  for (const def of bookRecordDefs(game)) {
     const view = await boardView(game, def.id, def, period, now)
     const ranked = rankedFor(view, scope)
     const row: GameRecordSummary = {
@@ -1300,13 +1356,19 @@ async function notifyRecordTaken(
   try {
     const claim = await getClaim(priorLeader.name)
     if (!claim?.accountId) return
+    // A track's, hole's or day's record isn't in the book: the note goes to its course, never to today's play.
+    // While the course is today's, its #1 is 1st today, not a record yet, and the note says so.
+    const course = courseOfRecord(game, recordId)
+    const href = course != null ? coursePastHref(game, course) : null
+    const playHref = course != null ? courseWinBackHref(game, course) : `/games/${game}/play`
+    const today = course != null && courseIsToday(game, course, now)
     await notify({
       accountId: claim.accountId,
       kind: 'record-lost',
-      title: `${taker} took your ${def.label} record`,
-      body: `${gameLabel(game)}, ${recordValue(def, leader.score)} to your ${recordValue(def, priorLeader.score)}. You held it for ${spanWords(now - priorLeader.at)}.`,
-      href: `/records/${game}/${recordId}/all`,
-      meta: { actor: taker, game, playHref: `/games/${game}/play` },
+      title: today ? `${taker} passed you for 1st on ${def.label}` : `${taker} took your ${def.label} record`,
+      body: `${gameLabel(game)}, ${recordValue(def, leader.score)} to your ${recordValue(def, priorLeader.score)}. ${today ? 'You were 1st' : 'You held it'} for ${spanWords(now - priorLeader.at)}.`,
+      href: href ?? `/records/${game}/${recordId}/all`,
+      meta: { actor: taker, game, recordId, ...(playHref ? { playHref } : {}) },
       digestKey: `record-lost:${game}:${recordId}`,
       now,
     })

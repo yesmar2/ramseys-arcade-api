@@ -873,7 +873,7 @@ function bestIndexOfName(view: PoolView, name: string): number {
   return bestIndexOf(view, playerRefs.get(name))
 }
 
-/** `name`'s best run of a daily's day, with its place that day and the day points it earned (null before DAILY_SINCE). */
+/** `name`'s best run of a daily's day, with its place that day and the day points it earned (points are null before DAILY_SINCE). */
 export type DailyDayYou = LeaderboardEntry & { place: number | null; points: number | null }
 
 /**
@@ -883,7 +883,8 @@ export type DailyDayYou = LeaderboardEntry & { place: number | null; points: num
  * the day-by-day workings of a daily's week. `keep` says which runs are a day's result at all.
  *
  * The place and points are counted as dayPointsBoard counts them, from DAILY_SINCE, over every run of
- * the day, so a player's days' points over a week add up to their score on its board.
+ * the day, so a player's days' points over a week add up to their score on its board. A day before
+ * DAILY_SINCE (Ace Chase's holes #1 and #2) has a place among its kept runs and no points.
  */
 export async function dailyDays(
   game: GameSlug,
@@ -918,6 +919,11 @@ export async function dailyDays(
       if (entry.name === who) day.place = day.field.size
     }
     if (!keep(entry.score)) continue
+    // A day before day points still has places, among its kept runs (Ace Chase's holes #1 and #2), but pays none.
+    if (key < since && !day.field.has(entry.name)) {
+      day.field.add(entry.name)
+      if (entry.name === who) day.place = day.field.size
+    }
     day.runs++
     day.names.add(entry.name)
     day.top ??= entry
@@ -932,7 +938,7 @@ export async function dailyDays(
       runs: d.runs,
       players: d.names.size,
       top: d.top,
-      you: d.you ? { ...d.you, place, points: place ? placePoints(place, d.field.size) : null } : null,
+      you: d.you ? { ...d.you, place, points: place && day >= since ? placePoints(place, d.field.size) : null } : null,
     })
   }
   return out.sort((a, b) => b.day - a.day)
@@ -944,26 +950,48 @@ export async function runScores(game: GameSlug): Promise<number[]> {
   return (copy.byGame.get(game) ?? []).map((entry) => entry.score)
 }
 
+type DayPlayer = { name: string; score: number; at: number; device: DeviceType }
+
+/*
+ * Each day's players on a game, drawn from the history once and kept until the game takes a score or the
+ * history is read again. A Hot Lap track's board reads a day for each time it was driven, and the list of
+ * tracks reads every day there has been: each of those was a walk over every run of the game.
+ */
+const dayIndexes = new Map<string, { epoch: number; version: number; byDay: Map<number, DayPlayer[]> }>()
+
+async function dayIndex(game: GameSlug): Promise<Map<number, DayPlayer[]>> {
+  const copy = await loadCopy()
+  const version = gameVersions.get(game) ?? 0
+  const hit = dayIndexes.get(game)
+  if (hit && hit.epoch === copy.epoch && hit.version === version) return hit.byDay
+  const byDay = new Map<number, DayPlayer[]>()
+  const seen = new Map<number, Set<string>>()
+  // Board order: best first, and the earlier of two the same.
+  for (const entry of copy.byGame.get(game) ?? []) {
+    const key = keyOf(entry.at)
+    let names = seen.get(key)
+    if (!names) {
+      names = new Set()
+      seen.set(key, names)
+      byDay.set(key, [])
+    }
+    if (names.has(entry.name)) continue
+    names.add(entry.name)
+    byDay.get(key)!.push({ name: entry.name, score: entry.score, at: entry.at, device: entry.device })
+  }
+  dayIndexes.set(game, { epoch: copy.epoch, version, byDay })
+  return byDay
+}
+
 /**
  * A day's players on a game, best first: each tag's best run that day, a tie
  * going to whoever got there first. What a daily's top three are paid by
  * (tickets.ts), once the day is over, and a Hot Lap track's own board begins
  * with (trackLaps.ts): each best with when it was set and on what.
  */
-export async function dayPlayers(
-  game: GameSlug,
-  dayKey: number,
-): Promise<{ name: string; score: number; at: number; device: DeviceType }[]> {
-  const copy = await loadCopy()
-  const seen = new Set<string>()
-  const players: { name: string; score: number; at: number; device: DeviceType }[] = []
-  // Board order: best first, and the earlier of two the same.
-  for (const entry of copy.byGame.get(game) ?? []) {
-    if (seen.has(entry.name) || keyOf(entry.at) !== dayKey) continue
-    seen.add(entry.name)
-    players.push({ name: entry.name, score: entry.score, at: entry.at, device: entry.device })
-  }
-  return players
+export async function dayPlayers(game: GameSlug, dayKey: number): Promise<DayPlayer[]> {
+  // Copies: the kept day is shared by every caller.
+  return ((await dayIndex(game)).get(dayKey) ?? []).map((p) => ({ ...p }))
 }
 
 export async function getClosedBoard(

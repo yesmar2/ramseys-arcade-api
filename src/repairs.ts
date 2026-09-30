@@ -1,7 +1,10 @@
-import { and, eq, gt, gte, inArray, like, sql } from 'drizzle-orm'
+import { and, eq, gt, gte, inArray, like, or, sql } from 'drizzle-orm'
 import { db } from './db/client.js'
 import { appMeta, leaderboardScores, notifications, tournaments } from './db/schema.js'
+import type { NotificationMeta } from './notifications.js'
+import { courseOfPastId, courseOfRecord, coursePastHref, courseRecordId, courseWinBackHref } from './records.js'
 import { seedScoreCap, TIME_SCORE_BASE, TIME_SCORED_GAMES } from './scoreLimits.js'
+import { resolveGameSlug } from './store.js'
 import { ordinal } from './words.js'
 
 /**
@@ -94,6 +97,43 @@ const REPAIRS: Repair[] = [
         )
       }
       return `reworded ${events.length} event blurbs, ${trophies.length} trophy notices, ${reworded.length} event results`
+    },
+  },
+  {
+    // A daily's track, hole and day records left the record books (records.ts bookRecordDefs), so a note that
+    // someone took one, which led to its page there and to today's play, leads to the course's row on its
+    // game's Past tab now, onto the course itself only where a lap there can win it back, and names its
+    // record for the inbox. Notes already sent to their row (the first go at this) are named too.
+    id: '2026-09-29-course-record-notes',
+    run: async () => {
+      const rows = await db()
+        .select({ id: notifications.id, href: notifications.href, meta: notifications.meta })
+        .from(notifications)
+        .where(
+          and(
+            eq(notifications.kind, 'record-lost'),
+            or(like(notifications.href, '%/records/%'), like(notifications.href, '/games/%/past#course-%')),
+          ),
+        )
+      let moved = 0
+      for (const row of rows) {
+        const book = /^#?\/records\/([a-z]+)\/([a-z]+-\d+)(?:\/|$)/.exec(row.href ?? '')
+        const past = /^\/games\/([a-z]+)\/past#course-([\d-]+)$/.exec(row.href ?? '')
+        const game = resolveGameSlug((book ?? past)?.[1] ?? '')
+        if (!game) continue
+        const n = book ? courseOfRecord(game, book[2]!) : courseOfPastId(game, past![2]!)
+        const href = n != null ? coursePastHref(game, n) : null
+        const recordId = n != null ? courseRecordId(game, n) : null
+        if (n == null || !href || !recordId) continue
+        const { playHref: _today, ...meta } = (row.meta ?? {}) as NotificationMeta
+        const playHref = courseWinBackHref(game, n)
+        await db()
+          .update(notifications)
+          .set({ href, meta: { ...meta, recordId, ...(playHref ? { playHref } : {}) } })
+          .where(eq(notifications.id, row.id))
+        moved++
+      }
+      return `sent ${moved} of ${rows.length} record notes to their course`
     },
   },
 ]

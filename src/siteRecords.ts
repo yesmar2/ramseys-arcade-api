@@ -1,4 +1,4 @@
-import { allScores, boardDateKey, previousBoardDateKey } from './store.js'
+import { allScores, boardDateKey, DAILY_GAMES, getBoard, previousBoardDateKey, type GameSlug } from './store.js'
 import { onRewrite } from './feed.js'
 
 /**
@@ -65,7 +65,7 @@ export const SITE_RECORD_DEFS: Record<SiteRecordId, SiteRecordDef> = {
   'boards-topped': {
     id: 'boards-topped',
     label: 'Boards held',
-    blurb: 'Games where the all-time top score is currently yours.',
+    blurb: 'Games whose all-time board has you at #1 right now.',
     unit: 'boards',
   },
 }
@@ -177,7 +177,7 @@ async function buildSiteRecords(scope?: { names: Set<string> } | null): Promise<
   const byGame = await allScores()
 
   const tallies = new Map<string, Tally>()
-  /** Name → games whose all-time top score is theirs, for "boards held". */
+  /** Name → games whose all-time board has them at #1 (a daily's is its day points), for "boards held". */
   const held = new Map<string, number>()
 
   for (const [game, entries] of byGame) {
@@ -211,6 +211,8 @@ async function buildSiteRecords(scope?: { names: Set<string> } | null): Promise<
         dayTally.games++
       }
     }
+    // A daily's all-time board is its days' places (store.ts dayPointsBoard): its best run is only one day's course's #1.
+    if (DAILY_GAMES.has(game as GameSlug)) leader = (await getBoard(game as GameSlug, 'all', Date.now(), scope?.names, 1))[0]?.name ?? null
     if (leader != null) held.set(leader, (held.get(leader) ?? 0) + 1)
   }
 

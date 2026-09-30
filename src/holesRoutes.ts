@@ -22,8 +22,10 @@ import { awardTickets, RECORD_TICKETS } from './tickets.js'
 /*
  * Hole records (holes.ts): every Ace Chase hole's own board, for good.
  *
- *   GET  /holes/:game/records?name=      every hole that has had its day: its record, players, your result and place
- *   GET  /holes/:game/:day/board?name=   a hole's board: the top ten and where you stand
+ *   GET  /holes/:game/records?name=      every hole that has had its day: its record (and when it was set),
+ *                                        players, your result and place
+ *   GET  /holes/:game/:day/board?name=   a hole's board: the top ten and where you stand (nobody's, for a hole
+ *                                        still to come)
  *   POST /holes/:game/:day/results       a result on a hole after its day: the account's first on it, if it has
  *                                        none from its day; into the hole's record book too, and taking the record
  *                                        pays RECORD_TICKETS once
@@ -76,7 +78,8 @@ holesRouter.get('/:game/records', async (req, res) => {
       n: r.n,
       day: r.day,
       players: r.players,
-      record: r.record ? figure({ ...r.record, avatarId: holders[i]!.avatarId }) : null,
+      // `at`: when the record was set, on the hole's day or since.
+      record: r.record ? { ...figure({ ...r.record, avatarId: holders[i]!.avatarId }), at: r.record.at } : null,
       you: r.you,
     })),
   })
@@ -92,7 +95,7 @@ holesRouter.get('/:game/:day/board', async (req, res) => {
   }
   const board = state === 'ahead' ? [] : await holeBoard(game, day)
   const who = cleanName(req.query.name)
-  const top = await withAvatarIds(board.slice(0, 10))
+  const top = (await withAvatarIds(board.slice(0, 10))).map(figure)
   res.setHeader('Cache-Control', 'public, max-age=15')
   res.json({
     game,
@@ -100,7 +103,9 @@ holesRouter.get('/:game/:day/board', async (req, res) => {
     n: holeNumber(day),
     state,
     players: board.length,
-    entries: top.map(figure),
+    entries: top,
+    // The same again under the name every course board uses (a track's has it too).
+    top,
     you: who ? standing(board, who) : null,
   })
 })

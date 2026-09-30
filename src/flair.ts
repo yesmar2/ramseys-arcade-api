@@ -3,8 +3,8 @@ import { AVATAR_GAME_PINS, AVATAR_PINS, AVATAR_RINGS, type AvatarPin, type Avata
 import { db } from './db/client.js'
 import { leaderboardScores } from './db/schema.js'
 import { getClaim } from './names.js'
-import { courseOfRecord, listGameRecords } from './records.js'
-import { boardDateKey, previousBoardDateKey, rankForName, type GameSlug } from './store.js'
+import { listGameRecords } from './records.js'
+import { boardDateKey, DAILY_GAMES, previousBoardDateKey, rankForName, type GameSlug } from './store.js'
 import { bestTodayStreak } from './today.js'
 import { trophiesForName } from './trophies.js'
 
@@ -67,11 +67,11 @@ async function todayBestFor(name: string, now: number): Promise<number> {
 async function recordStanding(name: string): Promise<{ held: boolean; best: FlairState['record'] }> {
   let held = false
   let best: FlairState['record'] = null
-  for (const game of AVATAR_GAME_PINS) {
+  // Every game with a book: the pinned games', and each daily's (its book is its Days played in a row; its
+  // track, hole and day records aren't in it, records.ts bookRecordDefs, and none of them is the ring's kind).
+  for (const game of new Set<GameSlug>([...AVATAR_GAME_PINS, ...DAILY_GAMES])) {
     const { records } = await listGameRecords(game, 'all', Date.now(), undefined, name)
     for (const r of records) {
-      // A daily's record for one of its days (Find the Bug's) is that day's win, which isn't the ring's kind of record.
-      if (courseOfRecord(game, r.id) != null) continue
       if (r.top?.name === name) held = true
       const rank = r.you?.rank
       if (rank != null && (!best || rank < best.rank)) best = { game, label: r.label, rank }

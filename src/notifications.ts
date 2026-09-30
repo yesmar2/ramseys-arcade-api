@@ -42,6 +42,8 @@ export type NotificationMeta = {
   game?: string
   /** Where the row's main button goes, when that isn't the row's own link. */
   playHref?: string
+  /** A record-lost note's record: a daily's course record links to its course, not to its page in a book. */
+  recordId?: string
   /** A bracket match's deadline, for its countdown. */
   endsAt?: number
   eventId?: string

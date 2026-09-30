@@ -49,9 +49,14 @@ const WON_SINCE: Partial<Record<GameSlug, number>> = {
   acechase: Number(ACECHASE_FIRST_DAY.replace(/-/g, '')),
 }
 
+/** A daily's first day (YYYYMMDD), its course #1's: the first its past tab lists, and the first with a day's board to show. */
+export function dailyFirstDay(game: GameSlug): number {
+  return WON_SINCE[game] ?? DAILY_SINCE[game] ?? 0
+}
+
 /** Each day that's over and its 1st, into a count a player. */
 async function daysWon(game: GameSlug, now: number): Promise<DailyRecords['daysWon']> {
-  const since = WON_SINCE[game] ?? DAILY_SINCE[game] ?? 0
+  const since = dailyFirstDay(game)
   const today = boardDateKey(now)
   const byName = new Map<string, DailyTally>()
   let closedDays = 0

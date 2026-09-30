@@ -16,7 +16,7 @@ import { resolveBoardScope } from './groups.js'
 import { assertCanUseName, withAvatarId, withAvatarIds } from './names.js'
 import { updateCrossRunStreakRecords } from './records.js'
 import { noteDayRun } from './courseRecords.js'
-import { dailyRecords, dayResultKeep, standingOn, type DailyTally } from './dailyRecords.js'
+import { dailyFirstDay, dailyRecords, dayResultKeep, standingOn, type DailyTally } from './dailyRecords.js'
 import { recordChallengeRun } from './challenges.js'
 import { payRun, plausiblePickups, type RunTickets } from './tickets.js'
 import { marblerunPlannedPace } from './ticketLadders.js'
@@ -28,7 +28,9 @@ import {
   boardDateKey,
   boardsSummaryForPeriod,
   DAILY_GAMES,
+  DAILY_SINCE,
   dailyDays,
+  dayBoardPage,
   getBoard,
   getBoardPage,
   globalRanksPage,
@@ -39,6 +41,7 @@ import {
   rankForScore,
   ranksForScore,
   resolveGameSlug,
+  type GameSlug,
   type Period,
 } from './store.js'
 
@@ -198,10 +201,86 @@ function scopeError(err: unknown, res: import('express').Response) {
   })
 }
 
+/** A `day` query's YYYY-MM-DD, if it's a real date, as its board day key (YYYYMMDD); null if it isn't one. */
+function dayKeyOfParam(raw: unknown): number | null {
+  if (typeof raw !== 'string') return null
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw)
+  if (!match) return null
+  const [y, m, d] = [Number(match[1]), Number(match[2]), Number(match[3])]
+  const date = new Date(Date.UTC(y, m - 1, d))
+  if (date.getUTCFullYear() !== y || date.getUTCMonth() !== m - 1 || date.getUTCDate() !== d) return null
+  return y * 10_000 + m * 100 + d
+}
+
+/**
+ * One day's board of a daily game (`?period=daily&day=YYYY-MM-DD`): a past day's final board, in full a
+ * page at a time, or today's so far. One row a player, their best run that day (Find the Bug's, Half
+ * Full's and Ace Chase's only run: they take one result a day), ranked as the day's board was when it
+ * paid its day points (store.ts dayBoardPage). `counted` is false before the game's days counted
+ * (DAILY_SINCE: Ace Chase's holes #1 and #2), `final` true once the day is over. `total` is the day's
+ * players, and `you` is `name`'s place among them, not a run's rank. In a group, the day ranks its members.
+ */
+async function dayBoard(req: import('express').Request, res: import('express').Response, game: GameSlug) {
+  if (!DAILY_GAMES.has(game)) {
+    res.status(404).json({ error: 'Not a daily game', code: 'NOT_DAILY' })
+    return
+  }
+  const periodParam = req.query.period
+  if (periodParam != null && periodParam !== '' && periodParam !== 'daily') {
+    res.status(400).json({ error: 'A day’s board is period=daily', code: 'BAD_PERIOD' })
+    return
+  }
+  const key = dayKeyOfParam(req.query.day)
+  if (key == null) {
+    res.status(400).json({ error: 'A day is a date, YYYY-MM-DD', code: 'BAD_DAY' })
+    return
+  }
+  const today = boardDateKey(Date.now())
+  if (key > today) {
+    res.status(404).json({ error: 'That day hasn’t come yet', code: 'DAY_AHEAD', today: dayOfKey(today) })
+    return
+  }
+  const first = dailyFirstDay(game)
+  if (key < first) {
+    res.status(404).json({ error: `No board that day: this game’s days began on ${dayOfKey(first)}`, code: 'BEFORE_FIRST_DAY', firstDay: dayOfKey(first) })
+    return
+  }
+  let scope
+  try {
+    scope = (await boardAccess(req))?.names
+  } catch (err) {
+    scopeError(err, res)
+    return
+  }
+  const name = typeof req.query.name === 'string' ? req.query.name : null
+  const { limit, offset } = pageParams(req.query)
+  const page = await dayBoardPage(game, key, { offset, limit, scope, name, keep: dayResultKeep(game) })
+  const final = key < today
+  // A day that's over stays as it closed. Not a group's: that's only for its members to see.
+  if (final && !scope) res.setHeader('Cache-Control', 'public, max-age=60')
+  res.json({
+    game,
+    period: 'daily',
+    day: dayOfKey(key),
+    counted: key >= (DAILY_SINCE[game] ?? 0),
+    final,
+    offset,
+    total: page.total,
+    // An id of the day's, as a day points row has one: the rows are players, not runs.
+    entries: (await withAvatarIds(page.entries)).map((e) => ({ id: `day:${game}:${key}:${e.name}`, ...e })),
+    you: page.you ? { score: page.you.score, place: page.you.place } : null,
+  })
+}
+
 leaderboardsRouter.get('/:game', async (req, res) => {
   const game = resolveGameSlug(req.params.game)
   if (!game) {
     res.status(404).json({ error: 'Unknown game' })
+    return
+  }
+  // One day of a daily, past or today's (dayBoard). Without a day, a board for its period, as ever.
+  if (req.query.day != null && req.query.day !== '') {
+    await dayBoard(req, res, game)
     return
   }
   const period = parsePeriod(req.query.period)

@@ -15,6 +15,7 @@ import {
   type HoleEntry,
 } from './holes.js'
 import { assertCanUseName, withAvatarIds } from './names.js'
+import { pageParams } from './paging.js'
 import { takeToken } from './rateLimit.js'
 import { resolveGameSlug, type GameSlug } from './store.js'
 import { awardTickets, RECORD_TICKETS } from './tickets.js'
@@ -24,7 +25,8 @@ import { awardTickets, RECORD_TICKETS } from './tickets.js'
  *
  *   GET  /holes/:game/records?name=      every hole that has had its day: its record (and when it was set),
  *                                        players, your result and place
- *   GET  /holes/:game/:day/board?name=   a hole's board: the top ten and where you stand (nobody's, for a hole
+ *   GET  /holes/:game/:day/board?name=   a hole's board, a page at a time (limit/offset, the top ten unless
+ *                                        asked), how many are on it, and where you stand (nobody's, for a hole
  *                                        still to come)
  *   POST /holes/:game/:day/results       a result on a hole after its day: the account's first on it, if it has
  *                                        none from its day; into the hole's record book too, and taking the record
@@ -95,7 +97,13 @@ holesRouter.get('/:game/:day/board', async (req, res) => {
   }
   const board = state === 'ahead' ? [] : await holeBoard(game, day)
   const who = cleanName(req.query.name)
-  const top = (await withAvatarIds(board.slice(0, 10))).map(figure)
+  // A page of it, the top ten unless asked for more, as every board pages (limit/offset).
+  const { limit, offset } = pageParams(req.query, 10)
+  const rows = async (from: number, count: number) =>
+    // `at`: when it was set, on the hole's day or since.
+    (await withAvatarIds(board.slice(from, from + count))).map((e, i) => ({ ...figure(e), at: e.at, place: from + i + 1 }))
+  const entries = await rows(offset, limit)
+  const top = offset === 0 && limit >= 10 ? entries.slice(0, 10) : await rows(0, 10)
   res.setHeader('Cache-Control', 'public, max-age=15')
   res.json({
     game,
@@ -103,8 +111,10 @@ holesRouter.get('/:game/:day/board', async (req, res) => {
     n: holeNumber(day),
     state,
     players: board.length,
-    entries: top,
-    // The same again under the name every course board uses (a track's has it too).
+    offset,
+    total: board.length,
+    entries,
+    // Under the name every course board uses (a track's has it too): the top ten, whatever the page.
     top,
     you: who ? standing(board, who) : null,
   })

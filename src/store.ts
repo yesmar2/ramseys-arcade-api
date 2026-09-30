@@ -994,6 +994,37 @@ export async function dayPlayers(game: GameSlug, dayKey: number): Promise<DayPla
   return ((await dayIndex(game)).get(dayKey) ?? []).map((p) => ({ ...p }))
 }
 
+/** A player's row on a daily's day board: their best run that day and the place it earned. */
+export type DayBoardRow = DayPlayer & { place: number }
+
+/**
+ * A page of a daily's board for one day (YYYYMMDD), as it closed, or stands so far for today: one row a
+ * player, their best run that day, a tie going to whoever got there first. That's the order the day's
+ * points were paid in (dayPointsBoard) and the places the days' list gives (dailyDays), whose `keep` this
+ * takes: before the game's days counted (DAILY_SINCE) only kept runs are the day's field, as there. In a
+ * group (`scope`) the places are among its members. `name`'s row that day, if they played, is `you`.
+ */
+export async function dayBoardPage(
+  game: GameSlug,
+  dayKey: number,
+  opts: { offset?: number; limit?: number; scope?: NameScope; name?: string | null; keep?: (score: number) => boolean } = {},
+): Promise<{ entries: DayBoardRow[]; total: number; you: DayBoardRow | null }> {
+  let field = (await dayIndex(game)).get(dayKey) ?? []
+  // After the index's one run a player, not before it as dailyDays does: the same field, since a kept run
+  // always outscores one that isn't (dayResultKeep), so a player's best is kept whenever any of theirs is.
+  const keep = opts.keep
+  if (keep && dayKey < (DAILY_SINCE[game] ?? 0)) field = field.filter((p) => keep(p.score))
+  field = filterByNames(field, opts.scope)
+  const offset = Math.max(0, Math.floor(opts.offset ?? 0))
+  const limit = Math.max(1, Math.floor(opts.limit ?? BOARD_PAGE))
+  const row = (i: number): DayBoardRow => ({ ...field[i], place: i + 1 })
+  const entries: DayBoardRow[] = []
+  for (let i = offset; i < Math.min(field.length, offset + limit); i++) entries.push(row(i))
+  const who = opts.name ? opts.name.trim().slice(0, 12).toUpperCase() : null
+  const mine = who ? field.findIndex((p) => p.name === who) : -1
+  return { entries, total: field.length, you: mine >= 0 ? row(mine) : null }
+}
+
 export async function getClosedBoard(
   game: GameSlug,
   period: ClosedPeriod,

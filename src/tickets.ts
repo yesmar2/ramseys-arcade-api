@@ -312,7 +312,7 @@ function refusal(message: string, status: number, code: string) {
 export async function tradePrize(accountId: string, prizeId: string, now = Date.now()): Promise<{ balance: number }> {
   const prize = prizeById(prizeId)
   if (!prize) throw refusal('There’s no such prize', 404, 'UNKNOWN_PRIZE')
-  if (prize.earned) throw refusal('That one’s earned with a Today streak, not traded for', 409, 'EARNED_ONLY')
+  if (prize.earned) throw refusal('That one’s earned with a Dailies streak, not traded for', 409, 'EARNED_ONLY')
   return db().transaction(async (tx) => {
     await lockWallet(tx, accountId, now)
     const [had] = await tx
@@ -342,7 +342,7 @@ export async function tradePrize(accountId: string, prizeId: string, now = Date.
 /** The prize a player is saving for, or none. */
 export async function setGoal(accountId: string, prizeId: string | null, now = Date.now()): Promise<string | null> {
   if (prizeId && !prizeById(prizeId)) throw refusal('There’s no such prize', 404, 'UNKNOWN_PRIZE')
-  if (prizeId && prizeById(prizeId)?.earned) throw refusal('That one’s earned with a Today streak, not traded for', 409, 'EARNED_ONLY')
+  if (prizeId && prizeById(prizeId)?.earned) throw refusal('That one’s earned with a Dailies streak, not traded for', 409, 'EARNED_ONLY')
   await db()
     .insert(ticketWallets)
     .values({ accountId, goal: prizeId, updatedAt: now })

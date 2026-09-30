@@ -649,7 +649,7 @@ export function buildDailyEvent(now = Date.now()): Tournament {
   const label = gameLabel(game)
   return {
     id: `daily-${key}`,
-    title: `Daily · ${label}`,
+    title: `Today’s event · ${label}`,
     blurb: `Today’s featured game is ${label}. Best score wins — join, then play from the event page.`,
     games: [game],
     startsAt: zonedDateTimeToUtc(y, m, d, 0, 0),

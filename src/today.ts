@@ -8,7 +8,8 @@ import { DAILY_SINCE, boardDateKey, previousBoardDateKey, type GameSlug } from '
 import { awardTickets } from './tickets.js'
 
 /*
- * The Today set: the day's dailies on one punch card, and a streak of the days an account kept. The dailies
+ * The Today set, which players know as the Dailies (since 2026-09-30): the day's dailies on one punch card,
+ * and a streak of the days an account kept. The dailies
  * are Ace Chase's Today's Hole (a result in daily_hole_results), Hot Lap's Today's Track (a lap on the day's
  * board), Find the Bug's Today's Wanted (the day's first run, on its board) and, from the days they join,
  * Half Full's Today's Pour (the day's first run, on its board; halffull/launch.ts HALFFULL_TODAY_FROM) and
@@ -16,7 +17,7 @@ import { awardTickets } from './tickets.js'
  * day is kept once any three of that day's dailies are done (TODAY_KEEP), so every day from before the pour
  * joined still needs all three it had. A day with more than three on the card and every one of them done
  * is a Full ticket. todayRule says which dailies are on a day's card and how many keep it; nothing else
- * decides a day. A day is the boards' day, New York time. The Daily, the One Shot and the bug hunt are the
+ * decides a day. A day is the boards' day, New York time. Today's event, the One Shot and the bug hunt are the
  * card's bonus punches and don't count.
  *
  * The streak earns looks at milestones, once an account however often it breaks: tickets, the Today pin
@@ -255,11 +256,11 @@ export async function bestTodayStreak(accountId: string, now = Date.now()): Prom
 }
 
 const MILESTONE_WORDS: Record<number, { title: string; body: string; href: string }> = {
-  3: { title: 'Day 3 of your Today streak', body: '10 tickets for the prize counter.', href: '/prizes' },
-  7: { title: 'A week of Todays', body: 'The Today pin is yours to wear on your badge.', href: '/rank/all' },
-  14: { title: 'Day 14 of your Today streak', body: '25 tickets for the prize counter.', href: '/prizes' },
-  30: { title: 'Thirty days of Todays', body: 'The gold badge finish is yours to wear.', href: '/rank/all' },
-  100: { title: 'A hundred days of Todays', body: 'The “Every Day” title is yours, under your tag.', href: '/rank/all' },
+  3: { title: 'Day 3 of your Dailies streak', body: '10 tickets for the prize counter.', href: '/prizes' },
+  7: { title: 'A week of Dailies', body: 'The Dailies pin is yours to wear on your badge.', href: '/rank/all' },
+  14: { title: 'Day 14 of your Dailies streak', body: '25 tickets for the prize counter.', href: '/prizes' },
+  30: { title: 'Thirty days of Dailies', body: 'The gold badge finish is yours to wear.', href: '/rank/all' },
+  100: { title: 'A hundred days of Dailies', body: 'The “Every Day” title is yours, under your tag.', href: '/rank/all' },
 }
 
 /**

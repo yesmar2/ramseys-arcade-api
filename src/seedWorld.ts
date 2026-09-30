@@ -265,8 +265,11 @@ const DAILY_FROM: Record<string, number> = {
 }
 const DAILY_SET: ReadonlySet<GameSlug> = new Set(SEEDED_DAILIES)
 
-/** How much a daily draws a player who does the dailies. */
-const DAILY_LIKE: Record<string, number> = { hotlap: 0.85, acechase: 0.9, findbug: 0.95, halffull: 0.85 }
+/** How much a daily draws a player who does the dailies. Hot Lap and Ace Chase draw nearly all of them. */
+const DAILY_LIKE: Record<string, number> = { hotlap: 0.95, acechase: 0.97, findbug: 0.95, halffull: 0.85 }
+
+/** The dailies whose regulars come by for the day's track or hole alone, and go back to past ones. */
+const COURSE_DAILIES = ['acechase', 'hotlap'] as const
 
 /** The bug hunt's first full day: its finds were kept from the evening before (bugHunt.ts). */
 const HUNT_FROM = 20260925
@@ -648,17 +651,53 @@ function dailiesFor(p: Player, key: number): GameSlug[] {
 }
 
 /**
- * Now and then, a past track or hole from a daily's archive: a lap or three at a past track, some to
- * better their own lap and some on a day they missed, or a past hole they never played (a hole keeps an
- * account's first result only). Kept on the track's or hole's own board.
+ * The days a Hot Lap or Ace Chase regular comes by for the day's track or hole alone, on days they skip
+ * everything else (`visiting`: the days they come by anyway), now and then going back to a past one too.
+ * So a day's track and hole draw more of the arcade than the days' other games do.
+ */
+function courseVisits(p: Player, visiting: ReadonlySet<number>): Sitting[] {
+  if (!p.dailyTaste) return []
+  const taste = Math.min(1, p.dailyTaste)
+  const out: Sitting[] = []
+  const first = Math.max(boardDateKey(p.joinedAt), Math.min(DAILY_FROM.hotlap!, DAILY_FROM.acechase!))
+  for (let key = first; key <= TODAY; key = nextDay(key)) {
+    if (dayStart(key) > p.quitAt) break
+    if (visiting.has(key) || !chance(clamp(0.15 + 0.45 * taste * (0.5 + 0.5 * p.activity), 0, 0.6))) continue
+    const hour = clamp(p.hour + gauss() * 1.5, 7, 23.6)
+    // Today is still going: most who play in the evening haven't come by yet.
+    if (key === TODAY && dayStart(key) + hour * HOUR > NOW - 25 * MINUTE && !chance(0.3)) continue
+    const at = timeOnDay(key, hour, p.joinedAt + between(1, 6) * MINUTE)
+    if (at == null) continue
+    const games: GameSlug[] = COURSE_DAILIES.filter((g) => key >= DAILY_FROM[g]! && chance(0.85))
+    if (!games.length) continue
+    out.push({ at, games, archive: key > DAILY_FROM.hotlap! && chance(0.25 + 0.25 * taste) })
+  }
+  return out
+}
+
+/**
+ * A go at the past tracks and holes: one to three of them, each a different one, one after another.
  */
 function playArchive(p: Player, from: number): number {
+  const courses = 1 + (chance(0.45) ? 1 : 0) + (chance(0.15) ? 1 : 0)
+  const done = new Set<string>()
+  let t = from
+  for (let i = 0; i < courses; i++) t = playArchiveCourse(p, t, done)
+  return t
+}
+
+/**
+ * A past track or hole from a daily's archive: a lap or four at a past track, some to better their own
+ * lap and some on a day they missed, or a past hole they never played (a hole keeps an account's first
+ * result only). Kept on the track's or hole's own board. `done`: the ones already played this sitting.
+ */
+function playArchiveCourse(p: Player, from: number, done: Set<string>): number {
   const key = boardDateKey(from)
   const options: { game: 'hotlap' | 'acechase'; n: number; day: string }[] = []
   for (let d = 1; d < dayNumberOf(key); d++) {
     const track = trackOfDay(d)
     const day = dayOfKey(addDays(DAILY_FROM.hotlap!, d - 1))
-    options.push({ game: 'hotlap', n: track, day })
+    if (!done.has(`hotlap:${day}`)) options.push({ game: 'hotlap', n: track, day })
   }
   for (let k = DAILY_FROM.acechase!; k < key; k = nextDay(k)) {
     const day = dayOfKey(k)
@@ -669,12 +708,13 @@ function playArchive(p: Player, from: number): number {
   }
   if (!options.length) return from
   const choice = pick(options)
+  done.add(`${choice.game}:${choice.day}`)
   const device = chance(0.9) ? p.device : pick(DEVICES)
   let t = from + between(0.5, 4) * MINUTE
   if (choice.game === 'hotlap') {
     const pace = HOTLAP_PACE_MS[choice.n - 1]
     if (!pace) return from
-    const laps = 1 + Math.floor(rand() * 3)
+    const laps = 1 + Math.floor(rand() * 4)
     for (let lap = 0; lap < laps; lap++) {
       const ms = hotLapMs(dailyAbility(p, 'hotlap'), pace, lap + 1, rand)
       const end = t + ms + between(3.2, 6) * 1000
@@ -1525,7 +1565,8 @@ async function buildWorld(d: Db): Promise<Tournament[]> {
   console.log(`Playing ${players.length} players' days…`)
   for (const p of players) {
     const plan: Sitting[] = [...(sittingsFor.get(p.tag) ?? [])]
-    for (const key of playDays(p)) {
+    const days = playDays(p)
+    for (const key of days) {
       // Today is still going: most who play in the evening haven't come by yet.
       if (key === TODAY && dayStart(key) + p.hour * HOUR > NOW - 25 * MINUTE && !chance(0.3)) continue
       const at = timeOnDay(key, clamp(p.hour + gauss() * 1.2, 7, 23.6), p.joinedAt + between(1, 6) * MINUTE)
@@ -1536,7 +1577,7 @@ async function buildWorld(d: Db): Promise<Tournament[]> {
         plan.push({
           at,
           games: [...dailies, ...(alone ? [] : chooseGames(p, key, official))],
-          archive: key > DAILY_FROM.hotlap! && chance(0.12 + 0.15 * p.dailyTaste),
+          archive: key > DAILY_FROM.hotlap! && chance(0.3 + 0.3 * Math.min(1, p.dailyTaste)),
           hunt: key >= HUNT_FROM && chance(0.3 + 0.35 * p.activity + 0.1 * Math.min(1, p.dailyTaste)),
         })
       }
@@ -1547,6 +1588,7 @@ async function buildWorld(d: Db): Promise<Tournament[]> {
         if (later != null) plan.push({ at: later, games: [...(lap ? (['hotlap'] as GameSlug[]) : []), ...chooseGames(p, key, official)] })
       }
     }
+    plan.push(...courseVisits(p, new Set(days)))
     plan.sort((a, b) => a.at - b.at)
     let free = 0
     for (const s of plan) free = playSitting(p, s, free) + between(5, 30) * MINUTE

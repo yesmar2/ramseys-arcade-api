@@ -15,7 +15,14 @@ export type Account = {
   googleSub?: string
 }
 
-const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 30 // 30 days
+/**
+ * A session lasts this long past the player's last visit: anyone who keeps coming back stays signed in,
+ * and only someone away this long is signed out. Each visit moves the end on, at most once a day
+ * (SESSION_RENEW_MS). It used to end 30 days after signing in whatever the player did, so an everyday
+ * player was signed out mid-streak without a word.
+ */
+const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 90 // 90 days
+const SESSION_RENEW_MS = 1000 * 60 * 60 * 24 // a day
 const MAGIC_TTL_MS = 1000 * 60 * 15 // 15 minutes
 
 function mintToken() {
@@ -267,12 +274,19 @@ async function resolveSessionFromDb(sessionToken: string): Promise<SessionAnswer
   const session = rows[0]
   // No such session: an answer too, worth remembering for as long as any.
   if (!session) return { account: null, expiresAt: Number.POSITIVE_INFINITY }
-  if (session.expiresAt < Date.now()) {
+  const now = Date.now()
+  if (session.expiresAt < now) {
     await db().delete(sessions).where(eq(sessions.token, sessionToken))
     return { account: null, expiresAt: Number.POSITIVE_INFINITY }
   }
+  // Back again: the session runs on from today. Moved at most once a day, so a busy player isn't a write a request.
+  let expiresAt = session.expiresAt
+  if (expiresAt - now < SESSION_TTL_MS - SESSION_RENEW_MS) {
+    expiresAt = now + SESSION_TTL_MS
+    await db().update(sessions).set({ expiresAt }).where(eq(sessions.token, sessionToken))
+  }
   const account = await getAccount(session.accountId)
-  return { account: account ? publicAccount(account) : null, expiresAt: session.expiresAt }
+  return { account: account ? publicAccount(account) : null, expiresAt }
 }
 
 export async function logoutSession(sessionToken: string | null | undefined) {

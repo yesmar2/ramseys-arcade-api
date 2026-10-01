@@ -7,6 +7,7 @@ import { listClientErrors } from './clientErrors.js'
 import { listFeedback } from './feedback.js'
 import { listFlags, reviewFlag, unreviewedCount } from './scoreFlags.js'
 import { getClaim } from './names.js'
+import { playerStats } from './playerStats.js'
 import { resolveGameSlug } from './store.js'
 import { awardTickets } from './tickets.js'
 
@@ -42,6 +43,16 @@ adminRouter.get('/client-errors', async (req, res) => {
     await requireAdmin(req)
     const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 100))
     res.json({ errors: await listClientErrors(limit) })
+  } catch (err) {
+    refuse(err, res)
+  }
+})
+
+/** Who's playing: active players, new accounts, return rates, runs begun (playerStats.ts). `seeded=1` counts the seeded world too. */
+adminRouter.get('/players', async (req, res) => {
+  try {
+    await requireAdmin(req)
+    res.json(await playerStats(Date.now(), req.query.seeded === '1'))
   } catch (err) {
     refuse(err, res)
   }

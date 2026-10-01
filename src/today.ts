@@ -118,18 +118,79 @@ const CALENDAR_DAYS = 35
  * start became a day's game (store.ts DAILY_SINCE), which was Find the Bug's Today's Wanted #1 on
  * 2026-09-27. A day before it wasn't missed; there was nothing to keep.
  */
-const TODAY_SINCE = Math.max(...TODAY_DAILIES.filter((d) => d.from === 0).map((d) => DAILY_SINCE[d.game] ?? 0))
+export const TODAY_SINCE = Math.max(...TODAY_DAILIES.filter((d) => d.from === 0).map((d) => DAILY_SINCE[d.game] ?? 0))
+
+/*
+ * Streak freezes (Ramsey's rules, 2026-10-01): every 7 days kept in a row earns one, a player holds up to
+ * 2, and a day missed while the streak is going spends one. A frozen day keeps the streak alive but doesn't
+ * add to it: 9 days, a frozen day, and the next day kept makes 10. Nothing is stored. Freezes are worked out
+ * from the kept days alone, walking them in order, so every streak the arcade shows (the Dailies, friends'
+ * rows, the rewards and the Dailies pin) counts them the same way.
+ */
+export const FREEZE_EVERY = 7
+export const FREEZE_MAX = 2
+
+export type StreakWalk = {
+  /** From today once it's kept, else from yesterday (today is still open, so it isn't missed yet). */
+  current: number
+  best: number
+  /** Freezes held now. */
+  freezes: number
+  /** Days kept until the next one is earned (earned only while fewer than FREEZE_MAX are held). */
+  next: number
+  /** The missed days a freeze covered. */
+  frozen: ReadonlySet<number>
+}
+
+/** The streak a set of kept days makes from `since` (a board day key) to `today`, freezes and all. */
+export function walkStreak(kept: ReadonlySet<number>, today: number, since: number): StreakWalk {
+  const days: number[] = []
+  for (let day = today; day >= since; day = previousBoardDateKey(day)) days.push(day)
+  days.reverse()
+  let current = 0
+  let best = 0
+  let freezes = 0
+  const frozen = new Set<number>()
+  for (const day of days) {
+    if (kept.has(day)) {
+      current++
+      if (current > best) best = current
+      if (current % FREEZE_EVERY === 0 && freezes < FREEZE_MAX) freezes++
+    } else if (day === today) {
+      // Still open: not missed yet.
+    } else if (current > 0 && freezes > 0) {
+      freezes--
+      frozen.add(day)
+    } else {
+      current = 0
+    }
+  }
+  return { current, best, freezes, next: FREEZE_EVERY - (current % FREEZE_EVERY), frozen }
+}
+
+/** Where an account's streak is walked from: the first day of the Dailies, or the lookback's start if later. */
+function walkFrom(now: number): number {
+  return Math.max(TODAY_SINCE, boardDateKey(now - LOOKBACK_DAYS * 86_400_000))
+}
 
 /**
- * One of an account's days on the Dailies: whether it was kept and a Full ticket, the dailies on its card,
- * and which of them were done, in the card's order. The Dailies page's strip of days and its calendar.
+ * One of an account's days on the Dailies: whether it was kept and a Full ticket, whether a freeze covered it,
+ * the dailies on its card, and which of them were done, in the card's order. The Dailies page's strip of days
+ * and its calendar.
  */
-export type TodayDay = { day: string; kept: boolean; full: boolean; live: TodayKey[]; done: TodayKey[] }
+export type TodayDay = { day: string; kept: boolean; full: boolean; frozen: boolean; live: TodayKey[]; done: TodayKey[] }
 
-function dayEntry(played: TodayPlayed, kept: ReadonlySet<number>, key: number): TodayDay {
+function dayEntry(played: TodayPlayed, kept: ReadonlySet<number>, frozen: ReadonlySet<number>, key: number): TodayDay {
   const { live } = todayRule(key)
   const done = doneOn(played, key)
-  return { day: dayOf(key), kept: kept.has(key), full: fullDay(done, key), live, done: live.filter((k) => done.has(k)) }
+  return {
+    day: dayOf(key),
+    kept: kept.has(key),
+    full: fullDay(done, key),
+    frozen: frozen.has(key),
+    live,
+    done: live.filter((k) => done.has(k)),
+  }
 }
 
 export type TodayState = {
@@ -153,6 +214,8 @@ export type TodayState = {
   /** Whether today is a Full ticket (fullDay). */
   full: boolean
   streak: { current: number; best: number }
+  /** Streak freezes (walkStreak): how many are held, the most there can be, and days kept until the next. */
+  freezes: { held: number; max: number; every: number; next: number }
   /** The last seven days, oldest first, ending today: whether each was a streak day, and a Full ticket. */
   week: TodayDay[]
   /** The same for the last 35 days, the Today page's calendar; `week` is its last seven, kept for older sites. */
@@ -231,28 +294,14 @@ async function playedDays(accountId: string, now: number): Promise<Record<TodayK
   return played
 }
 
-/** The current streak (from today once it's kept, else from yesterday) and the best one. */
-function streaksOf(kept: ReadonlySet<number>, today: number): { current: number; best: number } {
-  let current = 0
-  for (let day = kept.has(today) ? today : previousBoardDateKey(today); kept.has(day); day = previousBoardDateKey(day)) current++
-  let best = 0
-  let run = 0
-  let prev: number | null = null
-  for (const day of [...kept].sort((a, b) => a - b)) {
-    run = prev != null && previousBoardDateKey(day) === prev ? run + 1 : 1
-    if (run > best) best = run
-    prev = day
-  }
-  return { current, best: Math.max(best, current) }
-}
-
 export async function todayState(accountId: string, now = Date.now()): Promise<TodayState> {
   const today = boardDateKey(now)
   const played = await playedDays(accountId, now)
   const kept = keptDays(played)
+  const walk = walkStreak(kept, today, walkFrom(now))
   const days: TodayState['days'] = []
   for (let i = 0, key = today; i < CALENDAR_DAYS; i++, key = previousBoardDateKey(key)) {
-    days.unshift(dayEntry(played, kept, key))
+    days.unshift(dayEntry(played, kept, walk.frozen, key))
   }
   const { live, need } = todayRule(today)
   const lap = played.track.get(today)
@@ -282,7 +331,8 @@ export async function todayState(accountId: string, now = Date.now()): Promise<T
     need,
     count: live.length,
     full: fullDay(doneOn(played, today), today),
-    streak: streaksOf(kept, today),
+    streak: { current: walk.current, best: walk.best },
+    freezes: { held: walk.freezes, max: FREEZE_MAX, every: FREEZE_EVERY, next: walk.next },
     week: days.slice(-WEEK_DAYS),
     days,
     since: dayOf(TODAY_SINCE),
@@ -310,7 +360,8 @@ export async function todayMonth(
   if (last >= from) {
     const played = await playedDays(accountId, now)
     const kept = keptDays(played)
-    for (let key = last; key >= from; key = previousBoardDateKey(key)) days.unshift(dayEntry(played, kept, key))
+    const { frozen } = walkStreak(kept, today, walkFrom(now))
+    for (let key = last; key >= from; key = previousBoardDateKey(key)) days.unshift(dayEntry(played, kept, frozen, key))
   }
   return { month, since: dayOf(TODAY_SINCE), days }
 }

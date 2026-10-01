@@ -48,9 +48,10 @@ export type NotificationMeta = {
   recordId?: string
   /** A bracket match's deadline, for its countdown; a streak reminder's, the end of the boards' day. */
   endsAt?: number
-  /** A streak reminder: the days the streak has, and how many of today's dailies still keep it. */
+  /** A streak reminder: the days the streak has, how many of today's dailies still keep it, and whether a freeze would cover today. */
   streak?: number
   left?: number
+  covered?: boolean
   eventId?: string
   matchId?: string
   /** The trophy it announces. */

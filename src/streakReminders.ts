@@ -52,10 +52,11 @@ export function reminderDue(zone: string | null, now: number, endsAt: number): b
 
 const NUMBER_WORDS = ['No', 'One', 'Two', 'Three', 'Four', 'Five', 'Six']
 
-/** "Two more dailies keep it going." */
-export function streakRiskBody(left: number): string {
+/** "Two more dailies keep it going." Holding a freeze: "…keep it. Miss today and a freeze covers it." */
+export function streakRiskBody(left: number, covered = false): string {
   const n = NUMBER_WORDS[left] ?? String(left)
-  return left === 1 ? 'One more daily keeps it going.' : `${n} more dailies keep it going.`
+  const keep = left === 1 ? 'One more daily keeps it' : `${n} more dailies keep it`
+  return covered ? `${keep}. Miss today and a freeze covers it.` : `${keep} going.`
 }
 
 /**
@@ -111,13 +112,15 @@ export async function remindStreaks(now = Date.now()): Promise<number> {
       continue
     }
     const left = state.need - state.live.filter((k) => state.done[k]).length
+    // Holding a freeze, missing today won't end the streak: still worth a nudge, said honestly.
+    const covered = state.freezes.held > 0
     const result = await notify({
       accountId,
       kind: 'streak-risk',
-      title: streakRiskTitle(streak, endsAt - now),
-      body: streakRiskBody(left),
+      title: streakRiskTitle(streak, endsAt - now, covered),
+      body: streakRiskBody(left, covered),
       href: '/dailies',
-      meta: { endsAt, streak, left },
+      meta: { endsAt, streak, left, covered },
       digestKey: key,
       once: true,
       now,

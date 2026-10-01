@@ -289,15 +289,19 @@ function pushTitle(row: NotificationRow, now: number): string {
   const endsAt = row.meta?.endsAt
   const actor = row.meta?.actor
   if (row.kind === 'match-closing' && endsAt && actor) return `${timeLeft(endsAt - now)} left against ${actor}`
-  if (row.kind === 'streak-risk' && endsAt) return streakRiskTitle(row.meta?.streak ?? 0, endsAt - now)
+  if (row.kind === 'streak-risk' && endsAt) return streakRiskTitle(row.meta?.streak ?? 0, endsAt - now, row.meta?.covered)
   return row.title
 }
 
-/** A streak reminder's words, with the time left as it is when they're read. */
-export function streakRiskTitle(streak: number, msLeft: number): string {
-  return streak > 1
-    ? `Your ${streak}-day Dailies streak ends in ${timeLeft(msLeft)}`
-    : `Your Dailies streak ends in ${timeLeft(msLeft)}`
+/**
+ * A streak reminder's words, with the time left as it is when they're read. A player holding a freeze
+ * (today.ts walkStreak) won't lose the streak by missing today, so they're told what's left to keep it.
+ */
+export function streakRiskTitle(streak: number, msLeft: number, covered = false): string {
+  const streakWords = streak > 1 ? `your ${streak}-day Dailies streak` : 'your Dailies streak'
+  return covered
+    ? `${timeLeft(msLeft)} left to keep ${streakWords}`.replace(/^./, (c) => c.toUpperCase())
+    : `${streakWords.replace(/^./, (c) => c.toUpperCase())} ends in ${timeLeft(msLeft)}`
 }
 
 /** A streak reminder with less than this left is too late to be any use. */

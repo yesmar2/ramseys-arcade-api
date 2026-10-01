@@ -4,8 +4,8 @@ import { dailyHoleResults, leaderboardScores, nameClaims } from './db/schema.js'
 import { listFriends } from './friends.js'
 import { assertGroupBoardAccess, listGroupsFor } from './groups.js'
 import { namesOwnedByAccount, withAvatarIds } from './names.js'
-import { BOARD_TZ, DAILY_SINCE, boardDateKey, previousBoardDateKey } from './store.js'
-import { keptDays, todayRule } from './today.js'
+import { BOARD_TZ, DAILY_SINCE, boardDateKey } from './store.js'
+import { TODAY_SINCE, keptDays, todayRule, walkStreak } from './today.js'
 
 /*
  * Rivals on the Today set (today.ts): how an account's friends, or one of its groups, are doing on the
@@ -83,15 +83,10 @@ async function playersFor(
   return { players, scope: { kind: 'group', id: group.id, name: group.name } }
 }
 
-/** The streak a set of kept days makes, counting back from today, or from yesterday while today isn't kept. */
-function currentStreak(kept: ReadonlySet<number>, today: number): number {
-  let n = 0
-  for (let day = kept.has(today) ? today : previousBoardDateKey(today); kept.has(day); day = previousBoardDateKey(day)) n++
-  return n
-}
-
 export async function todayRivals(accountId: string, groupId: string | null, now = Date.now()): Promise<RivalsReply> {
   const today = boardDateKey(now)
+  // A rival's streak counts its freezes as the player's own card does (today.ts walkStreak), over the lookback.
+  const walkFrom = Math.max(TODAY_SINCE, boardDateKey(now - RIVAL_LOOKBACK_DAYS * 86_400_000))
   const [{ players, scope }, groups] = await Promise.all([
     playersFor(accountId, groupId),
     listGroupsFor({ accountId }).then((list) => list.map((g) => ({ id: g.id, name: g.name }))),
@@ -163,7 +158,7 @@ export async function todayRivals(accountId: string, groupId: string | null, now
       pour: pour.get(today) ?? null,
       course: course.get(today) ?? null,
       cave: cave.get(today) ?? null,
-      streak: currentStreak(keptDays({ hole, track, wanted, pour, course, cave }), today),
+      streak: walkStreak(keptDays({ hole, track, wanted, pour, course, cave }), today, walkFrom).current,
     }
   })
   // Whoever has done most of today's card first.

@@ -28,6 +28,7 @@ export type NotificationLevels = Record<NotificationTopic, NotificationLevel>
  *   - A bracket match has a clock, and a forfeit on the other side of it.
  *   - A beaten challenge is a friend answering something the player sent them.
  *   - A beaten lap on Today's Track can be won back the same day.
+ *   - A Dailies streak about to end is kept by playing before the day does.
  * The rest wait in the inbox. A beaten record is still beaten when you next open the app.
  */
 export const DEFAULT_LEVELS: Readonly<NotificationLevels> = {
@@ -40,6 +41,7 @@ export const DEFAULT_LEVELS: Readonly<NotificationLevels> = {
   'challenge-taken': 'inbox',
   'today-lap': 'push',
   'today-beaten': 'inbox',
+  'streak-risk': 'push',
   'record-lost': 'inbox',
   trophy: 'inbox',
 }

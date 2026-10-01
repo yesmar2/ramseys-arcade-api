@@ -14,7 +14,8 @@ import { timeLeft } from './words.js'
  *
  *  1. Only what the player asked for is sent: each kind's level in their
  *     notification settings (notificationSettings.ts). By default, that's what
- *     they can act on: bracket clocks, a beaten challenge, a beaten lap.
+ *     they can act on: bracket clocks, a beaten challenge, a beaten lap, a
+ *     Dailies streak about to end.
  *  2. Quiet hours — a 24h match window otherwise fires at 3am. What quiet
  *     hours hold back goes out when they end, if it still matters then.
  *  3. A hard daily cap per account, so a future caller that forgets the rules
@@ -61,7 +62,7 @@ function ensureConfigured(): boolean {
 }
 
 /** Local wall-clock hour for an IANA zone, falling back to UTC. */
-function hourIn(zone: string | null, now: number): number {
+export function hourIn(zone: string | null, now: number): number {
   if (!zone) return new Date(now).getUTCHours()
   try {
     const fmt = new Intl.DateTimeFormat('en-US', {
@@ -288,8 +289,19 @@ function pushTitle(row: NotificationRow, now: number): string {
   const endsAt = row.meta?.endsAt
   const actor = row.meta?.actor
   if (row.kind === 'match-closing' && endsAt && actor) return `${timeLeft(endsAt - now)} left against ${actor}`
+  if (row.kind === 'streak-risk' && endsAt) return streakRiskTitle(row.meta?.streak ?? 0, endsAt - now)
   return row.title
 }
+
+/** A streak reminder's words, with the time left as it is when they're read. */
+export function streakRiskTitle(streak: number, msLeft: number): string {
+  return streak > 1
+    ? `Your ${streak}-day Dailies streak ends in ${timeLeft(msLeft)}`
+    : `Your Dailies streak ends in ${timeLeft(msLeft)}`
+}
+
+/** A streak reminder with less than this left is too late to be any use. */
+const STREAK_TOO_LATE_MS = 20 * 60_000
 
 /** Whether a row still deserves a buzz: unsent, unread, unanswered, and not over. */
 function stillWorthPushing(row: NotificationRow, now: number): boolean {
@@ -299,6 +311,8 @@ function stillWorthPushing(row: NotificationRow, now: number): boolean {
   const endsAt = row.meta?.endsAt
   // A match with minutes left is better told in the inbox than on a lock screen.
   if (MATCH_KINDS.has(row.kind) && endsAt != null && endsAt - now < 10 * 60_000) return false
+  // A streak reminder held back by quiet hours would land after its day: by then the streak is gone.
+  if (row.kind === 'streak-risk' && (endsAt == null || endsAt - now < STREAK_TOO_LATE_MS)) return false
   return true
 }
 

@@ -1,6 +1,7 @@
 import { pruneClientErrors } from './clientErrors.js'
 import { pruneFeed, takeLease } from './feed.js'
 import { pushHeld } from './push.js'
+import { remindStreaks } from './streakReminders.js'
 import { payDayTops } from './tickets.js'
 import { sweepTournaments } from './tournaments.js'
 import { ensurePeriodTrophies } from './trophies.js'
@@ -8,7 +9,8 @@ import { ensurePeriodTrophies } from './trophies.js'
 /**
  * What happens on the clock rather than when somebody asks: a bracket round
  * timing out and the next one opening, an event ending, a week or a month
- * closing, and pushes that quiet hours held back.
+ * closing, pushes that quiet hours held back, and the evening's Dailies streak
+ * reminders.
  *
  * All of it used to wait for a page load: match alerts went out when someone
  * happened to open the events, so a quiet night sent nothing. The API runs
@@ -39,6 +41,7 @@ export async function sweep(): Promise<void> {
       ['events', () => sweepTournaments(Date.now())],
       ['trophies', () => ensurePeriodTrophies(Date.now())],
       ['pushes', () => pushHeld(Date.now())],
+      ['streak reminders', () => remindStreaks(Date.now())],
       ['feed', () => pruneFeed(Date.now())],
       ['client errors', () => pruneClientErrors(Date.now())],
       ['daily tops', () => payDayTops(Date.now())],

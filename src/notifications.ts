@@ -24,6 +24,8 @@ export type NotificationKind =
   | 'challenge-taken'
   /** A friend beat your result on one of today's dailies (todayBeaten.ts). */
   | 'today-beaten'
+  /** Today's Dailies aren't kept yet and the day is nearly over: the streak ends with it (streakReminders.ts). */
+  | 'streak-risk'
 
 export const MATCH_KINDS: ReadonlySet<NotificationKind> = new Set<NotificationKind>([
   'match-open',
@@ -44,8 +46,11 @@ export type NotificationMeta = {
   playHref?: string
   /** A record-lost note's record: a daily's course record links to its course, not to its page in a book. */
   recordId?: string
-  /** A bracket match's deadline, for its countdown. */
+  /** A bracket match's deadline, for its countdown; a streak reminder's, the end of the boards' day. */
   endsAt?: number
+  /** A streak reminder: the days the streak has, and how many of today's dailies still keep it. */
+  streak?: number
+  left?: number
   eventId?: string
   matchId?: string
   /** The trophy it announces. */

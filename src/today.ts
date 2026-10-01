@@ -3,7 +3,7 @@ import { db } from './db/client.js'
 import { dailyHoleResults, leaderboardScores, prizesOwned, ticketLedger } from './db/schema.js'
 import { HALFFULL_TODAY_FROM } from './halffull/launch.js'
 import { namesOwnedByAccount } from './names.js'
-import { notify } from './notifications.js'
+import { notify, withdrawNotification } from './notifications.js'
 import { DAILY_SINCE, boardDateKey, previousBoardDateKey, type GameSlug } from './store.js'
 import { awardTickets } from './tickets.js'
 
@@ -327,13 +327,26 @@ const MILESTONE_WORDS: Record<number, { title: string; body: string; href: strin
   100: { title: 'A hundred days of Dailies', body: 'The “Every Day” title is yours, under your tag.', href: '/rank/all' },
 }
 
+/** The digest key of a day's streak reminder (streakReminders.ts): one a day at most. */
+export function streakRiskKey(day: string): string {
+  return `streak-risk:${day}`
+}
+
+/** Whether today is kept: as many of today's card done as keep it. */
+export function keptToday(state: Pick<TodayState, 'live' | 'done' | 'need'>): boolean {
+  return state.live.filter((key) => state.done[key]).length >= state.need
+}
+
 /**
  * Pay whatever an account's best streak has reached and not been paid, once each, and say so in its
  * inbox. A milestone is marked paid in the ticket ledger (reason 'today', ref `streak-<day>`), with the
  * tickets it pays or none. Returns the day's state.
+ *
+ * A kept day also takes back its streak reminder, if one went out: there's nothing left at risk.
  */
 export async function settleToday(accountId: string, now = Date.now()): Promise<TodayState> {
   const state = await todayState(accountId, now)
+  if (keptToday(state)) await withdrawNotification(accountId, streakRiskKey(state.day)).catch(() => undefined)
   const due = TODAY_MILESTONES.filter((m) => state.streak.best >= m.day)
   if (!due.length) return state
   const paid = new Set(

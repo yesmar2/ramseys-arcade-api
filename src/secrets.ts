@@ -109,7 +109,8 @@ function isElevenEleven(at: number, offset: number): boolean {
   return local.getUTCHours() % 12 === 11 && local.getUTCMinutes() === 11
 }
 
-async function foundBefore(accountId: string): Promise<Set<number>> {
+/** The secrets an account has found, by number: its shelf's, and what the site's eggs check (GET /secrets/found). */
+export async function foundBefore(accountId: string): Promise<Set<number>> {
   const rows = await db()
     .select({ n: trophyAwards.periodKey })
     .from(trophyAwards)

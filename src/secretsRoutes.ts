@@ -3,9 +3,27 @@ import { z } from 'zod'
 import { accountFromRequest } from './auth.js'
 import { namesOwnedByAccount } from './names.js'
 import { takeToken } from './rateLimit.js'
-import { awardSecret, EGG_SECRETS, type SecretKey } from './secrets.js'
+import { awardSecret, EGG_SECRETS, foundBefore, type SecretKey } from './secrets.js'
 
 export const secretsRouter = Router()
+
+/**
+ * The secrets the account signed in has found, by number. The site's eggs ask it so that "found" is the
+ * account's, not the device's: on a device shared by two accounts, each finds every egg for itself, and a
+ * clue steps aside for an egg found on another device.
+ */
+secretsRouter.get('/found', async (req, res) => {
+  const account = await accountFromRequest(req)
+  if (!account) {
+    res.status(401).json({ error: 'Sign in to keep a secret', code: 'AUTH_REQUIRED' })
+    return
+  }
+  try {
+    res.json({ found: [...(await foundBefore(account.id))].sort((a, b) => a - b) })
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : 'Request failed' })
+  }
+})
 
 /** A handful of eggs, found once each: this only stops a script. */
 const FOUND_LIMIT = { limit: 10, windowMs: 60 * 1000 }

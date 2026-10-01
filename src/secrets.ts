@@ -33,13 +33,14 @@ export const SECRETS = {
   corner: { n: 16, name: 'Perfect Corner', says: 'Watched the bouncing blip hit the corner.' },
   cheats: { n: 17, name: 'Nice Try', says: 'Tried an old cheat on the arcade.' },
   continue: { n: 18, name: 'Continue?', says: 'Put a coin in at Game Over.' },
+  shatter: { n: 19, name: 'Smashing', says: 'Broke a balanced plate in Centroid.' },
 } as const
 
 export type SecretKey = keyof typeof SECRETS
 export type SecretFound = { key: SecretKey; n: number; name: string; says: string }
 
 /** The secrets the site's easter eggs find, which it reports itself. */
-export const EGG_SECRETS: readonly SecretKey[] = ['konami', 'blip', 'barrelroll', 'corner', 'cheats', 'continue']
+export const EGG_SECRETS: readonly SecretKey[] = ['konami', 'blip', 'barrelroll', 'corner', 'cheats', 'continue', 'shatter']
 
 /** Round Number's scores. */
 const ROUND_SCORES: ReadonlySet<number> = new Set([1_000, 10_000, 100_000])

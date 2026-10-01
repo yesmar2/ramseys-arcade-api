@@ -34,13 +34,39 @@ export const SECRETS = {
   cheats: { n: 17, name: 'Nice Try', says: 'Tried an old cheat on the arcade.' },
   continue: { n: 18, name: 'Continue?', says: 'Put a coin in at Game Over.' },
   shatter: { n: 19, name: 'Smashing', says: 'Broke a balanced plate in Centroid.' },
+  placebo: { n: 20, name: 'Placebo', says: 'Pressed the button at a crossing. Nothing happened.' },
+  jackpot: { n: 21, name: 'Jackpot', says: 'Pulled Bop’s lever all the way down to the cherries.' },
+  donuts: { n: 22, name: 'Donuts', says: 'Spun three donuts on Hot Lap’s track.' },
+  marbles: { n: 23, name: 'Lost Your Marbles', says: 'Fell off Marble Run three times before the first checkpoint.' },
+  wargames: { n: 24, name: 'Shall We Play a Game?', says: 'Let a whole wave of Patriot fall without firing a shot.' },
+  safespot: { n: 25, name: 'Safe Spot', says: 'Hid from the chasers in Pellets’ safe spot.' },
+  alien: { n: 26, name: 'Little Green Friend', says: 'Got a wave from the alien in Lander’s cave.' },
+  shootingstar: { n: 27, name: 'Shooting Star', says: 'Caught a shooting star over the Fireflies pond.' },
+  moon: { n: 28, name: 'Shoot the Moon', says: 'Shot the moon over Barrage until it had a black eye.' },
 } as const
 
 export type SecretKey = keyof typeof SECRETS
 export type SecretFound = { key: SecretKey; n: number; name: string; says: string }
 
 /** The secrets the site's easter eggs find, which it reports itself. */
-export const EGG_SECRETS: readonly SecretKey[] = ['konami', 'blip', 'barrelroll', 'corner', 'cheats', 'continue', 'shatter']
+export const EGG_SECRETS: readonly SecretKey[] = [
+  'konami',
+  'blip',
+  'barrelroll',
+  'corner',
+  'cheats',
+  'continue',
+  'shatter',
+  'placebo',
+  'jackpot',
+  'donuts',
+  'marbles',
+  'wargames',
+  'safespot',
+  'alien',
+  'shootingstar',
+  'moon',
+]
 
 /** Round Number's scores. */
 const ROUND_SCORES: ReadonlySet<number> = new Set([1_000, 10_000, 100_000])

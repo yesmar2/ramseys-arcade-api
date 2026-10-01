@@ -52,7 +52,9 @@ const MARATHON_RUNS = 50
 
 /** Games shown as a number of points, where a score's digits mean something to the player. */
 const POINTS_GAMES: ReadonlySet<GameSlug> = new Set(
-  ALLOWED_GAMES.filter((g) => g !== 'acechase' && g !== 'spotter' && g !== 'findbug' && g !== 'hotlap' && g !== 'halffull' && g !== 'marblerun'),
+  ALLOWED_GAMES.filter(
+    (g) => g !== 'acechase' && g !== 'spotter' && g !== 'findbug' && g !== 'hotlap' && g !== 'halffull' && g !== 'marblerun' && g !== 'lander',
+  ),
 )
 
 /** Every game the site lists (data/games.ts hides Simon and Spotter): the Grand Tour's. */

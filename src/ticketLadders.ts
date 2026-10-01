@@ -1,4 +1,5 @@
 import { HOTLAP_FIRST_DAY, HOTLAP_PACE_MS } from './hotlapPace.js'
+import { LANDER_FIRST_DAY, LANDER_PACE_MS } from './landerPace.js'
 import { MARBLERUN_FIRST_DAY, MARBLERUN_PACE_MS } from './marblerunPace.js'
 import { TIME_SCORE_BASE, TIME_SCORED_GAMES, TRIES_SCORE_BASE } from './scoreLimits.js'
 import { GAME_BANDS } from './seedBoards.js'
@@ -21,7 +22,8 @@ import { ALLOWED_GAMES, boardDateKey, runScores, type GameSlug } from './store.j
  * doesn't move them, as it moved its drawn ladder before. Half Full by the day's tier. Hot Lap goes by the day's blue car
  * (the pace car), since its track changes every day: the plan's own, kept in
  * hotlapPace.ts, so the site can't say a slower one; Marble Run by the day's
- * blue ball (its pace ball), from marblerunPace.ts. A daily pays its best
+ * blue ball (its pace ball), from marblerunPace.ts, and Lander by the day's
+ * blue ship, from landerPace.ts. A daily pays its best
  * step of the day once, as it's reached (tickets.ts).
  */
 
@@ -210,6 +212,36 @@ export function marblerunLadder(paceMs: number | null | undefined): Ladder {
   }
 }
 
+/** The day's blue ship from Lander's plan. */
+export function landerPlannedPace(now = Date.now()): number | null {
+  return paceOnDay(LANDER_FIRST_DAY, LANDER_PACE_MS, now)
+}
+
+/** Where a blue ship can fly: the plan's caves pace 42–80 s. */
+const SHIP_MIN_MS = 35_000
+const SHIP_MAX_MS = 100_000
+
+/**
+ * Lander, on a day whose blue ship lands in `paceMs`: slower than it 3, within 2% of it 5, beating it 8, by 3%
+ * 11, by 6% 15, as Hot Lap pays against its blue car and Marble Run against its blue ball. Without a blue
+ * ship, a run pays the 3 alone.
+ */
+export function landerLadder(paceMs: number | null | undefined): Ladder {
+  const base = { base: 3, baseLabel: 'a run today' }
+  if (!paceMs) return { ...base, steps: [] }
+  const pace = Math.min(SHIP_MAX_MS, Math.max(SHIP_MIN_MS, Math.round(paceMs)))
+  const run = (ms: number) => TIME_SCORE_BASE - Math.round(ms)
+  return {
+    ...base,
+    steps: [
+      { at: run(pace * 1.02), tickets: 5, label: 'within 2% of the blue ship' },
+      { at: run(pace) + 1, tickets: 8, label: 'beating the blue ship' },
+      { at: run(pace * 0.97), tickets: 11, label: 'beating it by 3%' },
+      { at: run(pace * 0.94), tickets: 15, label: 'beating it by 6%' },
+    ],
+  }
+}
+
 /** A game's ladder today. Hot Lap's goes by the plan's blue car for the day, or else the one the site says. */
 export async function ladderFor(game: GameSlug, now = Date.now(), paceMs?: number | null): Promise<Ladder> {
   if (game === 'acechase') return ACECHASE_LADDER
@@ -217,6 +249,7 @@ export async function ladderFor(game: GameSlug, now = Date.now(), paceMs?: numbe
   if (game === 'halffull') return HALFFULL_LADDER
   if (game === 'hotlap') return hotlapLadder(plannedPace(now) ?? paceMs)
   if (game === 'marblerun') return marblerunLadder(marblerunPlannedPace(now) ?? paceMs)
+  if (game === 'lander') return landerLadder(landerPlannedPace(now) ?? paceMs)
   return drawnLadder(game, now)
 }
 

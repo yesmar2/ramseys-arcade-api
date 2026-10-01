@@ -2,13 +2,13 @@ import type { GameSlug } from './store.js'
 
 /**
  * Time-scored boards keep "higher is better" by storing the base minus the
- * run in milliseconds (the site's findbug, spotter, hotlap and marblerun score.ts).
+ * run in milliseconds (the site's findbug, spotter, hotlap, marblerun and lander score.ts).
  * A run therefore lives strictly below the base: a score at or above it is
  * a clear in zero or negative time, which the site prints as "0.0s".
  */
 export const TIME_SCORE_BASE = 1_000_000
 
-export const TIME_SCORED_GAMES: ReadonlySet<GameSlug> = new Set<GameSlug>(['findbug', 'spotter', 'hotlap', 'marblerun'])
+export const TIME_SCORED_GAMES: ReadonlySet<GameSlug> = new Set<GameSlug>(['findbug', 'spotter', 'hotlap', 'marblerun', 'lander'])
 
 /**
  * Tries-scored boards keep "higher is better" the same way, as the base less
@@ -123,6 +123,7 @@ const SCORE_RULES: Record<GameSlug, ScoreRule> = {
   hotlap: { kind: 'time' },
   halffull: { kind: 'judged' },
   marblerun: { kind: 'time' },
+  lander: { kind: 'time' },
 }
 
 /**

@@ -69,6 +69,8 @@ export const GAME_BANDS: Record<GameSlug, ScoreProfile> = {
   halffull: { min: 6_800, max: 9_300, step: 4 },
   // A run down the day's course: 65 seconds to 42, about the blue ball's range.
   marblerun: { min: 935_000, max: 958_000, step: 100 },
+  // A run down the day's cave and onto its pad: 80 seconds to 50, about the blue ship's range.
+  lander: { min: 920_000, max: 950_000, step: 100 },
 }
 
 function lerp(a: number, b: number, t: number) {
@@ -174,6 +176,7 @@ export function buildSeed(seed = 20260904) {
     hotlap: [],
     halffull: [],
     marblerun: [],
+    lander: [],
   }
 
   NAMES.forEach((name, i) => {

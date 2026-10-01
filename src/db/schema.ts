@@ -790,7 +790,7 @@ export const lapGhosts = pgTable(
     /** The tag the lap is on the board under. */
     name: text('name').notNull(),
     timeMs: integer('time_ms').notNull(),
-    /** Where each sector ended, in seconds from the lights (a marble run's checkpoints and goal). */
+    /** Where each sector ended, in seconds from the lights (a marble run's checkpoints and goal, a Lander run's gates and landing). */
     splits: jsonb('splits').notNull(),
     /** x, y and heading, one after another, ten times a second from the lights (a marble's x, y and z). */
     path: jsonb('path').notNull(),

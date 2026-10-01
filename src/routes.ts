@@ -19,7 +19,7 @@ import { noteDayRun } from './courseRecords.js'
 import { dailyFirstDay, dailyRecords, dayResultKeep, standingOn, type DailyTally } from './dailyRecords.js'
 import { recordChallengeRun } from './challenges.js'
 import { payRun, plausiblePickups, type RunTickets } from './tickets.js'
-import { marblerunPlannedPace } from './ticketLadders.js'
+import { landerPlannedPace, marblerunPlannedPace } from './ticketLadders.js'
 import {
   addScore,
   ALLOWED_GAMES,
@@ -538,6 +538,13 @@ leaderboardsRouter.post('/:game', async (req, res) => {
     res.status(400).json({ error: 'That score is not possible in the time the run took', code: 'SCORE_IMPLAUSIBLE' })
     return
   }
+  // Nor a day's Lander much faster than the day's blue ship (landerPace.ts). A hand can cut a cave's corners
+  // and dive where the blue ship eases down, so the floor is lower: 45% of its time.
+  if (game === 'lander' && TIME_SCORE_BASE - score < 0.45 * (landerPlannedPace() ?? 49_000)) {
+    console.warn(`[anticheat] rejected lander ${score} from account ${account.id}: faster than the day's cave allows`)
+    res.status(400).json({ error: 'That score is not possible in the time the run took', code: 'SCORE_IMPLAUSIBLE' })
+    return
+  }
 
   const firstRunOnly = FIRST_RUN_DAILIES.has(game)
   let durationMs: number | null = null
@@ -684,7 +691,7 @@ leaderboardsRouter.post('/:game', async (req, res) => {
         score,
         priorBest,
         pickups: game === 'crosswalk' ? plausiblePickups(score, pickups) : 0,
-        paceMs: game === 'hotlap' || game === 'marblerun' ? pace : null,
+        paceMs: game === 'hotlap' || game === 'marblerun' || game === 'lander' ? pace : null,
       }).catch((err: unknown) => {
         console.warn(`[tickets] ${game} run ${payRef}:`, err)
         return null

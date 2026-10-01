@@ -1,6 +1,7 @@
 import { and, eq, sql } from 'drizzle-orm'
 import { db } from './db/client.js'
 import { lapGhosts } from './db/schema.js'
+import { caveBoard, caveState } from './landerCaves.js'
 import { courseBoard, courseState } from './marbleCourses.js'
 import { TIME_SCORE_BASE } from './scoreLimits.js'
 import type { GameSlug } from './store.js'
@@ -17,18 +18,24 @@ import { trackBoard, trackState } from './trackLaps.js'
  * Marble Run's courses have theirs the same way (marbleCourses.ts): a course's #1 on its day's board, today's
  * or a past day's as it closed. Its path is where the marble was ten times a second from the go, x, y
  * (height) and z, with the goal's moment last, falls and all: a fall puts it back at a checkpoint.
+ *
+ * Lander's caves have theirs the same way (landerCaves.ts): a cave's #1 on its day's board. Its path is where
+ * the ship was ten times a second from the go, x, y, its angle and its engine (0 off, 1 on, 2 a wreck after a
+ * crash), with the landing's moment last, crashes and all: a crash puts it back at a gate.
  */
 
-/** The games whose #1 races as a ghost: Hot Lap's tracks, and Marble Run's courses. */
-export const GHOST_GAMES: ReadonlySet<GameSlug> = new Set<GameSlug>(['hotlap', 'marblerun'])
+/** The games whose #1 races as a ghost: Hot Lap's tracks, Marble Run's courses, and Lander's caves. */
+export const GHOST_GAMES: ReadonlySet<GameSlug> = new Set<GameSlug>(['hotlap', 'marblerun', 'lander'])
 
-/** Where a game's track or course stands today (trackLaps.ts trackState, marbleCourses.ts courseState). */
+/** Where a game's track, course or cave stands today (trackLaps.ts trackState, marbleCourses.ts courseState, landerCaves.ts caveState). */
 export function ghostState(game: GameSlug, n: number, now = Date.now()): 'past' | 'today' | 'ahead' | 'none' {
+  if (game === 'lander') return caveState(n, now)
   return game === 'marblerun' ? courseState(n, now) : trackState(n, now)
 }
 
-/** A track's board, or a course's day's board: each player's best, best first. */
+/** A track's board, or a course's or a cave's day's board: each player's best, best first. */
 function ghostBoard(game: GameSlug, n: number): Promise<{ name: string; score: number }[]> {
+  if (game === 'lander') return caveBoard(n)
   return game === 'marblerun' ? courseBoard(n) : trackBoard(game, n)
 }
 
@@ -44,12 +51,17 @@ const MARBLE_STEP = 8
 const MOST_FALLS = 60
 /** Lines across a course: its checkpoints and the goal. */
 const MOST_LINES = 12
+/** Metres a ship can go between two samples: a tenth of a second at far more than it can fly in a cave. */
+const SHIP_STEP = 8
+/** Farther than that is a crash, back to a gate: a run with more than this many isn't one. */
+const MOST_CRASHES = 200
 
 export type LapGhost = { name: string; timeMs: number; splits: number[]; path: number[]; at: number }
 
 /** Why a lap's (or a marble run's) splits and path can't be one of `timeMs`, or null if they can. */
 export function ghostProblem(game: GameSlug, timeMs: number, splits: unknown, path: unknown): string | null {
   if (game === 'marblerun') return runProblem(timeMs, splits, path)
+  if (game === 'lander') return flightProblem(timeMs, splits, path)
   const time = timeMs / 1000
   if (!Array.isArray(splits) || splits.length !== 3 || !splits.every((s) => typeof s === 'number' && Number.isFinite(s))) {
     return 'splits'
@@ -105,6 +117,42 @@ function runProblem(timeMs: number, splits: unknown, path: unknown): string | nu
     }
   }
   return falls > MOST_FALLS ? 'step' : null
+}
+
+/**
+ * Why a Lander run's splits and path can't be a run of `timeMs`, or null if they can. Its splits are the
+ * moment it passed each gate and landed, in order; its path is ten samples a second from the go of x, y, the
+ * ship's angle and its engine (0, 1, or 2 for a wreck), and the landing's moment last.
+ */
+function flightProblem(timeMs: number, splits: unknown, path: unknown): string | null {
+  const time = timeMs / 1000
+  if (
+    !Array.isArray(splits) ||
+    splits.length < 1 ||
+    splits.length > MOST_LINES ||
+    !splits.every((s) => typeof s === 'number' && Number.isFinite(s))
+  ) {
+    return 'splits'
+  }
+  const at = splits as number[]
+  if (!(at[0]! > 0) || at.some((s, k) => k > 0 && s < at[k - 1]!) || Math.abs(at.at(-1)! - time) > 0.05) return 'splits'
+  if (!Array.isArray(path) || path.length % 4 !== 0 || !path.every((v) => typeof v === 'number' && Number.isFinite(v))) {
+    return 'path'
+  }
+  const samples = path.length / 4
+  if (samples > MOST_SAMPLES || samples < Math.floor(time * GHOST_RATE) || samples > Math.ceil(time * GHOST_RATE) + 2) {
+    return 'length'
+  }
+  const p = path as number[]
+  let crashes = 0
+  for (let k = 0; k < samples; k++) {
+    const e = p[k * 4 + 3]!
+    if (Math.abs(p[k * 4]!) > 5_000 || Math.abs(p[k * 4 + 1]!) > 5_000 || Math.abs(p[k * 4 + 2]!) > 10 || (e !== 0 && e !== 1 && e !== 2)) {
+      return 'range'
+    }
+    if (k > 0 && Math.hypot(p[k * 4]! - p[k * 4 - 4]!, p[k * 4 + 1]! - p[k * 4 - 3]!) > SHIP_STEP) crashes += 1
+  }
+  return crashes > MOST_CRASHES ? 'step' : null
 }
 
 /** The track's (or course's) #1, and their lap's path if it came with one. Null while nobody has a lap on it. */

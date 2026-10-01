@@ -226,7 +226,7 @@ const GHOST_LIMIT = { limit: 30, windowMs: 10 * 60 * 1000 }
 const ghostSchema = z.object({
   name: z.string().min(1).max(12),
   score: z.number().int().positive().max(1_000_000),
-  // A lap's three sectors; a marble run's checkpoints and goal (lapGhosts.ts checks which).
+  // A lap's three sectors; a marble run's checkpoints and goal; a Lander run's gates and landing (lapGhosts.ts checks which).
   splits: z.array(z.number()).min(1).max(12),
   path: z.array(z.number()).max(18_000),
 })

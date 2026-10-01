@@ -12,8 +12,9 @@ import { awardTickets } from './tickets.js'
  * and a streak of the days an account kept. The dailies
  * are Ace Chase's Today's Hole (a result in daily_hole_results), Hot Lap's Today's Track (a lap on the day's
  * board), Find the Bug's Today's Wanted (the day's first run, on its board) and, from the days they join,
- * Half Full's Today's Pour (the day's first run, on its board; halffull/launch.ts HALFFULL_TODAY_FROM) and
- * Marble Run's Today's Course (a run on the day's board; MARBLERUN_TODAY_FROM below). A
+ * Half Full's Today's Pour (the day's first run, on its board; halffull/launch.ts HALFFULL_TODAY_FROM),
+ * Marble Run's Today's Course (a run on the day's board; MARBLERUN_TODAY_FROM below) and Lander's Today's
+ * Cave (a run on the day's board; LANDER_TODAY_FROM below). A
  * day is kept once any three of that day's dailies are done (TODAY_KEEP), so every day from before the pour
  * joined still needs all three it had. A day with more than three on the card and every one of them done
  * is a Full ticket. todayRule says which dailies are on a day's card and how many keep it; nothing else
@@ -26,7 +27,7 @@ import { awardTickets } from './tickets.js'
  * milestones (its lib/today.ts).
  */
 
-export type TodayKey = 'hole' | 'track' | 'wanted' | 'pour' | 'course'
+export type TodayKey = 'hole' | 'track' | 'wanted' | 'pour' | 'course' | 'cave'
 
 /** How many of a day's dailies keep it. A day with this many or fewer on the card needs every one. */
 export const TODAY_KEEP = 3
@@ -40,6 +41,13 @@ const keyOf = (day: string) => Number(day.replace(/-/g, ''))
 export const MARBLERUN_TODAY_FROM: string | null = '2026-09-29'
 
 /**
+ * The first day Lander's Today's Cave is on the card: the day after the game came (the site's
+ * games/lander/daily.ts TODAY_FROM says the same). A day is judged as it began, and its first day's card
+ * began with five.
+ */
+export const LANDER_TODAY_FROM: string | null = '2026-10-01'
+
+/**
  * The Today set's dailies, in the card's order, and the first board day (YYYYMMDD) each is on the card: 0
  * for from the start, null for not yet. The first three have been on it from the start, so no day before
  * the pour joined is judged differently.
@@ -50,6 +58,7 @@ export const TODAY_DAILIES: readonly { key: TodayKey; game: GameSlug; from: numb
   { key: 'wanted', game: 'findbug', from: 0 },
   { key: 'pour', game: 'halffull', from: HALFFULL_TODAY_FROM ? keyOf(HALFFULL_TODAY_FROM) : null },
   { key: 'course', game: 'marblerun', from: MARBLERUN_TODAY_FROM ? keyOf(MARBLERUN_TODAY_FROM) : null },
+  { key: 'cave', game: 'lander', from: LANDER_TODAY_FROM ? keyOf(LANDER_TODAY_FROM) : null },
 ]
 
 /** A day's card: the dailies on it (live), in order, and how many of them keep the day. */
@@ -135,6 +144,7 @@ export type TodayState = {
     wanted: { score: number } | null
     pour: { score: number } | null
     course: { score: number } | null
+    cave: { score: number } | null
   }
   /** Today's card (todayRule): its dailies in order, how many of them keep the day, and how many there are. */
   live: TodayKey[]
@@ -161,14 +171,14 @@ async function playedDays(accountId: string, now: number): Promise<Record<TodayK
   const fromMs = now - LOOKBACK_DAYS * 86_400_000
   const fromDay = dayOf(boardDateKey(fromMs))
   const tags = (await namesOwnedByAccount(accountId)).map((t) => t.name)
-  const runs = (game: 'hotlap' | 'findbug' | 'halffull' | 'marblerun') =>
+  const runs = (game: 'hotlap' | 'findbug' | 'halffull' | 'marblerun' | 'lander') =>
     tags.length
       ? db()
           .select({ score: leaderboardScores.score, at: leaderboardScores.at })
           .from(leaderboardScores)
           .where(and(eq(leaderboardScores.game, game), inArray(leaderboardScores.name, tags), gte(leaderboardScores.at, fromMs)))
       : Promise.resolve([] as { score: number; at: number }[])
-  const [holes, laps, finds, pours, courses] = await Promise.all([
+  const [holes, laps, finds, pours, courses, caves] = await Promise.all([
     db()
       .select({ day: dailyHoleResults.day, tries: dailyHoleResults.tries })
       .from(dailyHoleResults)
@@ -177,8 +187,16 @@ async function playedDays(accountId: string, now: number): Promise<Record<TodayK
     runs('findbug'),
     runs('halffull'),
     runs('marblerun'),
+    runs('lander'),
   ])
-  const played: Record<TodayKey, Map<number, number>> = { hole: new Map(), track: new Map(), wanted: new Map(), pour: new Map(), course: new Map() }
+  const played: Record<TodayKey, Map<number, number>> = {
+    hole: new Map(),
+    track: new Map(),
+    wanted: new Map(),
+    pour: new Map(),
+    course: new Map(),
+    cave: new Map(),
+  }
   for (const h of holes) played.hole.set(keyOf(h.day), h.tries)
   // A lap's board score is higher the faster it was: the day's best is its highest.
   for (const lap of laps) {
@@ -203,6 +221,12 @@ async function playedDays(accountId: string, now: number): Promise<Record<TodayK
     const key = boardDateKey(run.at)
     if (key < (DAILY_SINCE.marblerun ?? 0)) continue
     played.course.set(key, Math.max(played.course.get(key) ?? 0, run.score))
+  }
+  // A run down the day's cave, the same way, from cave #1.
+  for (const run of caves) {
+    const key = boardDateKey(run.at)
+    if (key < (DAILY_SINCE.lander ?? 0)) continue
+    played.cave.set(key, Math.max(played.cave.get(key) ?? 0, run.score))
   }
   return played
 }
@@ -235,6 +259,7 @@ export async function todayState(accountId: string, now = Date.now()): Promise<T
   const find = played.wanted.get(today)
   const pour = played.pour.get(today)
   const course = played.course.get(today)
+  const cave = played.cave.get(today)
   return {
     day: dayOf(today),
     done: {
@@ -243,6 +268,7 @@ export async function todayState(accountId: string, now = Date.now()): Promise<T
       wanted: played.wanted.has(today),
       pour: played.pour.has(today),
       course: played.course.has(today),
+      cave: played.cave.has(today),
     },
     results: {
       hole: played.hole.has(today) ? { tries: played.hole.get(today)! } : null,
@@ -250,6 +276,7 @@ export async function todayState(accountId: string, now = Date.now()): Promise<T
       wanted: find ? { score: find } : null,
       pour: pour != null ? { score: pour } : null,
       course: course != null ? { score: course } : null,
+      cave: cave != null ? { score: cave } : null,
     },
     live,
     need,

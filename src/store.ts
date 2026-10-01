@@ -453,7 +453,7 @@ export const DAILY_SINCE: Partial<Record<GameSlug, number>> = {
   // Marble Run's course #1 (marblerunPace.ts MARBLERUN_FIRST_DAY).
   marblerun: 20260929,
   // Lander's cave #1 (landerPace.ts LANDER_FIRST_DAY).
-  lander: 20261001,
+  lander: 20260930,
 }
 
 /**

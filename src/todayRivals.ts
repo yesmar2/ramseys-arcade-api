@@ -20,12 +20,13 @@ import { keptDays, todayRule } from './today.js'
 export type Rival = {
   name: string
   me: boolean
-  /** Tries on today's hole, the best lap's board score, the bug run's, the pour's and the best marble run's; null if not yet. */
+  /** Tries on today's hole, the best lap's board score, the bug run's, the pour's, the best marble run's and the best cave run's; null if not yet. */
   hole: number | null
   track: number | null
   wanted: number | null
   pour: number | null
   course: number | null
+  cave: number | null
   /** Today streak: from today once today is kept, else from yesterday. */
   streak: number
 }
@@ -101,7 +102,7 @@ export async function todayRivals(accountId: string, groupId: string | null, now
   const fromDay = dayOf(boardDateKey(fromMs))
 
   // One look at each daily for everyone: the day's result, per player per day.
-  const perDay = (game: 'hotlap' | 'findbug' | 'halffull' | 'marblerun') =>
+  const perDay = (game: 'hotlap' | 'findbug' | 'halffull' | 'marblerun' | 'lander') =>
     names.length
       ? db()
           .select({ name: leaderboardScores.name, day: dayKeySql, best: sql<number>`max(${leaderboardScores.score})::int` })
@@ -109,7 +110,7 @@ export async function todayRivals(accountId: string, groupId: string | null, now
           .where(and(eq(leaderboardScores.game, game), inArray(leaderboardScores.name, names), gte(leaderboardScores.at, fromMs)))
           .groupBy(leaderboardScores.name, dayKeySql)
       : Promise.resolve([] as { name: string; day: number; best: number }[])
-  const [holes, laps, finds, pours, courses] = await Promise.all([
+  const [holes, laps, finds, pours, courses, caves] = await Promise.all([
     accounts.length
       ? db()
           .select({ accountId: dailyHoleResults.accountId, day: dailyHoleResults.day, tries: dailyHoleResults.tries })
@@ -120,6 +121,7 @@ export async function todayRivals(accountId: string, groupId: string | null, now
     perDay('findbug'),
     perDay('halffull'),
     perDay('marblerun'),
+    perDay('lander'),
   ])
 
   const holeDays = new Map<string, Map<number, number>>()
@@ -143,6 +145,7 @@ export async function todayRivals(accountId: string, groupId: string | null, now
   const findDays = byName(finds, DAILY_SINCE.findbug)
   const pourDays = byName(pours, DAILY_SINCE.halffull)
   const courseDays = byName(courses, DAILY_SINCE.marblerun)
+  const caveDays = byName(caves, DAILY_SINCE.lander)
 
   const rivals: Rival[] = players.map((p) => {
     const hole = (p.accountId && holeDays.get(p.accountId)) || new Map<number, number>()
@@ -150,6 +153,7 @@ export async function todayRivals(accountId: string, groupId: string | null, now
     const wanted = findDays.get(p.name) ?? new Map<number, number>()
     const pour = pourDays.get(p.name) ?? new Map<number, number>()
     const course = courseDays.get(p.name) ?? new Map<number, number>()
+    const cave = caveDays.get(p.name) ?? new Map<number, number>()
     return {
       name: p.name,
       me: p.me,
@@ -158,7 +162,8 @@ export async function todayRivals(accountId: string, groupId: string | null, now
       wanted: wanted.get(today) ?? null,
       pour: pour.get(today) ?? null,
       course: course.get(today) ?? null,
-      streak: currentStreak(keptDays({ hole, track, wanted, pour, course }), today),
+      cave: cave.get(today) ?? null,
+      streak: currentStreak(keptDays({ hole, track, wanted, pour, course, cave }), today),
     }
   })
   // Whoever has done most of today's card first.

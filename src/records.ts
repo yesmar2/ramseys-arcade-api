@@ -1,8 +1,7 @@
 import { eq, sql } from 'drizzle-orm'
-import { ACECHASE_FIRST_DAY, ACECHASE_HOLE_NAMES, HOTLAP_TRACK_NAMES } from './courseNames.js'
+import { HOTLAP_TRACK_NAMES } from './courseNames.js'
 import { db } from './db/client.js'
 import { recordScores } from './db/schema.js'
-import { HALFFULL_FIRST_DAY } from './halffull/launch.js'
 import { HOTLAP_FIRST_DAY } from './hotlapPace.js'
 import { trackState } from './trackLaps.js'
 import { announceRewrite, insertWithFeed, MULTI_INSTANCE, onChange, onRewrite } from './feed.js'
@@ -15,6 +14,7 @@ import {
   DAILY_GAMES,
   filterByPeriod,
   isDeviceType,
+  isRankedGame,
   legacyGameSlugs,
   periodWindow,
   playerRuns,
@@ -260,6 +260,8 @@ function thresholdStreakLabel(game: GameSlug, threshold: number): string {
 function buildCrossRunStreakRecords(): RecordDef[] {
   const defs: RecordDef[] = []
   for (const game of ALLOWED_GAMES) {
+    // A daily just for fun keeps no record book (store.ts UNRANKED_GAMES).
+    if (!isRankedGame(game)) continue
     const threshold = SCORE_STREAK_THRESHOLDS[game]
     defs.push({
       id: PLAY_DAYS_STREAK_ID,
@@ -326,17 +328,14 @@ type Course = {
   name: (n: number) => string
 }
 
-/** Find the Bug's Today's Wanted #1 was this day's (the site's games/findbug/daily.ts FIRST_DAY). */
+/** Find the Bug's Today's Wanted #1 was this day's (the site's games/findbug/daily.ts FIRST_DAY): the seeded world's start. */
 export const FINDBUG_FIRST_DAY = '2026-09-27'
 
-const courseDayWords = new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', weekday: 'short', month: 'short', day: 'numeric' })
-
-/** A game's day from its number: "Mon, Sep 28". */
-function courseDay(firstDay: string, n: number): string {
-  const [y, m, d] = firstDay.split('-').map(Number)
-  return courseDayWords.format(new Date(Date.UTC(y!, m! - 1, d! + n - 1, 12)))
-}
-
+/**
+ * The dailies with a record a course: Hot Lap's tracks. Ace Chase's holes and Find the Bug's and Half Full's
+ * days had them until those games became just for fun (store.ts UNRANKED_GAMES, 2026-09-30): their old rows
+ * stay in the table, read by nothing.
+ */
 const COURSES: Partial<Record<GameSlug, Course>> = {
   hotlap: {
     prefix: 'track',
@@ -345,31 +344,6 @@ const COURSES: Partial<Record<GameSlug, Course>> = {
     direction: 'lower',
     count: HOTLAP_TRACK_NAMES.length,
     name: (n) => HOTLAP_TRACK_NAMES[n - 1] ?? `Track ${n}`,
-  },
-  acechase: {
-    prefix: 'hole',
-    firstDay: ACECHASE_FIRST_DAY,
-    unit: 'count',
-    direction: 'lower',
-    count: ACECHASE_HOLE_NAMES.length,
-    name: (n) => ACECHASE_HOLE_NAMES[n - 1] ?? `Hole ${n}`,
-  },
-  findbug: {
-    prefix: 'day',
-    firstDay: FINDBUG_FIRST_DAY,
-    unit: 'ms',
-    direction: 'lower',
-    count: Number.MAX_SAFE_INTEGER,
-    name: (n) => courseDay(FINDBUG_FIRST_DAY, n),
-  },
-  // A day's board figure, hundredths of a point (91.2% is 9120), where only a first pour counts.
-  halffull: {
-    prefix: 'pour',
-    firstDay: HALFFULL_FIRST_DAY,
-    unit: 'count',
-    direction: 'higher',
-    count: Number.MAX_SAFE_INTEGER,
-    name: (n) => courseDay(HALFFULL_FIRST_DAY, n),
   },
 }
 

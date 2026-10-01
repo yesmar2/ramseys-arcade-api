@@ -10,6 +10,7 @@ import {
   boardDayStart,
   DAILY_GAMES,
   dayPlayers,
+  isRankedGame,
   previousBoardDateKey,
   type GameSlug,
   type LeaderboardEntry,
@@ -259,6 +260,8 @@ export async function payDayTops(now = Date.now()): Promise<number> {
   if (toppedDay === day) return 0
   let paid = 0
   for (const game of DAILY_GAMES) {
+    // A daily just for fun has no top three (store.ts UNRANKED_GAMES).
+    if (!isRankedGame(game)) continue
     const players = await dayPlayers(game, day)
     if (players.length < DAY_TOP_FIELD) continue
     for (let i = 0; i < DAY_TOP_TICKETS.length && i < players.length; i++) {

@@ -1,17 +1,15 @@
-import { HALFFULL_FIRST_DAY } from './halffull/launch.js'
-import { holeBoard, holeCount, holeDay, holeNumber, holeToday } from './holes.js'
-import { addRecord, courseOnDay, courseRecordId, FINDBUG_FIRST_DAY, seedRecordEntry } from './records.js'
+import { addRecord, courseRecordId, seedRecordEntry } from './records.js'
 import { TIME_SCORE_BASE } from './scoreLimits.js'
-import { boardDateKey, dayPlayers, type DeviceType, type GameSlug } from './store.js'
+import { boardDateKey, type DeviceType, type GameSlug } from './store.js'
 import { dayNumberOf, trackBoard, trackCount, trackOfDay } from './trackLaps.js'
 
 /*
- * Course records (records.ts): each Hot Lap track's, each Ace Chase hole's, each Find the Bug day's and each
- * Half Full day's record, kept with its game's records though players' books leave them out (each is just its
- * course's #1): what goes by them is a record's tickets and the note to its last holder. What goes in is what goes on the track's, hole's or day's own board
- * (trackLaps.ts, holes.ts; a Find the Bug day's is its day's, first runs only), as it goes on: a lap or
- * result on its day, and one on it since. What was set before the books kept them is put in once, at
- * start (syncCourseRecords), with no one told their record was taken.
+ * Course records (records.ts): each Hot Lap track's record, kept with its game's records though players'
+ * books leave them out (each is just its track's #1): what goes by them is a record's tickets and the note to
+ * its last holder. What goes in is what goes on the track's own board (trackLaps.ts), as it goes on: a lap on
+ * its day, and one on it since. What was set before the books kept them is put in once, at start
+ * (syncCourseRecords), with no one told their record was taken. Ace Chase's holes and Find the Bug's and Half
+ * Full's days kept records too, until those games became just for fun (store.ts UNRANKED_GAMES).
  */
 
 /** A lap or result into its track's, hole's or day's record book: never in the way of the save it came with. */
@@ -25,37 +23,18 @@ export async function noteCourseRecord(game: GameSlug, n: number, name: string, 
 
 /**
  * A run saved to today's board of a daily with a record a day (routes.ts), into that day's book: Hot Lap's
- * lap into today's track's, and Find the Bug's and Half Full's first runs into the day's. Hot Lap's and Find
- * the Bug's are timed (a million less their milliseconds, and a record is the fewest); Half Full's is the
- * board's own figure, hundredths of a point, and a record is the most.
+ * lap into today's track's, timed (a million less its milliseconds, and a record is the fewest).
  */
 export async function noteDayRun(game: GameSlug, name: string, score: number, device: DeviceType, at = Date.now()): Promise<void> {
-  if (game === 'hotlap') {
-    const day = dayNumberOf(boardDateKey(at))
-    if (day >= 1) await noteCourseRecord('hotlap', trackOfDay(day), name, TIME_SCORE_BASE - score, device)
-  } else if (game === 'findbug') {
-    await noteCourseRecord('findbug', courseOnDay('findbug', boardDateKey(at)), name, TIME_SCORE_BASE - score, device)
-  } else if (game === 'halffull') {
-    await noteCourseRecord('halffull', courseOnDay('halffull', boardDateKey(at)), name, score, device)
-  }
-}
-
-/** Today's Hole's result as it goes on the day's board (dailyHole.ts), into the hole's book. */
-export async function noteDayHole(name: string, tries: number, device: DeviceType, now = Date.now()): Promise<void> {
-  await noteCourseRecord('acechase', holeNumber(holeToday(now)), name, tries, device)
-}
-
-/** Day `n` of a daily that began on `firstDay`, as a day key (YYYYMMDD). */
-function courseDayKey(firstDay: string, n: number): number {
-  const [y, m, d] = firstDay.split('-').map(Number)
-  const at = new Date(Date.UTC(y!, m! - 1, d! + n - 1))
-  return at.getUTCFullYear() * 10_000 + (at.getUTCMonth() + 1) * 100 + at.getUTCDate()
+  if (game !== 'hotlap') return
+  const day = dayNumberOf(boardDateKey(at))
+  if (day >= 1) await noteCourseRecord('hotlap', trackOfDay(day), name, TIME_SCORE_BASE - score, device)
 }
 
 /**
- * Every track's, hole's and day's board into its record book, for what was set before the books kept
- * them: each player's best, at the time it was set. Only a best the book hasn't got goes in, so it's safe
- * to run at every start. How many went in.
+ * Every track's board into its record book, for what was set before the books kept them: each player's
+ * best, at the time it was set. Only a best the book hasn't got goes in, so it's safe to run at every start.
+ * How many went in.
  */
 export async function syncCourseRecords(now = Date.now()): Promise<number> {
   let added = 0
@@ -65,32 +44,6 @@ export async function syncCourseRecords(now = Date.now()): Promise<number> {
     if (!id) continue
     for (const e of await trackBoard('hotlap', n, now)) {
       if (await seedRecordEntry('hotlap', id, { name: e.name, score: TIME_SCORE_BASE - e.score, at: e.at, device: e.device })) added++
-    }
-  }
-  const holes = Math.min(holeNumber(holeToday(now)), holeCount())
-  for (let n = 1; n <= holes; n++) {
-    const id = courseRecordId('acechase', n)
-    if (!id) continue
-    for (const e of await holeBoard('acechase', holeDay(n))) {
-      if (await seedRecordEntry('acechase', id, { name: e.name, score: e.tries, at: e.at, device: e.device })) added++
-    }
-  }
-  const bugDays = courseOnDay('findbug', boardDateKey(now))
-  for (let n = 1; n <= bugDays; n++) {
-    const id = courseRecordId('findbug', n)
-    if (!id) continue
-    // A day's board holds only first runs (firstRun.ts), each player's best that day.
-    for (const e of await dayPlayers('findbug', courseDayKey(FINDBUG_FIRST_DAY, n))) {
-      if (await seedRecordEntry('findbug', id, { name: e.name, score: TIME_SCORE_BASE - e.score, at: e.at, device: e.device })) added++
-    }
-  }
-  const pourDays = courseOnDay('halffull', boardDateKey(now))
-  for (let n = 1; n <= pourDays; n++) {
-    const id = courseRecordId('halffull', n)
-    if (!id) continue
-    // As Find the Bug's: first runs only, each player's that day.
-    for (const e of await dayPlayers('halffull', courseDayKey(HALFFULL_FIRST_DAY, n))) {
-      if (await seedRecordEntry('halffull', id, { name: e.name, score: e.score, at: e.at, device: e.device })) added++
     }
   }
   return added

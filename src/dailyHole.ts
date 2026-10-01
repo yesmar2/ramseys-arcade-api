@@ -1,15 +1,12 @@
-import { and, asc, desc, eq, isNotNull, isNull, sql } from 'drizzle-orm'
+import { and, desc, eq, isNull, sql } from 'drizzle-orm'
 import { isBanned } from './bans.js'
 import { db } from './db/client.js'
 import { dailyHoleResults } from './db/schema.js'
 import { huntDay } from './bugHunt.js'
-import { noteDayHole } from './courseRecords.js'
-import { namesOwnedByAccount, withAvatarIds } from './names.js'
-import { updateCrossRunStreakRecords } from './records.js'
+import { namesOwnedByAccount } from './names.js'
 import { TRIES_SCORE_BASE } from './scoreLimits.js'
 import { secretsForHole, type SecretFound } from './secrets.js'
 import { settleToday } from './today.js'
-import { tellBeatenFriends } from './todayBeaten.js'
 import { addScore, bestForName, type DeviceType } from './store.js'
 import { payRun } from './tickets.js'
 
@@ -25,6 +22,10 @@ import { payRun } from './tickets.js'
  * Today's Hole is all of Ace Chase, a daily like Hot Lap, so a day's result is also the account's run on
  * Ace Chase's board (the day's, as a daily's always is): under its tag, as the base less the tries, and
  * paid its tickets like any run. This is the only way onto that board.
+ *
+ * Since 2026-09-30 Ace Chase is just for fun (store.ts UNRANKED_GAMES): a hole's answer is two numbers a
+ * friend can pass on, so the day places nobody. Everyone sees how the day is going (how many have got it,
+ * the average and the spread), with no names on it and no place for anyone; a result keeps no record.
  */
 
 /** Today's Hole began here: no result is older. */
@@ -35,7 +36,6 @@ const DAY = /^\d{4}-\d{2}-\d{2}$/
 const PATTERN = /^[bioxl]{1,400}$/
 /** The day's spread: one to nine tries, and ten or more. */
 const SPREAD = 10
-const TOP = 10
 
 export type DailyEntry = { name: string; tries: number; at: number; avatarId?: string }
 
@@ -44,9 +44,11 @@ export type DailyReply = {
   solved: number
   average: number | null
   spread: number[]
+  /** Nobody's, since Ace Chase is just for fun: kept empty for a site from before. */
   top: DailyEntry[]
   you?: {
     tries: number | null
+    /** Never one, since Ace Chase is just for fun: kept for a site from before. */
     place: number | null
     streak: number
     /** The tag today's result is under on Ace Chase's board; null until the account has one. */
@@ -90,33 +92,12 @@ async function dayReply(day: string, now: number): Promise<Omit<DailyReply, 'you
     .select({ avg: sql<number | null>`avg(${dailyHoleResults.tries})::float` })
     .from(dailyHoleResults)
     .where(eq(dailyHoleResults.day, day))
-  const rows = await db()
-    .select({ name: dailyHoleResults.name, tries: dailyHoleResults.tries, at: dailyHoleResults.solvedAt })
-    .from(dailyHoleResults)
-    .where(and(eq(dailyHoleResults.day, day), isNotNull(dailyHoleResults.name)))
-    .orderBy(asc(dailyHoleResults.tries), asc(dailyHoleResults.solvedAt))
-    .limit(TOP)
-  const top = await withAvatarIds(rows.map((r) => ({ name: r.name!, tries: r.tries, at: r.at })))
-  const reply = { day, solved, average: avg?.avg == null ? null : Math.round(avg.avg * 10) / 10, spread, top }
+  const reply = { day, solved, average: avg?.avg == null ? null : Math.round(avg.avg * 10) / 10, spread, top: [] }
   held = { day, at: now, reply }
   return reply
 }
 
 /* --------------------------------------------------------- your day --- */
-
-/** Where a result came in on its day: 1 for the fewest tries, the first to them winning a tie. */
-async function placeOf(day: string, tries: number, at: number): Promise<number> {
-  const [row] = await db()
-    .select({ n: sql<number>`count(*)::int` })
-    .from(dailyHoleResults)
-    .where(
-      and(
-        eq(dailyHoleResults.day, day),
-        sql`(${dailyHoleResults.tries} < ${tries} or (${dailyHoleResults.tries} = ${tries} and ${dailyHoleResults.solvedAt} < ${at}))`,
-      ),
-    )
-  return (row?.n ?? 0) + 1
-}
 
 function previousDay(day: string): string {
   const [y, m, d] = day.split('-').map(Number)
@@ -141,7 +122,7 @@ async function streakOf(accountId: string, today: string): Promise<number> {
   return n
 }
 
-/** Today, for anyone; signed in, with where your result came in and your streak. */
+/** Today, for anyone; signed in, with your result and your streak. */
 export async function dailyReply(accountId: string | null, now = Date.now()): Promise<DailyReply> {
   const day = huntDay(now)
   const reply = await dayReply(day, now)
@@ -155,7 +136,7 @@ export async function dailyReply(accountId: string | null, now = Date.now()): Pr
     ...(caught.tickets ? await dayReply(day, now) : reply),
     you: {
       tries: mine?.tries ?? null,
-      place: mine ? await placeOf(day, mine.tries, mine.solvedAt) : null,
+      place: null,
       streak: await streakOf(accountId, day),
       tag: caught.tag,
       board: caught.board,
@@ -195,11 +176,6 @@ async function onTheBoard(
     ipHash: audit.ipHash ?? null,
     userAgent: audit.userAgent ?? null,
   })
-  await updateCrossRunStreakRecords('acechase', name, score, device, now).catch((err: unknown) => {
-    console.warn(`[daily-hole] streak records for ${name}:`, err)
-  })
-  // Into the hole's record book too (courseRecords.ts): its board, holes.ts, has it already.
-  await noteDayHole(name, tries, device, now)
   // One result a day, so never a best to beat: the first ever is paid as a first go, once.
   const paid = await payRun({
     accountId,
@@ -239,8 +215,6 @@ async function catchUp(
       .update(dailyHoleResults)
       .set({ name: owned.name })
       .where(and(eq(dailyHoleResults.accountId, accountId), eq(dailyHoleResults.day, mine.day), isNull(dailyHoleResults.name)))
-    // Named, it's in the day's top ten.
-    held = null
     tag = owned.name
   }
   const best = await bestForName('acechase', tag, 'daily', now)
@@ -281,8 +255,6 @@ export async function recordResult(
       }
       // The hole is one of the Today set's dailies (today.ts): it may keep the day, or make it a Full ticket.
       await settleToday(accountId, now).catch(() => undefined)
-      // And it may beat a friend's hole today (todayBeaten.ts). The result doesn't wait: a push can take a moment.
-      void tellBeatenFriends({ accountId, game: 'acechase', now }).catch(() => 0)
     }
   }
   const reply = await dailyReply(accountId, now)

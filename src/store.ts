@@ -452,6 +452,23 @@ export const DAILY_SINCE: Partial<Record<GameSlug, number>> = {
 }
 
 /**
+ * The dailies that are just for fun, since 2026-09-30: Ace Chase, Find the Bug and Half Full. Their answer is
+ * the same for everyone and a friend can hand it over (a hole's power and angle, where the day's bugs hide,
+ * how far to fill each glass), so they place nobody: no board longer than a day (no day points), nothing in
+ * the standings, no record books, no tickets for a day's top three. A player's own result saves as before:
+ * it punches the Dailies and keeps their streak, pays its tickets by its score and is what they share, and
+ * the day's runs stay here for that (today's board is read, never shown). Hot Lap and Marble Run, where
+ * hands decide, are ranked.
+ */
+export const UNRANKED_GAMES: ReadonlySet<GameSlug> = new Set<GameSlug>(['acechase', 'findbug', 'halffull'])
+
+/** Whether a game's results place its players: on its boards, in the standings and in the record books. */
+export const isRankedGame = (game: GameSlug) => !UNRANKED_GAMES.has(game)
+
+/** The games the standings add up. */
+export const RANKED_GAMES: readonly GameSlug[] = ALLOWED_GAMES.filter(isRankedGame)
+
+/**
  * A daily's board for more than a day: one row a player, their day points (each day's board pays by
  * place, placePoints), from the runs of those days in board order. A tie goes to whoever reached the
  * total first: the latest of the days' best runs that make it up.
@@ -494,10 +511,14 @@ function dayPointsBoard(game: GameSlug, runs: readonly LeaderboardEntry[]): Lead
   return [...totals.values()].sort(boardOrder)
 }
 
-/** A game's runs in a closed period, in board order: a daily's are its days' points (see DAILY_GAMES). */
+/**
+ * A game's runs in a closed period, in board order: a daily's are its days' points (see DAILY_GAMES), and one
+ * just for fun has none (UNRANKED_GAMES).
+ */
 function closedRuns(game: GameSlug, history: LeaderboardEntry[], period: ClosedPeriod, periodKey: number) {
   const runs = filterByClosedPeriod(history, period, periodKey)
-  return DAILY_GAMES.has(game) ? dayPointsBoard(game, runs) : runs
+  if (!DAILY_GAMES.has(game)) return runs
+  return isRankedGame(game) ? dayPointsBoard(game, runs) : []
 }
 
 export function filterByClosedPeriod(
@@ -837,9 +858,11 @@ async function poolView(game: GameSlug, period: Period, now = Date.now()): Promi
   const key = `${game}:${period}`
   const hit = poolViews.get(key)
   if (hit && hit.epoch === epoch && hit.version === version && hit.window === window) return hit
-  // A daily's board for a day is the day's runs; for longer, its days' points (see DAILY_GAMES).
+  // A daily's board for a day is the day's runs; for longer, its days' points (see DAILY_GAMES), and none for
+  // one just for fun (UNRANKED_GAMES).
   const runs = period === 'all' ? history : filterByPeriod(history, period, now)
-  const entries = DAILY_GAMES.has(game) && period !== 'daily' ? dayPointsBoard(game, runs) : period === 'all' ? history.slice() : runs
+  const longer = DAILY_GAMES.has(game) && period !== 'daily'
+  const entries = longer ? (isRankedGame(game) ? dayPointsBoard(game, runs) : []) : period === 'all' ? history.slice() : runs
   // Board order, so a player's first run here is their best.
   const stamp = ++viewStamp
   let bestIndex = new Int32Array(playerRefs.size)
@@ -1074,7 +1097,8 @@ export async function boardsSummaryForPeriod(
   const capped = Math.min(10, Math.max(1, Math.floor(limit)) || 3)
   const out = {} as Record<GameSlug, LeaderboardEntry[]>
   for (const game of ALLOWED_GAMES) {
-    out[game] = (await getBoard(game, period, now, scope)).slice(0, capped)
+    // A daily just for fun shows nobody's name on a board (UNRANKED_GAMES).
+    out[game] = isRankedGame(game) ? (await getBoard(game, period, now, scope)).slice(0, capped) : []
   }
   return out
 }
@@ -1089,7 +1113,7 @@ export async function boardsSummary(
   for (const game of ALLOWED_GAMES) {
     const byPeriod = {} as PeriodBoardSummary
     for (const period of PERIODS) {
-      byPeriod[period] = (await getBoard(game, period, now)).slice(0, capped)
+      byPeriod[period] = isRankedGame(game) ? (await getBoard(game, period, now)).slice(0, capped) : []
     }
     out[game] = byPeriod
   }
@@ -1208,7 +1232,7 @@ async function aggregateGlobalRanks(
     { score: number; games: number; byGame: Partial<Record<GameSlug, GlobalGamePlace>> }
   >()
 
-  for (const game of ALLOWED_GAMES) {
+  for (const game of RANKED_GAMES) {
     const placements = await placementsForGame(game)
     const fieldSize = placements.length
     for (const { name, place } of placements) {
@@ -1395,7 +1419,7 @@ function standingAt(view: StandingsView, i: number): GlobalRankEntry {
   const row = view.order[i]
   const byGame: Partial<Record<GameSlug, GlobalGamePlace>> = {}
   const ref = playerRefs.get(row.name)
-  for (const game of ALLOWED_GAMES) {
+  for (const game of RANKED_GAMES) {
     const pool = view.counted.get(game)
     if (!pool) continue
     const at = bestIndexOf(pool, ref)
@@ -1430,7 +1454,7 @@ async function refreshStandings(period: Period, now: number): Promise<StandingsV
   let pools: PoolView[] = []
   for (let attempt = 0; attempt < 3; attempt++) {
     pools = []
-    for (const game of ALLOWED_GAMES) pools.push(await poolView(game, period, now))
+    for (const game of RANKED_GAMES) pools.push(await poolView(game, period, now))
     if (pools.every((pool) => pool.epoch === pools[0].epoch)) break
   }
   const epoch = pools[0]?.epoch ?? 0
@@ -1441,7 +1465,7 @@ async function refreshStandings(period: Period, now: number): Promise<StandingsV
     standingsViews.set(period, view)
   }
   const moved = new Set<StandingRow>()
-  ALLOWED_GAMES.forEach((game, i) => {
+  RANKED_GAMES.forEach((game, i) => {
     const pool = pools[i]
     const had = view.counted.get(game)
     if (had === pool) return
@@ -1569,6 +1593,8 @@ export async function qualifies(
   now = Date.now(),
 ): Promise<boolean> {
   if (score <= 0) return false
+  // A daily just for fun has no board to make (UNRANKED_GAMES).
+  if (!isRankedGame(game)) return false
   // A run goes on a daily's board for its day; the longer boards are day points (see DAILY_GAMES).
   if (DAILY_GAMES.has(game) && period !== 'daily') return false
   const board = await getBoard(game, period, now)
@@ -1595,6 +1621,7 @@ export async function rankForScore(
   now = Date.now(),
 ): Promise<number | null> {
   if (score <= 0) return null
+  if (!isRankedGame(game)) return null
   if (DAILY_GAMES.has(game) && period !== 'daily') return null
   // The board is in score order, highest first: count the scores above this one by halving.
   const { entries } = await poolView(game, period, now)

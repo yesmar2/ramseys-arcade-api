@@ -17,7 +17,7 @@ import {
 import { assertCanUseName, withAvatarIds } from './names.js'
 import { pageParams } from './paging.js'
 import { takeToken } from './rateLimit.js'
-import { resolveGameSlug, type GameSlug } from './store.js'
+import { isRankedGame, resolveGameSlug, type GameSlug } from './store.js'
 import { awardTickets, RECORD_TICKETS } from './tickets.js'
 
 /*
@@ -46,9 +46,13 @@ const resultSchema = z.object({
   device: z.enum(['phone', 'tablet', 'desktop']).optional(),
 })
 
+/**
+ * A game whose past holes keep boards of their own. Ace Chase's did, until it became just for fun (store.ts
+ * UNRANKED_GAMES): a past hole is practice now, with no board, record or record tickets, so these answer none.
+ */
 function holeGame(raw: string): GameSlug | null {
   const game = resolveGameSlug(raw)
-  return game && HOLE_GAMES.has(game) ? game : null
+  return game && HOLE_GAMES.has(game) && isRankedGame(game) ? game : null
 }
 
 const cleanName = (raw: unknown) => (typeof raw === 'string' && raw.trim() ? raw.trim().slice(0, 12).toUpperCase() : null)

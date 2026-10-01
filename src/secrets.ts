@@ -3,7 +3,7 @@ import { and, count, desc, eq, gte, lt, lte, ne } from 'drizzle-orm'
 import { db } from './db/client.js'
 import { leaderboardScores, trophyAwards } from './db/schema.js'
 import { notify } from './notifications.js'
-import { ALLOWED_GAMES, boardDateKey, DAILY_GAMES, dayStartMs, getBoard, type GameSlug } from './store.js'
+import { ALLOWED_GAMES, boardDateKey, DAILY_GAMES, dayStartMs, getBoard, isRankedGame, type GameSlug } from './store.js'
 
 /*
  * Secret trophies: odd things a player can do that nothing on the site mentions until they've done them.
@@ -220,7 +220,8 @@ export async function secretsForRun(opts: {
       await award('dejavu', { score })
     }
   }
-  if (score > 0 && !had.has(SECRETS.photofinish.n)) {
+  // Not on a daily just for fun, whose boards place nobody (store.ts UNRANKED_GAMES).
+  if (score > 0 && isRankedGame(game) && !had.has(SECRETS.photofinish.n)) {
     // Tied for first this week: the week's best is this score, and someone else has it too. A daily's week is
     // its days' points (store.ts dayPointsBoard), so a daily's tie is on today's board.
     const week = await getBoard(game, DAILY_GAMES.has(game) ? 'daily' : 'weekly', opts.at)

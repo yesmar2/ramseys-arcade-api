@@ -16,7 +16,9 @@ import { ALLOWED_GAMES, boardDateKey, runScores, type GameSlug } from './store.j
  * They're drawn again each day, so they follow players as they get better.
  *
  * The dailies have their own. Ace Chase goes by the tries, since every day's
- * hole is held to the same difficulty. Hot Lap goes by the day's blue car
+ * hole is held to the same difficulty. Find the Bug goes by its time, on steps
+ * that stay put: it's just for fun (store.ts UNRANKED_GAMES), so what others do
+ * doesn't move them, as it moved its drawn ladder before. Half Full by the day's tier. Hot Lap goes by the day's blue car
  * (the pace car), since its track changes every day: the plan's own, kept in
  * hotlapPace.ts, so the site can't say a slower one; Marble Run by the day's
  * blue ball (its pace ball), from marblerunPace.ts. A daily pays its best
@@ -96,6 +98,22 @@ export const ACECHASE_LADDER: Ladder = {
     { at: tries(6), tickets: 7, label: '6 tries or fewer' },
     { at: tries(3), tickets: 10, label: '3 tries or fewer' },
     { at: tries(1), tickets: 15, label: 'an ace' },
+  ],
+}
+
+/**
+ * Find the Bug, by the time its first run of the day took to find all five (the board's figure is the base
+ * less the milliseconds): any sweep 3, a minute or less 5, 50 s 7, 42 s 10, 36 s 15. Drawn from its runs on
+ * 2026-09-30, when the top half, quarter, tenth and 3% took 59.5 s, 50 s, 43 s and 39.5 s.
+ */
+export const FINDBUG_LADDER: Ladder = {
+  base: 3,
+  baseLabel: 'all five found',
+  steps: [
+    { at: TIME_SCORE_BASE - 60_000, tickets: 5, label: '60s or faster' },
+    { at: TIME_SCORE_BASE - 50_000, tickets: 7, label: '50s or faster' },
+    { at: TIME_SCORE_BASE - 42_000, tickets: 10, label: '42s or faster' },
+    { at: TIME_SCORE_BASE - 36_000, tickets: 15, label: '36s or faster' },
   ],
 }
 
@@ -195,6 +213,7 @@ export function marblerunLadder(paceMs: number | null | undefined): Ladder {
 /** A game's ladder today. Hot Lap's goes by the plan's blue car for the day, or else the one the site says. */
 export async function ladderFor(game: GameSlug, now = Date.now(), paceMs?: number | null): Promise<Ladder> {
   if (game === 'acechase') return ACECHASE_LADDER
+  if (game === 'findbug') return FINDBUG_LADDER
   if (game === 'halffull') return HALFFULL_LADDER
   if (game === 'hotlap') return hotlapLadder(plannedPace(now) ?? paceMs)
   if (game === 'marblerun') return marblerunLadder(marblerunPlannedPace(now) ?? paceMs)

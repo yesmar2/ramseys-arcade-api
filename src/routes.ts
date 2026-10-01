@@ -35,6 +35,7 @@ import {
   getBoardPage,
   globalRanksPage,
   isPeriod,
+  isRankedGame,
   qualifies,
   qualifiesAny,
   rankForName,
@@ -225,6 +226,11 @@ async function dayBoard(req: import('express').Request, res: import('express').R
     res.status(404).json({ error: 'Not a daily game', code: 'NOT_DAILY' })
     return
   }
+  // A daily just for fun keeps no board of its days (store.ts UNRANKED_GAMES).
+  if (!isRankedGame(game)) {
+    res.status(404).json({ error: 'This daily is just for fun: it has no boards', code: 'NOT_RANKED' })
+    return
+  }
   const periodParam = req.query.period
   if (periodParam != null && periodParam !== '' && periodParam !== 'daily') {
     res.status(400).json({ error: 'A day’s board is period=daily', code: 'BAD_PERIOD' })
@@ -293,6 +299,19 @@ leaderboardsRouter.get('/:game', async (req, res) => {
     return
   }
   const you = name ? await bestForName(game, name, period, Date.now(), scope) : null
+  // A daily just for fun shows no one's runs and places no one (store.ts UNRANKED_GAMES): only the asker's own
+  // result today, which another of their devices picks up from here.
+  if (!isRankedGame(game)) {
+    res.json({
+      game,
+      period,
+      offset: 0,
+      total: 0,
+      entries: [],
+      you: you && period === 'daily' ? { id: you.id, name: you.name, score: you.score, at: you.at, device: you.device } : null,
+    })
+    return
+  }
   const { limit, offset } = pageParams(req.query)
   const page = await getBoardPage(game, period, { offset, limit, scope })
   res.json({
@@ -331,6 +350,21 @@ leaderboardsRouter.get('/:game/days', async (req, res) => {
   }
   const name = typeof req.query.name === 'string' && req.query.name.trim() ? req.query.name : null
   const days = await dailyDays(game, name, dayResultKeep(game))
+  // A daily just for fun says how many played each day and the asker's own result, never who won or a place.
+  if (!isRankedGame(game)) {
+    res.setHeader('Cache-Control', 'public, max-age=60')
+    res.json({
+      game,
+      days: days.map((d) => ({
+        day: `${Math.floor(d.day / 10_000)}-${String(Math.floor(d.day / 100) % 100).padStart(2, '0')}-${String(d.day % 100).padStart(2, '0')}`,
+        runs: d.runs,
+        players: d.players,
+        top: null,
+        you: d.you ? { score: d.you.score, place: null, points: null } : null,
+      })),
+    })
+    return
+  }
   const tops = await withAvatarIds(days.map((d) => d.top))
   const iso = (key: number) => `${Math.floor(key / 10_000)}-${String(Math.floor(key / 100) % 100).padStart(2, '0')}-${String(key % 100).padStart(2, '0')}`
   res.setHeader('Cache-Control', 'public, max-age=60')
@@ -357,6 +391,10 @@ leaderboardsRouter.get('/:game/daily-records', async (req, res) => {
   const game = resolveGameSlug(req.params.game)
   if (!game || !DAILY_GAMES.has(game)) {
     res.status(404).json({ error: 'Not a daily game' })
+    return
+  }
+  if (!isRankedGame(game)) {
+    res.status(404).json({ error: 'This daily is just for fun: it has no boards', code: 'NOT_RANKED' })
     return
   }
   const who = typeof req.query.name === 'string' && req.query.name.trim() ? req.query.name.trim().slice(0, 12).toUpperCase() : null
@@ -596,14 +634,11 @@ leaderboardsRouter.post('/:game', async (req, res) => {
     ipHash: hashIp(clientIp(req)),
     userAgent: req.get('user-agent') ?? null,
   })
-  const streakRecords = await updateCrossRunStreakRecords(
-    game,
-    claim.name,
-    score,
-    device ?? 'desktop',
-  )
-  // A lap of today's Hot Lap track, or Find the Bug's or Half Full's run of the day, goes in that day's record book too (courseRecords.ts).
-  if (DAILY_GAMES.has(game)) await noteDayRun(game, claim.name, score, device ?? 'desktop', result.entry.at)
+  // A daily just for fun keeps no record book (store.ts UNRANKED_GAMES).
+  const ranked = isRankedGame(game)
+  const streakRecords = ranked ? await updateCrossRunStreakRecords(game, claim.name, score, device ?? 'desktop') : []
+  // A lap of today's Hot Lap track goes in its track's record book too (courseRecords.ts).
+  if (ranked && DAILY_GAMES.has(game)) await noteDayRun(game, claim.name, score, device ?? 'desktop', result.entry.at)
 
   // The site's records (streaks, busiest day) catch up within their minute
   // (siteRecords.ts). Clearing them on every save made nearly every home page
@@ -688,13 +723,14 @@ leaderboardsRouter.post('/:game', async (req, res) => {
     tickets,
     ...(secrets.length ? { secrets } : {}),
     entry: await withAvatarId(result.entry),
-    rank: result.rank,
-    ranks: result.ranks,
-    previousBestRanks: result.previousBestRanks,
-    bestRanks: result.bestRanks,
+    // A daily just for fun places the run nowhere, and its board is no one's to see.
+    rank: ranked ? result.rank : null,
+    ranks: ranked ? result.ranks : {},
+    previousBestRanks: ranked ? result.previousBestRanks : {},
+    bestRanks: ranked ? result.bestRanks : {},
     streakRecords,
     period: 'daily',
-    entries: await withAvatarIds(result.board),
+    entries: ranked ? await withAvatarIds(result.board) : [],
     name: claim.name,
     token: claim.token,
   })

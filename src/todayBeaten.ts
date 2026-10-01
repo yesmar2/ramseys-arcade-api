@@ -4,7 +4,7 @@ import { dailyHoleResults, leaderboardScores } from './db/schema.js'
 import { listFriends } from './friends.js'
 import { namesOwnedByAccount } from './names.js'
 import { notify } from './notifications.js'
-import { boardDateKey, dayStartMs } from './store.js'
+import { boardDateKey, dayStartMs, isRankedGame } from './store.js'
 import { TODAY_DAILIES, todayRule } from './today.js'
 import { scoreFigure } from './words.js'
 
@@ -44,6 +44,8 @@ function beats(game: TodayGame, a: number, b: number): boolean {
 }
 
 export async function tellBeatenFriends(opts: { accountId: string; game: TodayGame; now?: number }): Promise<number> {
+  // A daily just for fun beats nobody (store.ts UNRANKED_GAMES): its answer can be handed over.
+  if (!isRankedGame(opts.game)) return 0
   const now = opts.now ?? Date.now()
   const today = boardDateKey(now)
   const key = TODAY_DAILIES.find((d) => d.game === opts.game)?.key

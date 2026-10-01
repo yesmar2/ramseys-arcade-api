@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import { accountFromRequest } from './auth.js'
-import { settleToday } from './today.js'
+import { settleToday, todayMonth } from './today.js'
 import { todayRivals } from './todayRivals.js'
 
 export const todayRouter = Router()
@@ -20,6 +20,29 @@ todayRouter.get('/', async (req, res) => {
   try {
     res.setHeader('Cache-Control', 'no-store')
     res.json(await settleToday(account.id))
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : 'Request failed' })
+  }
+})
+
+/**
+ * A month of the account's Dailies (`?month=YYYY-MM`, today.ts todayMonth): each day kept or not, Full or
+ * not, and which of its dailies were done. The Dailies page's calendar, a month at a time. Only reads.
+ */
+todayRouter.get('/days', async (req, res) => {
+  const account = await accountFromRequest(req)
+  if (!account) {
+    res.status(401).json({ error: 'Sign in to see your days', code: 'AUTH_REQUIRED' })
+    return
+  }
+  const month = typeof req.query.month === 'string' ? req.query.month : ''
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
+    res.status(400).json({ error: 'Ask for a month, as YYYY-MM', code: 'BAD_MONTH' })
+    return
+  }
+  try {
+    res.setHeader('Cache-Control', 'no-store')
+    res.json(await todayMonth(account.id, month))
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : 'Request failed' })
   }

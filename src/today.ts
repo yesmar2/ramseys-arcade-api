@@ -111,6 +111,18 @@ const CALENDAR_DAYS = 35
  */
 const TODAY_SINCE = Math.max(...TODAY_DAILIES.filter((d) => d.from === 0).map((d) => DAILY_SINCE[d.game] ?? 0))
 
+/**
+ * One of an account's days on the Dailies: whether it was kept and a Full ticket, the dailies on its card,
+ * and which of them were done, in the card's order. The Dailies page's strip of days and its calendar.
+ */
+export type TodayDay = { day: string; kept: boolean; full: boolean; live: TodayKey[]; done: TodayKey[] }
+
+function dayEntry(played: TodayPlayed, kept: ReadonlySet<number>, key: number): TodayDay {
+  const { live } = todayRule(key)
+  const done = doneOn(played, key)
+  return { day: dayOf(key), kept: kept.has(key), full: fullDay(done, key), live, done: live.filter((k) => done.has(k)) }
+}
+
 export type TodayState = {
   /** The boards' day, YYYY-MM-DD. */
   day: string
@@ -132,9 +144,9 @@ export type TodayState = {
   full: boolean
   streak: { current: number; best: number }
   /** The last seven days, oldest first, ending today: whether each was a streak day, and a Full ticket. */
-  week: { day: string; kept: boolean; full: boolean }[]
+  week: TodayDay[]
   /** The same for the last 35 days, the Today page's calendar; `week` is its last seven, kept for older sites. */
-  days: { day: string; kept: boolean; full: boolean }[]
+  days: TodayDay[]
   /** The first day the Today set could be kept (TODAY_SINCE), YYYY-MM-DD: days before it are blank, not missed. */
   since: string
 }
@@ -216,7 +228,7 @@ export async function todayState(accountId: string, now = Date.now()): Promise<T
   const kept = keptDays(played)
   const days: TodayState['days'] = []
   for (let i = 0, key = today; i < CALENDAR_DAYS; i++, key = previousBoardDateKey(key)) {
-    days.unshift({ day: dayOf(key), kept: kept.has(key), full: fullDay(doneOn(played, key), key) })
+    days.unshift(dayEntry(played, kept, key))
   }
   const { live, need } = todayRule(today)
   const lap = played.track.get(today)
@@ -251,6 +263,31 @@ export async function todayState(accountId: string, now = Date.now()): Promise<T
 }
 
 /** An account's best Today streak, for the Today pin (flair.ts). */
+/**
+ * One month of an account's Dailies, `month` as YYYY-MM: each of its days from `since` up to today, oldest
+ * first, as TodayDay has them, for the Dailies page's calendar when it goes back a month at a time. A month
+ * before the lookback, or after today's, has no days.
+ */
+export async function todayMonth(
+  accountId: string,
+  month: string,
+  now = Date.now(),
+): Promise<{ month: string; since: string; days: TodayDay[] }> {
+  const today = boardDateKey(now)
+  const [y, m] = month.split('-').map(Number)
+  const first = y! * 10_000 + m! * 100 + 1
+  const last = Math.min(today, y! * 10_000 + m! * 100 + new Date(Date.UTC(y!, m!, 0)).getUTCDate())
+  // Nothing before the lookback, nor before there were Dailies to keep.
+  const from = Math.max(first, boardDateKey(now - LOOKBACK_DAYS * 86_400_000), TODAY_SINCE)
+  const days: TodayDay[] = []
+  if (last >= from) {
+    const played = await playedDays(accountId, now)
+    const kept = keptDays(played)
+    for (let key = last; key >= from; key = previousBoardDateKey(key)) days.unshift(dayEntry(played, kept, key))
+  }
+  return { month, since: dayOf(TODAY_SINCE), days }
+}
+
 export async function bestTodayStreak(accountId: string, now = Date.now()): Promise<number> {
   return (await todayState(accountId, now)).streak.best
 }

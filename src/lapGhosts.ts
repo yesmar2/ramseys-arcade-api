@@ -1,8 +1,6 @@
 import { and, eq, sql } from 'drizzle-orm'
 import { db } from './db/client.js'
 import { lapGhosts } from './db/schema.js'
-import { caveBoard, caveState } from './landerCaves.js'
-import { courseBoard, courseState } from './marbleCourses.js'
 import { TIME_SCORE_BASE } from './scoreLimits.js'
 import type { GameSlug } from './store.js'
 import { trackBoard, trackState } from './trackLaps.js'
@@ -15,11 +13,11 @@ import { trackBoard, trackState } from './trackLaps.js'
  * is always told, path or not: a lap saved before laps sent their paths, or from an old copy of the site,
  * has none, and the site then drives the blue car's line at the #1's time.
  *
- * Marble Run's courses have theirs the same way (marbleCourses.ts): a course's #1 on its day's board, today's
- * or a past day's as it closed. Its path is where the marble was ten times a second from the go, x, y
+ * Marble Run's courses have theirs the same way: a course's #1 on its board (trackLaps.ts), today's on today's
+ * course, its All time #1 on a past one. Its path is where the marble was ten times a second from the go, x, y
  * (height) and z, with the goal's moment last, falls and all: a fall puts it back at a checkpoint.
  *
- * Lander's caves have theirs the same way (landerCaves.ts): a cave's #1 on its day's board. Its path is where
+ * Lander's caves have theirs the same way: a cave's #1 on its board. Its path is where
  * the ship was ten times a second from the go, x, y, its angle and its engine (0 off, 1 on, 2 a wreck after a
  * crash), with the landing's moment last, crashes and all: a crash puts it back at a gate.
  */
@@ -27,16 +25,14 @@ import { trackBoard, trackState } from './trackLaps.js'
 /** The games whose #1 races as a ghost: Hot Lap's tracks, Marble Run's courses, and Lander's caves. */
 export const GHOST_GAMES: ReadonlySet<GameSlug> = new Set<GameSlug>(['hotlap', 'marblerun', 'lander'])
 
-/** Where a game's track, course or cave stands today (trackLaps.ts trackState, marbleCourses.ts courseState, landerCaves.ts caveState). */
+/** Where a game's track, course or cave stands today (trackLaps.ts trackState). */
 export function ghostState(game: GameSlug, n: number, now = Date.now()): 'past' | 'today' | 'ahead' | 'none' {
-  if (game === 'lander') return caveState(n, now)
-  return game === 'marblerun' ? courseState(n, now) : trackState(n, now)
+  return trackState(n, now, game)
 }
 
-/** A track's board, or a course's or a cave's day's board: each player's best, best first. */
+/** A track's, course's or cave's board: each player's best, best first. */
 function ghostBoard(game: GameSlug, n: number): Promise<{ name: string; score: number }[]> {
-  if (game === 'lander') return caveBoard(n)
-  return game === 'marblerun' ? courseBoard(n) : trackBoard(game, n)
+  return trackBoard(game, n)
 }
 
 /** Samples a second in a kept path. */

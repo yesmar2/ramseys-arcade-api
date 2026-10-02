@@ -14,7 +14,8 @@ import { awardTickets, RECORD_TICKETS } from './tickets.js'
 import { addTrackLap, fastestBelievable, TRACK_GAMES, trackBoard, trackDayIso, trackRecords, trackState } from './trackLaps.js'
 
 /*
- * Track records (trackLaps.ts): every Hot Lap track's own board, for good.
+ * Course records (trackLaps.ts): every Hot Lap track's, Marble Run course's and Lander cave's own board, its
+ * All time board, for good. A course's n is its number: a track's, or a course's or cave's day number.
  *
  *   GET  /tracks/:game/records?name=   every track that has had its day: its record (and when it was driven),
  *                                      drivers, your best and place
@@ -26,8 +27,7 @@ import { addTrackLap, fastestBelievable, TRACK_GAMES, trackBoard, trackDayIso, t
  *   GET  /tracks/:game/:n/ghost        the track's #1, and their lap's path if it came with one (lapGhosts.ts)
  *   POST /tracks/:game/:n/ghost        a saved lap's path, kept if it's the track's fastest yet
  *
- * The ghosts are Marble Run's too, a course's n for a track's (/tracks/marblerun/:n/ghost): a course has
- * only its day's board, and no records of its own here.
+ * Its #1's ghost races on it too, today's #1 on today's course (lapGhosts.ts).
  */
 export const tracksRouter = Router()
 
@@ -83,7 +83,7 @@ tracksRouter.get('/:game/records', async (req, res) => {
 tracksRouter.get('/:game/:n/board', async (req, res) => {
   const game = trackGame(req.params.game)
   const n = Number(req.params.n)
-  const state = trackState(n)
+  const state = game ? trackState(n, Date.now(), game) : 'none'
   if (!game || state === 'none') {
     res.status(404).json({ error: 'No such track' })
     return
@@ -108,7 +108,7 @@ tracksRouter.get('/:game/:n/board', async (req, res) => {
   res.json({
     game,
     track: n,
-    day: trackDayIso(n),
+    day: trackDayIso(n, game),
     state,
     drivers: board.length,
     offset,
@@ -124,7 +124,7 @@ tracksRouter.get('/:game/:n/board', async (req, res) => {
 tracksRouter.post('/:game/:n/laps', async (req, res) => {
   const game = trackGame(req.params.game)
   const n = Number(req.params.n)
-  const state = trackState(n)
+  const state = game ? trackState(n, Date.now(), game) : 'none'
   if (!game || state === 'none') {
     res.status(404).json({ error: 'No such track' })
     return
@@ -144,7 +144,7 @@ tracksRouter.post('/:game/:n/laps', async (req, res) => {
     return
   }
   const { name, score, token, device, runId } = parsed.data
-  if (score > scoreCeiling(game) || TIME_SCORE_BASE - score < fastestBelievable(n)) {
+  if (score > scoreCeiling(game) || TIME_SCORE_BASE - score < fastestBelievable(n, game)) {
     res.status(400).json({ error: 'That lap is not possible on this track', code: 'SCORE_OUT_OF_RANGE' })
     return
   }

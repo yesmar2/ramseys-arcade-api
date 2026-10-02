@@ -8,6 +8,7 @@ import { listFeedback } from './feedback.js'
 import { listFlags, reviewFlag, unreviewedCount } from './scoreFlags.js'
 import { getClaim } from './names.js'
 import { playerStats } from './playerStats.js'
+import { setSiteEvents, siteEventsOn } from './siteEvents.js'
 import { resolveGameSlug } from './store.js'
 import { awardTickets } from './tickets.js'
 import { grantFreeze, todayState } from './today.js'
@@ -54,6 +55,30 @@ adminRouter.get('/players', async (req, res) => {
   try {
     await requireAdmin(req)
     res.json(await playerStats(Date.now(), req.query.seeded === '1'))
+  } catch (err) {
+    refuse(err, res)
+  }
+})
+
+/** Whether the arcade's own events run: the daily event, the One Shot and the Weekly Triple (siteEvents.ts). */
+adminRouter.get('/site-events', async (req, res) => {
+  try {
+    await requireAdmin(req)
+    res.json({ on: await siteEventsOn() })
+  } catch (err) {
+    refuse(err, res)
+  }
+})
+
+adminRouter.post('/site-events', async (req, res) => {
+  try {
+    await requireAdmin(req)
+    const parsed = z.object({ on: z.boolean() }).safeParse(req.body)
+    if (!parsed.success) {
+      res.status(400).json({ error: 'Invalid body', code: 'INVALID_BODY' })
+      return
+    }
+    res.json({ on: await setSiteEvents(parsed.data.on) })
   } catch (err) {
     refuse(err, res)
   }

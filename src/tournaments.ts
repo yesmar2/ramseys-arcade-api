@@ -35,6 +35,7 @@ import { assertAllowedName } from './nameFilter.js'
 import { getClaim, namesOwnedByAccount, withAvatarIds } from './names.js'
 import { notify, type NotificationMeta } from './notifications.js'
 import { RUN_TTL_MS } from './runs.js'
+import { siteEventsOn } from './siteEvents.js'
 import { awardEventWin } from './trophies.js'
 import { ALLOWED_GAMES, BOARD_TZ, canonicalizeGameSlug, DAILY_GAMES, isAllowedGame, resolveGameSlug, type GameSlug } from './store.js'
 import { GAME_LABELS, ordinal, scoreWords } from './words.js'
@@ -1400,8 +1401,8 @@ async function ensureStore(now = Date.now()): Promise<Store> {
     return storeLoading
   }
   lookForOutsideChanges()
-  // A day or week can tick over at any moment.
-  if (rollingEventsDue(eventStore, now)) await writeStore(eventStore)
+  // A day or week can tick over at any moment; the arcade's own events only while they're on (siteEvents.ts).
+  if ((await siteEventsOn(now)) && rollingEventsDue(eventStore, now)) await writeStore(eventStore)
   return eventStore
 }
 
@@ -1487,7 +1488,8 @@ async function loadStoreFromDb(now: number): Promise<Store> {
     }
   }
   if (migrated) await writeStore(store)
-  if (rollingEventsDue(store, now)) await writeStore(store)
+  // The arcade's own events only while they're on (siteEvents.ts).
+  if ((await siteEventsOn(now)) && rollingEventsDue(store, now)) await writeStore(store)
   return store
 }
 
@@ -1711,6 +1713,19 @@ const awardedEvents = new Set<string>()
 /** An event's result is news for a day or so; older ones found after a restart stay unsaid. */
 const RESULT_NEWS_MS = 36 * 60 * 60 * 1000
 
+/*
+ * A trophy is for beating a field (Ramsey, 2026-10-02): the arcade's own events need five who played, an
+ * event players run themselves three. Fewer, and the event still ends and still says how it came out, but
+ * nobody takes a trophy for it.
+ */
+export const TROPHY_FIELD_OFFICIAL = 5
+export const TROPHY_FIELD_HOSTED = 3
+
+/** How many played an event: a bracket's entrants, or the players with a run in its standings. */
+function eventField(t: Tournament, standings: StandingRow[]): number {
+  return resolveKind(t) === 'bracket' ? t.players.length : standings.filter((row) => row.gamesPlayed > 0).length
+}
+
 async function awardEndedEventTrophies(store: Store, now: number, only?: string) {
   const pending: Promise<unknown>[] = []
   for (const raw of store.tournaments) {
@@ -1724,17 +1739,19 @@ async function awardEndedEventTrophies(store: Store, now: number, only?: string)
     awardedEvents.add(t.id)
     const { y, m, d } = ymdInTz(t.startsAt)
     const top = standings.find((row) => row.name === winner)
-    pending.push(
-      awardEventWin({
-        eventId: t.id,
-        eventTitle: t.title,
-        periodKey: dateKey(y, m, d),
-        name: winner,
-        score: top?.totalPoints ?? 0,
-        games: t.games.length,
-        awardedAt: now,
-      }).catch(() => false),
-    )
+    if (eventField(t, standings) >= (t.official ? TROPHY_FIELD_OFFICIAL : TROPHY_FIELD_HOSTED)) {
+      pending.push(
+        awardEventWin({
+          eventId: t.id,
+          eventTitle: t.title,
+          periodKey: dateKey(y, m, d),
+          name: winner,
+          score: top?.totalPoints ?? 0,
+          games: t.games.length,
+          awardedAt: now,
+        }).catch(() => false),
+      )
+    }
     // A big field is a lot of rows to file; nobody's page load waits for them.
     if (now - t.endsAt < RESULT_NEWS_MS) {
       void tellEventResults(t, winner, standings, now).catch((err: unknown) => {
@@ -1903,6 +1920,8 @@ export async function listTournaments(
       })
       .map((t) => publicTournament(t, now, standingsOf))
   }
+  // The arcade's own events paused (siteEvents.ts): none of them is listed, running or ended.
+  if (!(await siteEventsOn(now))) list = list.filter((t) => !t.official)
   /*
    * Events you are in come first: one waiting on your move matters more than
    * one you have never opened. Within that, running before filling before
@@ -3094,11 +3113,13 @@ async function submitTournamentScoreNow(
 }
 
 export async function activeTournamentsForGame(game: GameSlug, now = Date.now()) {
+  const official = await siteEventsOn(now)
   return (await ensureStore())
     .tournaments.filter(
       (t) =>
         tournamentStatus(t, now) === 'active' &&
         t.games.includes(game) &&
+        (official || !t.official) &&
         normalizeTournament(t).visibility !== 'private',
     )
     .map((t) => publicTournament(t, now))

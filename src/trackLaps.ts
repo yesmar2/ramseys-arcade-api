@@ -106,7 +106,7 @@ export function fastestBelievable(n: number, game: GameSlug = 'hotlap'): number 
 }
 
 /** A driver's best lap on a track: their tag, its score, when it was driven and on what. */
-export type TrackEntry = { name: string; score: number; at: number; device: DeviceType }
+export type TrackEntry = { name: string; score: number; at: number; device: DeviceType; skin?: string }
 
 /** Each driver's best lap on a track, best first, a tie going to the earlier: its days' laps and every lap since. */
 function merge(dayBests: TrackEntry[], laps: TrackEntry[]): TrackEntry[] {
@@ -123,7 +123,7 @@ async function dayLaps(game: GameSlug, n: number, today: number): Promise<TrackE
   const out: TrackEntry[] = []
   const step = planOf(game).repeats ? trackCount() : Infinity
   for (let d = n; d <= today; d += step) {
-    for (const p of await dayPlayers(game, dayKeyOf(d, game))) out.push({ name: p.name, score: p.score, at: p.at, device: p.device })
+    for (const p of await dayPlayers(game, dayKeyOf(d, game))) out.push({ name: p.name, score: p.score, at: p.at, device: p.device, ...(p.skin ? { skin: p.skin } : {}) })
   }
   return out
 }
@@ -134,13 +134,13 @@ const lapDevice = (device: string): DeviceType => (isDeviceType(device) ? device
 export async function trackBoard(game: GameSlug, n: number, now = Date.now()): Promise<TrackEntry[]> {
   const today = dayNumberOf(boardDateKey(now), game)
   const rows = await db()
-    .select({ name: trackLaps.name, score: trackLaps.score, at: trackLaps.at, device: trackLaps.device })
+    .select({ name: trackLaps.name, score: trackLaps.score, at: trackLaps.at, device: trackLaps.device, skin: trackLaps.skin })
     .from(trackLaps)
     .where(and(eq(trackLaps.game, game), eq(trackLaps.track, n)))
     .orderBy(desc(trackLaps.score), asc(trackLaps.at))
   return merge(
     await dayLaps(game, n, today),
-    rows.map((r) => ({ ...r, device: lapDevice(r.device) })),
+    rows.map(({ skin, ...r }) => ({ ...r, device: lapDevice(r.device), ...(skin ? { skin } : {}) })),
   )
 }
 
@@ -198,6 +198,7 @@ export async function addTrackLap(input: {
   device: DeviceType
   runId: string | null
   durationMs: number | null
+  skin?: string | null
 }): Promise<void> {
   await db()
     .insert(trackLaps)

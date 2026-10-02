@@ -20,6 +20,7 @@ import { dailyFirstDay, dailyRecords, dayResultKeep, standingOn, type DailyTally
 import { recordChallengeRun } from './challenges.js'
 import { payRun, plausiblePickups, type RunTickets } from './tickets.js'
 import { seasonAfterRun } from './seasons.js'
+import { runSkin } from './skins.js'
 import { landerPlannedPace, marblerunPlannedPace } from './ticketLadders.js'
 import {
   addScore,
@@ -162,6 +163,8 @@ const submitSchema = z.object({
   pace: z.number().int().min(10_000).max(300_000).optional(),
   /** Half Full: the day and its five locked levels, from which the API works out the score itself. */
   pours: poursSchema.optional(),
+  /** The season skin it was played in (skins.ts): kept only if it's the game's and the player owns it. */
+  skin: z.string().min(1).max(40).optional(),
 })
 
 /*
@@ -484,7 +487,7 @@ leaderboardsRouter.post('/:game', async (req, res) => {
     return
   }
 
-  const { name, token, device, runId, challengeId, pickups, pace, pours } = parsed.data
+  const { name, token, device, runId, challengeId, pickups, pace, pours, skin } = parsed.data
   let score = parsed.data.score
   // Ace Chase's board takes each day's first bullseye from Today's Hole (dailyHole.ts), one an account a day.
   if (game === 'acechase') {
@@ -641,6 +644,7 @@ leaderboardsRouter.post('/:game', async (req, res) => {
     durationMs,
     ipHash: hashIp(clientIp(req)),
     userAgent: req.get('user-agent') ?? null,
+    skin: await runSkin(account.id, game, skin),
   })
   // A daily just for fun keeps no record book (store.ts UNRANKED_GAMES).
   const ranked = isRankedGame(game)

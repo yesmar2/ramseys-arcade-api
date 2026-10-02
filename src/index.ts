@@ -30,6 +30,7 @@ import { tracksRouter } from './trackLapsRoutes.js'
 import { holesRouter } from './holesRoutes.js'
 import { todayRouter } from './todayRoutes.js'
 import { seasonRouter } from './seasonRoutes.js'
+import { stripeWebhook } from './payments.js'
 import { syncCourseRecords } from './courseRecords.js'
 import { dailyHoleRouter } from './dailyHoleRoutes.js'
 import { publicVapidKey } from './push.js'
@@ -110,6 +111,10 @@ async function main() {
       maxAge: 600,
     }),
   )
+  // Stripe signs the body as sent, so its webhook reads it raw, before anything parses it (payments.ts).
+  app.post('/payments/stripe/webhook', express.raw({ type: 'application/json', limit: '256kb' }), (req, res) => {
+    void stripeWebhook(req, res)
+  })
   app.use(express.json({ limit: '32kb' }))
 
   // Every response says what it cost: wall time and database round trips.

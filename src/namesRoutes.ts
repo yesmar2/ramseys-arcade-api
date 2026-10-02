@@ -14,6 +14,7 @@ import {
 import { AVATAR_COLOR_COUNT, AVATAR_EMBLEMS, parseAvatar } from './avatars.js'
 import { flairFor, invalidateFlair, mayWear } from './flair.js'
 import { isFinishBadge } from './prizes.js'
+import { skinsOfName } from './skins.js'
 import { ownedPrizes } from './tickets.js'
 
 export const namesRouter = Router()
@@ -151,6 +152,22 @@ namesRouter.get('/:name/flair', async (req, res) => {
     res.json(await flairFor(name))
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : 'Could not load flair' })
+  }
+})
+
+/** The season skins a tag's player has won: their hangar, on their player card, for anyone to see. */
+namesRouter.get('/:name/skins', async (req, res) => {
+  const name = cleanPlayerName(req.params.name ?? '')
+  if (!name) {
+    res.status(400).json({ error: 'Name required' })
+    return
+  }
+  try {
+    const skins = await skinsOfName(name)
+    res.setHeader('Cache-Control', 'public, max-age=30')
+    res.json({ name, skins: skins ?? [] })
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : 'Could not load skins' })
   }
 })
 

@@ -1,7 +1,10 @@
 import { Router } from 'express'
 import { z } from 'zod'
+import { eq } from 'drizzle-orm'
 import { accountFromRequest } from './auth.js'
 import { createChallenge, getChallenge, isChallengeId, type ChallengeRow } from './challenges.js'
+import { db } from './db/client.js'
+import { leaderboardScores } from './db/schema.js'
 import { assertCanUseName, withAvatarId } from './names.js'
 import { takeToken } from './rateLimit.js'
 import { resolveGameSlug } from './store.js'
@@ -21,7 +24,9 @@ const createSchema = z.object({
 
 async function publicChallenge(row: ChallengeRow) {
   const { id, game, name, score, createdAt, replyTo } = row
-  return withAvatarId({ id, game, name, score, createdAt, replyTo })
+  // The skin the run was played in, so the link and its card show it.
+  const [run] = await db().select({ skin: leaderboardScores.skin }).from(leaderboardScores).where(eq(leaderboardScores.id, row.scoreId)).limit(1)
+  return withAvatarId({ id, game, name, score, createdAt, replyTo, ...(run?.skin ? { skin: run.skin } : {}) })
 }
 
 function fail(err: unknown, res: import('express').Response) {

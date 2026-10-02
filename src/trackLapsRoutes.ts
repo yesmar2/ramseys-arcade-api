@@ -1,3 +1,4 @@
+import { runSkin } from './skins.js'
 import { Router } from 'express'
 import { z } from 'zod'
 import { accountFromRequest } from './auth.js'
@@ -47,6 +48,7 @@ const lapSchema = z.object({
   token: z.string().min(1).max(128).optional(),
   device: z.enum(['phone', 'tablet', 'desktop']).optional(),
   runId: z.string().min(1).max(64),
+  skin: z.string().min(1).max(40).optional(),
 })
 
 function trackGame(raw: string): GameSlug | null {
@@ -101,6 +103,7 @@ tracksRouter.get('/:game/:n/board', async (req, res) => {
       at: e.at,
       place: from + i + 1,
       ...(e.avatarId ? { avatarId: e.avatarId } : {}),
+      ...(e.skin ? { skin: e.skin } : {}),
     }))
   const entries = await rows(offset, limit)
   const top = offset === 0 && limit >= 10 ? entries.slice(0, 10) : await rows(0, 10)
@@ -143,7 +146,7 @@ tracksRouter.post('/:game/:n/laps', async (req, res) => {
     res.status(400).json({ error: 'Invalid body', details: parsed.error.flatten() })
     return
   }
-  const { name, score, token, device, runId } = parsed.data
+  const { name, score, token, device, runId, skin } = parsed.data
   if (score > scoreCeiling(game) || TIME_SCORE_BASE - score < fastestBelievable(n, game)) {
     res.status(400).json({ error: 'That lap is not possible on this track', code: 'SCORE_OUT_OF_RANGE' })
     return
@@ -189,7 +192,17 @@ tracksRouter.post('/:game/:n/laps', async (req, res) => {
     res.status(400).json({ error: RUN_ERRORS.USED, code: 'RUN_USED' })
     return
   }
-  await addTrackLap({ game, track: n, accountId: account.id, name: claim.name, score, device: device ?? 'desktop', runId, durationMs: run.elapsedMs })
+  await addTrackLap({
+    game,
+    track: n,
+    accountId: account.id,
+    name: claim.name,
+    score,
+    device: device ?? 'desktop',
+    runId,
+    durationMs: run.elapsedMs,
+    skin: await runSkin(account.id, game, skin),
+  })
   // Into the track's record book too, as its board has it.
   await noteCourseRecord(game, n, claim.name, TIME_SCORE_BASE - score, device ?? 'desktop')
   const after = await trackBoard(game, n)
@@ -229,6 +242,8 @@ const ghostSchema = z.object({
   // A lap's three sectors; a marble run's checkpoints and goal; a Lander run's gates and landing (lapGhosts.ts checks which).
   splits: z.array(z.number()).min(1).max(12),
   path: z.array(z.number()).max(18_000),
+  /** The season skin the lap was driven in, kept only if it's the game's and the player owns it. */
+  skin: z.string().min(1).max(40).optional(),
 })
 
 function ghostGame(raw: string): GameSlug | null {
@@ -256,6 +271,8 @@ tracksRouter.get('/:game/:n/ghost', async (req, res) => {
     name: top.name,
     avatarId: holder?.avatarId,
     time: top.timeMs,
+    // The skin the #1 drove it in: whoever races the ghost sees it in that.
+    ...(top.ghost?.skin ? { skin: top.ghost.skin } : {}),
     // Without a path, the site drives the blue car's line at this time.
     ...(top.ghost ? { splits: top.ghost.splits, rate: GHOST_RATE, path: top.ghost.path } : { path: null }),
   })
@@ -286,7 +303,7 @@ tracksRouter.post('/:game/:n/ghost', async (req, res) => {
     res.status(429).json({ error: 'Too many laps too quickly', code: 'RATE_LIMITED' })
     return
   }
-  const { name, score, splits, path } = parsed.data
+  const { name, score, splits, path, skin } = parsed.data
   const timeMs = TIME_SCORE_BASE - score
   const problem = ghostProblem(game, timeMs, splits, path)
   if (problem) {
@@ -294,6 +311,16 @@ tracksRouter.post('/:game/:n/ghost', async (req, res) => {
     return
   }
   const names = (await namesOwnedByAccount(account.id)).map((claim) => claim.name)
-  const kept = await keepGhost({ game, track: n, accountId: account.id, names, name: cleanName(name) ?? name, timeMs, splits, path })
+  const kept = await keepGhost({
+    game,
+    track: n,
+    accountId: account.id,
+    names,
+    name: cleanName(name) ?? name,
+    timeMs,
+    splits,
+    path,
+    skin: await runSkin(account.id, game, skin),
+  })
   res.json({ kept })
 })

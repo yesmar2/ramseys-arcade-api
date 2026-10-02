@@ -1,6 +1,6 @@
 import { and, eq, gt, gte, inArray, isNotNull, lt, notInArray, sql } from 'drizzle-orm'
 import { db } from './db/client.js'
-import { appMeta, prizesOwned, seasonProgress, ticketLedger, trophyAwards } from './db/schema.js'
+import { appMeta, prizesOwned, seasonPlus, seasonProgress, ticketLedger, trophyAwards } from './db/schema.js'
 import { getClaim, namesOwnedByAccount, resolveAvatarId } from './names.js'
 import { notify } from './notifications.js'
 import { prizeById } from './prizes.js'
@@ -38,6 +38,8 @@ export type SeasonReward = {
   amount?: number
   /** The game a skin is for. */
   game?: string
+  /** On the Pass+ row: given only to a player who has the season's Pass+. */
+  plus?: boolean
 }
 
 export type SeasonDef = {
@@ -54,6 +56,11 @@ export type SeasonDef = {
   rewards: SeasonReward[]
   /** Extra things to do in it, on top of the pass, each with its own reward. */
   goals: SeasonGoal[]
+  /**
+   * Its Pass+: a second row of looks on the same levels, bought once for the season (payments.ts). Looks
+   * only, never score, and never a pin or a ring, which are only ever earned. What's on it is kept for good.
+   */
+  plus: { price: number; currency: string; rewards: SeasonReward[] } | null
 }
 
 export type SeasonGoal = {
@@ -101,6 +108,20 @@ const SPACE_RACE: SeasonReward[] = [
   { level: 30, kind: 'prize', id: 'supernova', name: 'Supernova', what: 'Badge finish' },
 ]
 
+/** Season 1's Pass+ row: a second skin for each of its five skin games, and five looks. */
+const SPACE_RACE_PLUS: SeasonReward[] = [
+  { level: 1, kind: 'skin', id: 'asteroids-shuttle', name: 'Shuttle', what: 'Asteroids ship', game: 'asteroids', plus: true },
+  { level: 4, kind: 'prize', id: 'nm-aurora', name: 'Aurora', what: 'Name style', plus: true },
+  { level: 7, kind: 'skin', id: 'lander-eagle', name: 'Eagle', what: 'Lander ship', game: 'lander', plus: true },
+  { level: 10, kind: 'prize', id: 'cd-mission', name: 'Mission control', what: 'Card theme', plus: true },
+  { level: 13, kind: 'skin', id: 'barrage-ringship', name: 'Ringship', what: 'Barrage ship', game: 'barrage', plus: true },
+  { level: 16, kind: 'prize', id: 'cf-meteors', name: 'Meteor shower', what: 'Confetti', plus: true },
+  { level: 19, kind: 'skin', id: 'snake-nebula-tail', name: 'Nebula tail', what: 'Snake skin', game: 'snake', plus: true },
+  { level: 22, kind: 'skin', id: 'hotlap-midnight', name: 'Midnight rocket', what: 'Hot Lap car', game: 'hotlap', plus: true },
+  { level: 25, kind: 'prize', id: 't-commander', name: 'Commander', what: 'Title', plus: true },
+  { level: 30, kind: 'prize', id: 'eclipse', name: 'Eclipse', what: 'Badge finish', plus: true },
+]
+
 export const SEASONS: readonly SeasonDef[] = [
   {
     id: 1,
@@ -116,6 +137,7 @@ export const SEASONS: readonly SeasonDef[] = [
       { id: 'dailies', title: 'Keep the Dailies on 30 days', need: 30, reward: { kind: 'prize', id: 't-regular', name: 'The Regular title' } },
       { id: 'games', title: 'Win tickets in 12 different games', need: 12, reward: { kind: 'tickets', amount: 200, name: '200 tickets' } },
     ],
+    plus: { price: 499, currency: 'usd', rewards: SPACE_RACE_PLUS },
   },
 ]
 
@@ -242,6 +264,13 @@ export function nextLevelAt(def: SeasonDef, level: number): number | null {
  */
 const SKINS_DRAWN = new Set(['lander-moonhopper', 'asteroids-comet', 'barrage-nova', 'hotlap-rocket', 'snake-comet-tail'])
 
+/** Every skin a season gives, free row and Pass+, and its game: what a saved run may say it was played in. */
+export const SEASON_SKINS: ReadonlyMap<string, string> = new Map(
+  SEASONS.flatMap((def) => [...def.rewards, ...(def.plus?.rewards ?? [])])
+    .filter((r) => r.kind === 'skin' && r.game)
+    .map((r) => [r.id, r.game!] as const),
+)
+
 /**
  * Whether this build can give a reward yet: tickets always; a prize once the catalogue has it; a skin once
  * its game draws it; the patch always, as it's flair, worn by whoever won a ticket in the season (flair.ts),
@@ -253,8 +282,23 @@ export function rewardReady(reward: SeasonReward): boolean {
   return SKINS_DRAWN.has(reward.id)
 }
 
-async function giveRewards(accountId: string, def: SeasonDef, from: number, to: number, now: number) {
-  for (const reward of def.rewards) {
+/** Whether a player has a season's Pass+. */
+export async function hasPlus(accountId: string, season: number): Promise<boolean> {
+  const [row] = await db()
+    .select({ at: seasonPlus.at })
+    .from(seasonPlus)
+    .where(and(eq(seasonPlus.accountId, accountId), eq(seasonPlus.season, season)))
+    .limit(1)
+  return row != null
+}
+
+/** The rewards a player's pass gives: the free row, and the Pass+ row too with Pass+. */
+function laneOf(def: SeasonDef, plus: boolean): SeasonReward[] {
+  return plus && def.plus ? [...def.rewards, ...def.plus.rewards] : def.rewards
+}
+
+async function giveRewards(accountId: string, def: SeasonDef, rewards: SeasonReward[], from: number, to: number, now: number) {
+  for (const reward of rewards) {
     if (reward.level < from || reward.level > to || !rewardReady(reward)) continue
     if (reward.kind === 'tickets') {
       await awardTickets(accountId, 'season', `s${def.id}:lv${reward.level}`, reward.amount ?? 0, null, now)
@@ -270,8 +314,9 @@ export type SeasonSync = {
   /** What the last look saw, so a run can say what it added. */
   before: number
   level: number
-  /** The rewards of every level reached since the last look. */
+  /** The rewards of every level reached since the last look: the Pass+ row's too, with Pass+. */
   reached: SeasonReward[]
+  plus: boolean
 }
 
 /**
@@ -299,8 +344,10 @@ export async function syncSeason(
     .limit(1)
   const before = last?.earned ?? 0
   const lastLevel = last?.level ?? 0
+  const plus = def.plus ? await hasPlus(accountId, def.id) : false
+  const lane = laneOf(def, plus)
   if (level > lastLevel || (catchUp && level > 0)) {
-    await giveRewards(accountId, def, catchUp ? 1 : lastLevel + 1, level, now)
+    await giveRewards(accountId, def, lane, catchUp ? 1 : lastLevel + 1, level, now)
   }
   const keptLevel = announce ? Math.max(level, lastLevel) : lastLevel
   if (!last || last.earned !== earned || last.level !== keptLevel) {
@@ -312,8 +359,45 @@ export async function syncSeason(
         set: announce ? { earned, level: sql`greatest(${seasonProgress.level}, ${level})`, updatedAt: now } : { earned, updatedAt: now },
       })
   }
-  const reached = def.rewards.filter((r) => r.level > lastLevel && r.level <= level)
-  return { season, earned, before, level, reached }
+  const reached = lane.filter((r) => r.level > lastLevel && r.level <= level)
+  return { season, earned, before, level, reached, plus }
+}
+
+/**
+ * Gives a player a season's Pass+ (a payment, or an admin), once, and at once every Pass+ reward up to the
+ * level they're at. True when it's new; false when they had it already.
+ */
+export async function grantPlus(
+  accountId: string,
+  seasonId: number,
+  how: { source: 'stripe' | 'grant'; ref?: string | null; amount?: number | null; currency?: string | null },
+  now = Date.now(),
+): Promise<boolean> {
+  const def = SEASONS.find((s) => s.id === seasonId)
+  if (!def?.plus) throw Object.assign(new Error('That season has no Pass+'), { status: 404, code: 'NO_PLUS' })
+  const added = await db()
+    .insert(seasonPlus)
+    .values({ accountId, season: seasonId, source: how.source, ref: how.ref ?? null, amount: how.amount ?? null, currency: how.currency ?? null, at: now })
+    .onConflictDoNothing()
+    .returning({ at: seasonPlus.at })
+  if (!added.length) return false
+  const startsAt = dayStartMs(def.firstDay)
+  const endsAt = dayStartMs(nextDayKey(def.lastDay))
+  const season = await seasonNow(now)
+  const window = season && season.def.id === seasonId ? season : { startsAt, endsAt }
+  // Bought before the season's first ticket: level 1's Pass+ reward comes with it all the same.
+  const level = Math.max(1, levelFor(def, await seasonEarned(accountId, window.startsAt, window.endsAt)))
+  await giveRewards(accountId, def, def.plus.rewards, 1, level, now)
+  return true
+}
+
+/** Takes a season's Pass+ back (an admin's grant, for trying it out). What it gave stays given. */
+export async function revokePlus(accountId: string, seasonId: number): Promise<boolean> {
+  const gone = await db()
+    .delete(seasonPlus)
+    .where(and(eq(seasonPlus.accountId, accountId), eq(seasonPlus.season, seasonId)))
+    .returning({ at: seasonPlus.at })
+  return gone.length > 0
 }
 
 /* ---------- what the site is sent ---------- */

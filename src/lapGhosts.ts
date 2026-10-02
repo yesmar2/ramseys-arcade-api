@@ -52,7 +52,7 @@ const SHIP_STEP = 8
 /** Farther than that is a crash, back to a gate: a run with more than this many isn't one. */
 const MOST_CRASHES = 200
 
-export type LapGhost = { name: string; timeMs: number; splits: number[]; path: number[]; at: number }
+export type LapGhost = { name: string; timeMs: number; splits: number[]; path: number[]; at: number; skin?: string }
 
 /** Why a lap's (or a marble run's) splits and path can't be one of `timeMs`, or null if they can. */
 export function ghostProblem(game: GameSlug, timeMs: number, splits: unknown, path: unknown): string | null {
@@ -169,7 +169,9 @@ export async function ghostFor(
   return {
     name: top.name,
     timeMs,
-    ghost: theirs ? { name: row.name, timeMs: row.timeMs, splits: row.splits as number[], path: row.path as number[], at: row.at } : null,
+    ghost: theirs
+      ? { name: row.name, timeMs: row.timeMs, splits: row.splits as number[], path: row.path as number[], at: row.at, ...(row.skin ? { skin: row.skin } : {}) }
+      : null,
   }
 }
 
@@ -186,6 +188,7 @@ export async function keepGhost(input: {
   timeMs: number
   splits: number[]
   path: number[]
+  skin?: string | null
   now?: number
 }): Promise<boolean> {
   if (!input.names.includes(input.name)) return false
@@ -215,6 +218,7 @@ export async function keepGhost(input: {
       timeMs: input.timeMs,
       splits: input.splits,
       path: input.path,
+      skin: input.skin ?? null,
       at: now,
     })
     .onConflictDoUpdate({
@@ -225,6 +229,7 @@ export async function keepGhost(input: {
         timeMs: input.timeMs,
         splits: input.splits,
         path: input.path,
+        skin: input.skin ?? null,
         at: now,
       },
       // Only a faster lap takes the ghost's place; a tie leaves the one that got there first.

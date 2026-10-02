@@ -93,6 +93,8 @@ export const leaderboardScores = pgTable(
     /** Salted hash — enough to correlate runs, never the address itself. */
     ipHash: text('ip_hash'),
     userAgent: text('user_agent'),
+    /** The season skin the run was played in (skins.ts), owned when it was saved; none in the usual look. */
+    skin: text('skin'),
   },
   (t) => [
     index('lb_game_score_at_idx').on(t.game, t.score, t.at),
@@ -745,6 +747,28 @@ export const seasonProgress = pgTable(
 )
 
 /**
+ * Who has a season's Pass+ (seasons.ts): the paid second row of its pass. Bought through Stripe Checkout
+ * (`source` 'stripe', `ref` the checkout session, so a webhook told twice gives it once), or given by an
+ * admin ('grant'), for trying it out.
+ */
+export const seasonPlus = pgTable(
+  'season_plus',
+  {
+    accountId: text('account_id')
+      .notNull()
+      .references(() => accounts.id, { onDelete: 'cascade' }),
+    season: integer('season').notNull(),
+    source: text('source').notNull(),
+    ref: text('ref'),
+    /** What was paid, in the currency's smallest unit, and the currency; none for a grant. */
+    amount: integer('amount'),
+    currency: text('currency'),
+    at: bigint('at', { mode: 'number' }).notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.accountId, t.season] }), uniqueIndex('season_plus_ref_idx').on(t.ref)],
+)
+
+/**
  * Track records: a lap on a Hot Lap track after its day. On its day a track is the Daily, and its laps are
  * the day's board (leaderboard_scores); after that the track keeps a board of its own for good, its day's
  * laps and every lap here (trackLaps.ts). Nothing that reads the day's boards reads these.
@@ -766,6 +790,8 @@ export const trackLaps = pgTable(
     device: text('device').notNull(),
     runId: text('run_id'),
     durationMs: bigint('duration_ms', { mode: 'number' }),
+    /** The season skin it was driven in, as a day's run keeps it. */
+    skin: text('skin'),
     at: bigint('at', { mode: 'number' }).notNull(),
   },
   (t) => [index('track_laps_game_track_score_idx').on(t.game, t.track, t.score), index('track_laps_name_idx').on(t.name)],
@@ -831,6 +857,8 @@ export const lapGhosts = pgTable(
     splits: jsonb('splits').notNull(),
     /** x, y and heading, one after another, ten times a second from the lights (a marble's x, y and z). */
     path: jsonb('path').notNull(),
+    /** The season skin the lap was driven in: everyone who races the ghost sees it in that. */
+    skin: text('skin'),
     at: bigint('at', { mode: 'number' }).notNull(),
   },
   (t) => [primaryKey({ columns: [t.game, t.track] })],

@@ -65,6 +65,8 @@ export type LeaderboardEntry = {
   device: DeviceType
   /** On a daily's board for more than a day, where the score is day points (dayPointsBoard): the days they came from. */
   days?: number
+  /** The season skin the run was played in (skins.ts), when it was. */
+  skin?: string
 }
 
 export function isDeviceType(value: unknown): value is DeviceType {
@@ -116,6 +118,7 @@ function rowToEntry(row: {
   score: number
   at: number
   device: string
+  skin?: string | null
 }): LeaderboardEntry {
   return {
     id: row.id,
@@ -123,6 +126,7 @@ function rowToEntry(row: {
     score: row.score,
     at: row.at,
     device: isDeviceType(row.device) ? row.device : 'desktop',
+    ...(row.skin ? { skin: row.skin } : {}),
   }
 }
 
@@ -173,6 +177,7 @@ export async function replaceAllBoards(next: Store) {
         score: e.score,
         at: e.at,
         device: e.device,
+        skin: e.skin ?? null,
       })),
     )
     if (values.length) {
@@ -200,6 +205,7 @@ export async function replaceGameBoard(game: GameSlug, entries: LeaderboardEntry
           score: e.score,
           at: e.at,
           device: e.device,
+          skin: e.skin ?? null,
         })),
       )
     }
@@ -726,6 +732,7 @@ onChange<{ game: string; entry: LeaderboardEntry }>('score', ({ game, entry }) =
     score: Number(entry.score),
     at: Number(entry.at),
     device: isDeviceType(entry.device) ? entry.device : 'desktop',
+    ...(typeof entry.skin === 'string' && entry.skin ? { skin: entry.skin } : {}),
   }
   const list = historyCache?.byGame.get(game)
   if (list && indexOfRun(list, run) !== -1) return
@@ -978,7 +985,7 @@ export async function runScores(game: GameSlug): Promise<number[]> {
   return (copy.byGame.get(game) ?? []).map((entry) => entry.score)
 }
 
-type DayPlayer = { name: string; score: number; at: number; device: DeviceType }
+type DayPlayer = { name: string; score: number; at: number; device: DeviceType; skin?: string }
 
 /*
  * Each day's players on a game, drawn from the history once and kept until the game takes a score or the
@@ -1005,7 +1012,7 @@ async function dayIndex(game: GameSlug): Promise<Map<number, DayPlayer[]>> {
     }
     if (names.has(entry.name)) continue
     names.add(entry.name)
-    byDay.get(key)!.push({ name: entry.name, score: entry.score, at: entry.at, device: entry.device })
+    byDay.get(key)!.push({ name: entry.name, score: entry.score, at: entry.at, device: entry.device, ...(entry.skin ? { skin: entry.skin } : {}) })
   }
   dayIndexes.set(game, { epoch: copy.epoch, version, byDay })
   return byDay
@@ -1680,6 +1687,8 @@ export type ScoreAudit = {
   durationMs?: number | null
   ipHash?: string | null
   userAgent?: string | null
+  /** The season skin it was played in, already checked as owned (skins.ts runSkin). */
+  skin?: string | null
 }
 
 export async function addScore(
@@ -1710,6 +1719,7 @@ export async function addScore(
     score,
     at: now,
     device: isDeviceType(device) ? device : 'desktop',
+    ...(audit.skin ? { skin: audit.skin } : {}),
   }
 
   /*
@@ -1736,6 +1746,7 @@ export async function addScore(
         durationMs: audit.durationMs ?? null,
         ipHash: audit.ipHash ?? null,
         userAgent: audit.userAgent?.slice(0, 256) ?? null,
+        skin: entry.skin ?? null,
       }),
       'score',
       { game, entry },

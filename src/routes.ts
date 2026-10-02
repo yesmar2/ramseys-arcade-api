@@ -19,6 +19,7 @@ import { noteDayRun } from './courseRecords.js'
 import { dailyFirstDay, dailyRecords, dayResultKeep, standingOn, type DailyTally } from './dailyRecords.js'
 import { recordChallengeRun } from './challenges.js'
 import { payRun, plausiblePickups, type RunTickets } from './tickets.js'
+import { seasonAfterRun } from './seasons.js'
 import { landerPlannedPace, marblerunPlannedPace } from './ticketLadders.js'
 import {
   addScore,
@@ -724,10 +725,19 @@ leaderboardsRouter.post('/:game', async (req, res) => {
     })
   }
 
+  // The season's pass (seasons.ts), after every ticket the run brought: what it added, and any level it reached.
+  const season = tickets
+    ? await seasonAfterRun(account.id, result.entry.at).catch((err: unknown) => {
+        console.warn(`[season] ${game} run for ${claim.name}:`, err)
+        return null
+      })
+    : null
+
   res.status(201).json({
     game,
     challenge,
     tickets,
+    ...(season ? { season } : {}),
     ...(secrets.length ? { secrets } : {}),
     entry: await withAvatarId(result.entry),
     // A daily just for fun places the run nowhere, and its board is no one's to see.

@@ -71,6 +71,8 @@ export type TicketReason =
   | 'trade'
   /** A Today streak's milestone (today.ts): its tickets, or a 0 that marks a look as given. */
   | 'today'
+  /** A season pass level's tickets (seasons.ts). They don't count toward the pass themselves. */
+  | 'season'
 
 export type TicketLine = { reason: TicketReason; amount: number }
 

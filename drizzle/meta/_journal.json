@@ -169,6 +169,13 @@
       "when": 1790954818690,
       "tag": "0023_sign_in_ways",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1790958104884,
+      "tag": "0024_seasons",
+      "breakpoints": true
     }
   ]
 }

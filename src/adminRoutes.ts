@@ -8,6 +8,7 @@ import { listFeedback } from './feedback.js'
 import { listFlags, reviewFlag, unreviewedCount } from './scoreFlags.js'
 import { getClaim } from './names.js'
 import { playerStats } from './playerStats.js'
+import { seasonInfo, seasonNow, seasonPreviewFrom, setSeasonPreview } from './seasons.js'
 import { setSiteEvents, siteEventsOn } from './siteEvents.js'
 import { resolveGameSlug } from './store.js'
 import { awardTickets } from './tickets.js'
@@ -79,6 +80,39 @@ adminRouter.post('/site-events', async (req, res) => {
       return
     }
     res.json({ on: await setSiteEvents(parsed.data.on) })
+  } catch (err) {
+    refuse(err, res)
+  }
+})
+
+/** The season, and whether it's previewed early (seasons.ts): live before its first day, to try it on staging. */
+async function seasonPreviewState() {
+  const season = await seasonNow()
+  return {
+    season: season ? seasonInfo(season) : null,
+    previewFrom: await seasonPreviewFrom(),
+  }
+}
+
+adminRouter.get('/season-preview', async (req, res) => {
+  try {
+    await requireAdmin(req)
+    res.json(await seasonPreviewState())
+  } catch (err) {
+    refuse(err, res)
+  }
+})
+
+adminRouter.post('/season-preview', async (req, res) => {
+  try {
+    await requireAdmin(req)
+    const parsed = z.object({ on: z.boolean() }).safeParse(req.body)
+    if (!parsed.success) {
+      res.status(400).json({ error: 'Invalid body', code: 'INVALID_BODY' })
+      return
+    }
+    await setSeasonPreview(parsed.data.on)
+    res.json(await seasonPreviewState())
   } catch (err) {
     refuse(err, res)
   }

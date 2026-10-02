@@ -697,7 +697,7 @@ export const ticketLedger = pgTable(
       .references(() => accounts.id, { onDelete: 'cascade' }),
     /** Earned is more than zero; a trade is less. */
     amount: integer('amount').notNull(),
-    /** run, best, first, pickup, streak, daily, hunt, grant or trade. */
+    /** run, best, first, pickup, streak, daily, hunt, top, record, today, freeze, season, grant or trade. */
     reason: text('reason').notNull(),
     ref: text('ref').notNull(),
     game: text('game'),
@@ -723,6 +723,25 @@ export const prizesOwned = pgTable(
     at: bigint('at', { mode: 'number' }).notNull(),
   },
   (t) => [primaryKey({ columns: [t.accountId, t.prizeId] })],
+)
+
+/**
+ * How far a player has come on a season's pass (seasons.ts): the season tickets counted at their last
+ * save, and the highest level whose rewards have been handed out. The tickets themselves are the ledger's;
+ * this only remembers where the last look left off, so a run can say what it added and when it levelled up.
+ */
+export const seasonProgress = pgTable(
+  'season_progress',
+  {
+    accountId: text('account_id')
+      .notNull()
+      .references(() => accounts.id, { onDelete: 'cascade' }),
+    season: integer('season').notNull(),
+    earned: integer('earned').notNull().default(0),
+    level: integer('level').notNull().default(0),
+    updatedAt: bigint('updated_at', { mode: 'number' }).notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.accountId, t.season] })],
 )
 
 /**

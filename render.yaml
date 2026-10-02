@@ -1,6 +1,10 @@
 services:
   - type: web
     name: ramseys-arcade-api
+    # Production deploys only what Ramsey ships, by fast-forwarding `production`
+    # to commits tried on staging. master feeds ramseys-arcade-api-staging,
+    # which was made in the dashboard and isn't in this file.
+    branch: production
     runtime: node
     plan: free
     region: oregon

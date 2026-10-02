@@ -4,14 +4,21 @@ import {
   accountFromRequest,
   bearerFromRequest,
   createMagicLink,
+  discordEnabled,
+  emailCodesEnabled,
+  emailSignInCode,
+  getDiscordClientId,
   getGoogleClientId,
   logoutSession,
+  signInWithDiscordCode,
+  signInWithEmailCode,
   signInWithGoogleIdToken,
   verifyMagicLink,
 } from './auth.js'
 import { dbTarget } from './env.js'
 import { linkNameToAccount, namesOwnedByAccount } from './names.js'
 import { planLimits } from './plans.js'
+import { clientIp, takeToken, type Limit } from './rateLimit.js'
 import { renamePlayerAcrossRecords } from './records.js'
 import { renamePlayerAcrossLeaderboards } from './store.js'
 import { renamePlayerAcrossTournaments } from './tournaments.js'
@@ -37,21 +44,145 @@ const linkNameSchema = z.object({
   previousToken: z.string().min(1).max(128).optional(),
 })
 
+const emailCodeSchema = z.object({
+  email: z.string().min(3).max(254),
+  code: z.string().min(1).max(16),
+})
+
+const discordSchema = z.object({
+  code: z.string().min(1).max(512),
+  redirectUri: z.string().min(1).max(512),
+})
+
 function authError(err: unknown, res: import('express').Response) {
   const status = (err as { status?: number }).status ?? 500
   const code = (err as { code?: string }).code
+  const { retryAfterMs, triesLeft } = err as { retryAfterMs?: number; triesLeft?: number }
   res.status(status).json({
     error: err instanceof Error ? err.message : 'Request failed',
     code,
+    ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
+    ...(triesLeft !== undefined ? { triesLeft } : {}),
   })
 }
 
+/** The ways to sign in this server can do. The site offers exactly these. */
 authRouter.get('/config', (_req, res) => {
   const googleClientId = getGoogleClientId()
+  const discordClientId = discordEnabled() ? getDiscordClientId() : null
   res.json({
     googleClientId,
     googleEnabled: Boolean(googleClientId),
+    discordClientId,
+    discordEnabled: Boolean(discordClientId),
+    emailEnabled: emailCodesEnabled(),
   })
+})
+
+/** Every limit here goes per address, and the code requests also per email and for everyone together. */
+const LIMITS = {
+  codeIp: { limit: 10, windowMs: 60 * 60_000 },
+  codeEmail: { limit: 6, windowMs: 60 * 60_000 },
+  // Every code sent is an email someone pays for; a flood stops here, not at the bill.
+  codeAll: { limit: 300, windowMs: 60 * 60_000 },
+  verifyIp: { limit: 30, windowMs: 10 * 60_000 },
+  discordIp: { limit: 20, windowMs: 10 * 60_000 },
+} satisfies Record<string, Limit>
+
+function limited(res: import('express').Response, retryAfterMs: number) {
+  res.status(429).json({
+    error: 'That’s a lot of tries. Wait a few minutes, then try again.',
+    code: 'RATE_LIMITED',
+    retryAfterMs,
+  })
+}
+
+/** A six-digit code to the address, to type back in (auth.ts). */
+authRouter.post('/email-code', async (req, res) => {
+  const parsed = emailSchema.safeParse(req.body)
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Type a whole email address.', code: 'EMAIL_INVALID' })
+    return
+  }
+  const email = parsed.data.email.trim().toLowerCase()
+  for (const [key, limit] of [
+    [`code:ip:${clientIp(req)}`, LIMITS.codeIp],
+    [`code:email:${email}`, LIMITS.codeEmail],
+    ['code:all', LIMITS.codeAll],
+  ] as const) {
+    const gate = takeToken(key, limit)
+    if (!gate.ok) {
+      limited(res, gate.retryAfterMs)
+      return
+    }
+  }
+  try {
+    res.json({ ok: true, ...(await emailSignInCode(email)) })
+  } catch (err) {
+    authError(err, res)
+  }
+})
+
+authRouter.post('/email-code/verify', async (req, res) => {
+  const parsed = emailCodeSchema.safeParse(req.body)
+  if (!parsed.success) {
+    res.status(400).json({ error: 'The code is six digits.', code: 'CODE_WRONG' })
+    return
+  }
+  const gate = takeToken(`verify:ip:${clientIp(req)}`, LIMITS.verifyIp)
+  if (!gate.ok) {
+    limited(res, gate.retryAfterMs)
+    return
+  }
+  try {
+    const result = await signInWithEmailCode(parsed.data.email, parsed.data.code)
+    res.json({
+      sessionToken: result.sessionToken,
+      expiresAt: result.expiresAt,
+      account: result.account,
+      names: await namesOwnedByAccount(result.account.id),
+    })
+  } catch (err) {
+    authError(err, res)
+  }
+})
+
+/**
+ * Where Discord sends a player back to is the site's own /auth/discord page. Discord itself refuses
+ * any address not registered with the app; this only keeps the obviously wrong out.
+ */
+function discordReturnLooksRight(uri: string): boolean {
+  try {
+    const url = new URL(uri)
+    const local = url.hostname === 'localhost' || url.hostname === '127.0.0.1'
+    return url.pathname === '/auth/discord' && !url.search && !url.hash && (url.protocol === 'https:' || local)
+  } catch {
+    return false
+  }
+}
+
+authRouter.post('/discord', async (req, res) => {
+  const parsed = discordSchema.safeParse(req.body)
+  if (!parsed.success || !discordReturnLooksRight(parsed.data.redirectUri)) {
+    res.status(400).json({ error: 'Discord didn’t sign you in. Try again.', code: 'DISCORD_INVALID' })
+    return
+  }
+  const gate = takeToken(`discord:ip:${clientIp(req)}`, LIMITS.discordIp)
+  if (!gate.ok) {
+    limited(res, gate.retryAfterMs)
+    return
+  }
+  try {
+    const result = await signInWithDiscordCode(parsed.data.code, parsed.data.redirectUri)
+    res.json({
+      sessionToken: result.sessionToken,
+      expiresAt: result.expiresAt,
+      account: result.account,
+      names: await namesOwnedByAccount(result.account.id),
+    })
+  } catch (err) {
+    authError(err, res)
+  }
 })
 
 /**

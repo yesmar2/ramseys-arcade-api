@@ -32,6 +32,7 @@ import { todayRouter } from './todayRoutes.js'
 import { syncCourseRecords } from './courseRecords.js'
 import { dailyHoleRouter } from './dailyHoleRoutes.js'
 import { publicVapidKey } from './push.js'
+import { discordEnabled, emailCodesEnabled, getGoogleClientId } from './auth.js'
 import { statsRouter } from './statsRoutes.js'
 import { trophiesRouter } from './trophiesRoutes.js'
 import { secretsRouter } from './secretsRoutes.js'
@@ -157,6 +158,8 @@ async function main() {
       // Whether ADMIN_EMAILS names anyone here (never who), so an admin who
       // can't get in can tell a list this service never loaded from one without them.
       admins: adminEmails().size > 0,
+      // The ways to sign in this service can do, which are the ones the site offers.
+      signIn: { google: Boolean(getGoogleClientId()), discord: discordEnabled(), email: emailCodesEnabled() },
       // The commit running (Render's RENDER_GIT_COMMIT), to tell a finished deploy from one still going.
       commit: process.env.RENDER_GIT_COMMIT?.slice(0, 7) ?? null,
       // When match alerts, results and held pushes were last seen to; null until the first sweep.

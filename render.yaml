@@ -20,6 +20,16 @@ services:
       # and admin tools all go by what the API says about the signed-in email.
       - key: ADMIN_EMAILS
         sync: false
+      # More ways to sign in, each offered on the site only once it's set
+      # (see .env.example). /health says which are on under "signIn".
+      - key: DISCORD_CLIENT_ID
+        sync: false
+      - key: DISCORD_CLIENT_SECRET
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
       # Web push for bracket match alerts. Generate a pair with:
       #   node -e "console.log(require('web-push').generateVAPIDKeys())"
       # Without these the opt-in stays hidden in the app; /health reports

@@ -18,6 +18,8 @@ export const accounts = pgTable('accounts', {
   createdAt: bigint('created_at', { mode: 'number' }).notNull(),
   plan: text('plan').notNull(),
   googleSub: text('google_sub'),
+  /** The Discord user id, once they've signed in with Discord: it follows them if their email there changes. */
+  discordId: text('discord_id'),
 })
 
 export const sessions = pgTable(
@@ -40,6 +42,22 @@ export const magicLinks = pgTable(
     expiresAt: bigint('expires_at', { mode: 'number' }).notNull(),
   },
   (t) => [index('magic_links_expires_idx').on(t.expiresAt)],
+)
+
+/**
+ * The sign-in code last emailed to an address: one at a time, so sending a new one ends the old.
+ * Kept as a hash. `attempts` counts guesses, and the code burns at the limit (auth.ts).
+ */
+export const emailCodes = pgTable(
+  'email_codes',
+  {
+    email: text('email').primaryKey(),
+    codeHash: text('code_hash').notNull(),
+    expiresAt: bigint('expires_at', { mode: 'number' }).notNull(),
+    attempts: integer('attempts').notNull().default(0),
+    sentAt: bigint('sent_at', { mode: 'number' }).notNull(),
+  },
+  (t) => [index('email_codes_expires_idx').on(t.expiresAt)],
 )
 
 export const nameClaims = pgTable(

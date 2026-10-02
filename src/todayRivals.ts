@@ -5,7 +5,7 @@ import { listFriends } from './friends.js'
 import { assertGroupBoardAccess, listGroupsFor } from './groups.js'
 import { namesOwnedByAccount, withAvatarIds } from './names.js'
 import { BOARD_TZ, DAILY_SINCE, boardDateKey } from './store.js'
-import { TODAY_SINCE, keptDays, todayRule, walkStreak } from './today.js'
+import { TODAY_SINCE, freezeGrants, keptDays, todayRule, walkStreak } from './today.js'
 
 /*
  * Rivals on the Today set (today.ts): how an account's friends, or one of its groups, are doing on the
@@ -142,6 +142,8 @@ export async function todayRivals(accountId: string, groupId: string | null, now
   const courseDays = byName(courses, DAILY_SINCE.marblerun)
   const caveDays = byName(caves, DAILY_SINCE.lander)
 
+  // Freezes given by hand count in a rival's streak as in their own (today.ts freezeGrants).
+  const grants = await freezeGrants(accounts)
   const rivals: Rival[] = players.map((p) => {
     const hole = (p.accountId && holeDays.get(p.accountId)) || new Map<number, number>()
     const track = lapDays.get(p.name) ?? new Map<number, number>()
@@ -158,7 +160,12 @@ export async function todayRivals(accountId: string, groupId: string | null, now
       pour: pour.get(today) ?? null,
       course: course.get(today) ?? null,
       cave: cave.get(today) ?? null,
-      streak: walkStreak(keptDays({ hole, track, wanted, pour, course, cave }), today, walkFrom).current,
+      streak: walkStreak(
+        keptDays({ hole, track, wanted, pour, course, cave }),
+        today,
+        walkFrom,
+        p.accountId ? grants.get(p.accountId) : undefined,
+      ).current,
     }
   })
   // Whoever has done most of today's card first.

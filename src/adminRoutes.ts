@@ -10,6 +10,7 @@ import { getClaim } from './names.js'
 import { playerStats } from './playerStats.js'
 import { resolveGameSlug } from './store.js'
 import { awardTickets } from './tickets.js'
+import { grantFreeze, todayState } from './today.js'
 
 export const adminRouter = Router()
 
@@ -53,6 +54,32 @@ adminRouter.get('/players', async (req, res) => {
   try {
     await requireAdmin(req)
     res.json(await playerStats(Date.now(), req.query.seeded === '1'))
+  } catch (err) {
+    refuse(err, res)
+  }
+})
+
+const freezeSchema = z.object({ name: z.string().min(1).max(12) })
+
+/**
+ * A Dailies streak freeze for a tag's account, from an admin (today.ts grantFreeze): held from today, within
+ * the 2 a player can hold. To put right a streak lost to something that wasn't the player's doing.
+ */
+adminRouter.post('/freezes/grant', async (req, res) => {
+  try {
+    await requireAdmin(req)
+    const parsed = freezeSchema.safeParse(req.body)
+    if (!parsed.success) {
+      res.status(400).json({ error: 'Invalid body', code: 'INVALID_BODY' })
+      return
+    }
+    const claim = await getClaim(parsed.data.name.trim().toUpperCase())
+    if (!claim?.accountId) {
+      res.status(404).json({ error: 'That tag has no account', code: 'NO_ACCOUNT' })
+      return
+    }
+    await grantFreeze(claim.accountId)
+    res.json({ name: parsed.data.name.trim().toUpperCase(), freezes: (await todayState(claim.accountId)).freezes })
   } catch (err) {
     refuse(err, res)
   }

@@ -123,12 +123,48 @@ export const TODAY_SINCE = Math.max(...TODAY_DAILIES.filter((d) => d.from === 0)
 /*
  * Streak freezes (Ramsey's rules, 2026-10-01): every 7 days kept in a row earns one, a player holds up to
  * 2, and a day missed while the streak is going spends one. A frozen day keeps the streak alive but doesn't
- * add to it: 9 days, a frozen day, and the next day kept makes 10. Nothing is stored. Freezes are worked out
- * from the kept days alone, walking them in order, so every streak the arcade shows (the Dailies, friends'
- * rows, the rewards and the Dailies pin) counts them the same way.
+ * add to it: 9 days, a frozen day, and the next day kept makes 10. Freezes are worked out from the kept days,
+ * walking them in order, so every streak the arcade shows (the Dailies, friends' rows, the rewards and the
+ * Dailies pin) counts them the same way. The one thing stored is a freeze given by hand: an admin's grant
+ * (POST /admin/freezes/grant), a 0-ticket row in the ticket ledger with reason 'freeze', held from its day.
  */
 export const FREEZE_EVERY = 7
 export const FREEZE_MAX = 2
+
+/** The ticket ledger's reason for a freeze given by hand: worth no tickets, held from the day it's given. */
+export const FREEZE_GRANT = 'freeze'
+
+/** Give an account a streak freeze by hand, held from the board day of `at`. */
+export async function grantFreeze(accountId: string, at = Date.now()): Promise<void> {
+  await db()
+    .insert(ticketLedger)
+    .values({
+      id: `tl-freeze-${at.toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+      accountId,
+      amount: 0,
+      reason: FREEZE_GRANT,
+      ref: `grant-${at}`,
+      game: null,
+      at,
+    })
+}
+
+/** Freezes given by hand, by the board day each was given: account → day → how many. */
+export async function freezeGrants(accountIds: readonly string[]): Promise<Map<string, Map<number, number>>> {
+  const out = new Map<string, Map<number, number>>()
+  if (!accountIds.length) return out
+  const rows = await db()
+    .select({ accountId: ticketLedger.accountId, at: ticketLedger.at })
+    .from(ticketLedger)
+    .where(and(inArray(ticketLedger.accountId, [...accountIds]), eq(ticketLedger.reason, FREEZE_GRANT)))
+  for (const row of rows) {
+    const days = out.get(row.accountId) ?? new Map<number, number>()
+    const day = boardDateKey(row.at)
+    days.set(day, (days.get(day) ?? 0) + 1)
+    out.set(row.accountId, days)
+  }
+  return out
+}
 
 export type StreakWalk = {
   /** From today once it's kept, else from yesterday (today is still open, so it isn't missed yet). */
@@ -142,16 +178,26 @@ export type StreakWalk = {
   frozen: ReadonlySet<number>
 }
 
-/** The streak a set of kept days makes from `since` (a board day key) to `today`, freezes and all. */
-export function walkStreak(kept: ReadonlySet<number>, today: number, since: number): StreakWalk {
+/**
+ * The streak a set of kept days makes from `since` (a board day key) to `today`, freezes and all. `granted`:
+ * freezes given by hand (freezeGrants), held from the start of their day, within the most there can be.
+ */
+export function walkStreak(
+  kept: ReadonlySet<number>,
+  today: number,
+  since: number,
+  granted: ReadonlyMap<number, number> = new Map(),
+): StreakWalk {
   const days: number[] = []
   for (let day = today; day >= since; day = previousBoardDateKey(day)) days.push(day)
   days.reverse()
   let current = 0
   let best = 0
-  let freezes = 0
+  // Given before the walk's first day: held from it.
+  let freezes = Math.min(FREEZE_MAX, [...granted].reduce((n, [day, count]) => (day < since ? n + count : n), 0))
   const frozen = new Set<number>()
   for (const day of days) {
+    freezes = Math.min(FREEZE_MAX, freezes + (granted.get(day) ?? 0))
     if (kept.has(day)) {
       current++
       if (current > best) best = current
@@ -296,9 +342,9 @@ async function playedDays(accountId: string, now: number): Promise<Record<TodayK
 
 export async function todayState(accountId: string, now = Date.now()): Promise<TodayState> {
   const today = boardDateKey(now)
-  const played = await playedDays(accountId, now)
+  const [played, grants] = await Promise.all([playedDays(accountId, now), freezeGrants([accountId])])
   const kept = keptDays(played)
-  const walk = walkStreak(kept, today, walkFrom(now))
+  const walk = walkStreak(kept, today, walkFrom(now), grants.get(accountId))
   const days: TodayState['days'] = []
   for (let i = 0, key = today; i < CALENDAR_DAYS; i++, key = previousBoardDateKey(key)) {
     days.unshift(dayEntry(played, kept, walk.frozen, key))
@@ -360,7 +406,7 @@ export async function todayMonth(
   if (last >= from) {
     const played = await playedDays(accountId, now)
     const kept = keptDays(played)
-    const { frozen } = walkStreak(kept, today, walkFrom(now))
+    const { frozen } = walkStreak(kept, today, walkFrom(now), (await freezeGrants([accountId])).get(accountId))
     for (let key = last; key >= from; key = previousBoardDateKey(key)) days.unshift(dayEntry(played, kept, frozen, key))
   }
   return { month, since: dayOf(TODAY_SINCE), days }

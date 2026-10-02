@@ -417,6 +417,11 @@ export async function bestTodayStreak(accountId: string, now = Date.now()): Prom
   return (await todayState(accountId, now)).streak.best
 }
 
+/** The days an account kept the Dailies, as YYYYMMDD keys: for a season's goal (seasons.ts). */
+export async function keptDaysFor(accountId: string, now = Date.now()): Promise<Set<number>> {
+  return keptDays(await playedDays(accountId, now))
+}
+
 const MILESTONE_WORDS: Record<number, { title: string; body: string; href: string }> = {
   3: { title: 'Day 3 of your Dailies streak', body: '10 tickets for the prize counter.', href: '/prizes' },
   7: { title: 'A week of Dailies', body: 'The Dailies pin is yours to wear on your badge.', href: '/rank/all' },

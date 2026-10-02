@@ -1,9 +1,13 @@
-import { and, eq, gt, gte, lt, notInArray, sql } from 'drizzle-orm'
+import { and, eq, gt, gte, inArray, isNotNull, lt, notInArray, sql } from 'drizzle-orm'
 import { db } from './db/client.js'
-import { appMeta, prizesOwned, seasonProgress, ticketLedger } from './db/schema.js'
+import { appMeta, prizesOwned, seasonProgress, ticketLedger, trophyAwards } from './db/schema.js'
+import { getClaim, namesOwnedByAccount, resolveAvatarId } from './names.js'
+import { notify } from './notifications.js'
 import { prizeById } from './prizes.js'
-import { boardDateKey, dayStartMs } from './store.js'
+import { boardDateKey, dayStartMs, globalRanksForWindow, type GlobalRankEntry } from './store.js'
 import { awardTickets } from './tickets.js'
+import { keptDaysFor } from './today.js'
+import { ordinal } from './words.js'
 
 /*
  * Seasons: a stretch of about nine weeks with a theme, a free pass of 30 levels and looks to win on it.
@@ -48,6 +52,16 @@ export type SeasonDef = {
   /** The games it puts forward, which its skins are for. */
   spotlight: string[]
   rewards: SeasonReward[]
+  /** Extra things to do in it, on top of the pass, each with its own reward. */
+  goals: SeasonGoal[]
+}
+
+export type SeasonGoal = {
+  /** dailies: days the Dailies were kept in the season; games: different games that paid run tickets in it. */
+  id: 'dailies' | 'games'
+  title: string
+  need: number
+  reward: { kind: 'prize'; id: string; name: string } | { kind: 'tickets'; amount: number; name: string }
 }
 
 function tickets(level: number, amount: number): SeasonReward {
@@ -98,6 +112,10 @@ export const SEASONS: readonly SeasonDef[] = [
     perLevel: 150,
     spotlight: ['lander', 'asteroids', 'barrage'],
     rewards: SPACE_RACE,
+    goals: [
+      { id: 'dailies', title: 'Keep the Dailies on 30 days', need: 30, reward: { kind: 'prize', id: 't-regular', name: 'The Regular title' } },
+      { id: 'games', title: 'Win tickets in 12 different games', need: 12, reward: { kind: 'tickets', amount: 200, name: '200 tickets' } },
+    ],
   },
 ]
 
@@ -218,13 +236,21 @@ export function nextLevelAt(def: SeasonDef, level: number): number | null {
 }
 
 /**
- * Whether this build can give a reward yet: tickets always; a prize once the catalogue has it; the patch
- * always, as it's flair, worn by whoever won a ticket in the season (flair.ts), with nothing to hand out.
+ * Skins the site's games can draw (its lib/skins.ts). A skin is owned like a prize, a row in prizes_owned
+ * under its id, but it isn't in the counter's catalogue: it's chosen on its game's page, never worn on the
+ * avatar, and never sold.
+ */
+const SKINS_DRAWN = new Set(['lander-moonhopper', 'asteroids-comet', 'barrage-nova', 'hotlap-rocket', 'snake-comet-tail'])
+
+/**
+ * Whether this build can give a reward yet: tickets always; a prize once the catalogue has it; a skin once
+ * its game draws it; the patch always, as it's flair, worn by whoever won a ticket in the season (flair.ts),
+ * with nothing to hand out.
  */
 export function rewardReady(reward: SeasonReward): boolean {
   if (reward.kind === 'tickets' || reward.kind === 'pin') return true
   if (reward.kind === 'prize') return prizeById(reward.id) != null
-  return false
+  return SKINS_DRAWN.has(reward.id)
 }
 
 async function giveRewards(accountId: string, def: SeasonDef, from: number, to: number, now: number) {
@@ -232,7 +258,7 @@ async function giveRewards(accountId: string, def: SeasonDef, from: number, to: 
     if (reward.level < from || reward.level > to || !rewardReady(reward)) continue
     if (reward.kind === 'tickets') {
       await awardTickets(accountId, 'season', `s${def.id}:lv${reward.level}`, reward.amount ?? 0, null, now)
-    } else if (reward.kind === 'prize') {
+    } else if (reward.kind === 'prize' || reward.kind === 'skin') {
       await db().insert(prizesOwned).values({ accountId, prizeId: reward.id, price: 0, at: now }).onConflictDoNothing()
     }
   }
@@ -372,4 +398,171 @@ export async function seasonAfterRun(accountId: string, now = Date.now()): Promi
     next: next ? rewardView(next) : null,
     levelUp: sync.reached.map(rewardView),
   }
+}
+
+/* ---------- the season's standings ---------- */
+
+/** Places that win when a season ends: the cup for the top three, a trophy for the rest of the top ten. */
+export const CUP_PLACES = 3
+export const TROPHY_PLACES = 10
+/**
+ * Players a season's standings need before its trophies are given, as an event's field does
+ * (tournaments.ts): a cup in a field of two isn't one, nor a top ten of twelve.
+ */
+export const CUP_FIELD = 5
+export const TROPHY_FIELD = 15
+
+const STANDINGS_FRESH_MS = 5 * 60_000
+const standingsKept = new Map<number, { at: number; rows: GlobalRankEntry[] }>()
+const standingsAsked = new Map<number, Promise<GlobalRankEntry[]>>()
+
+/** The season's standings (points across all games over its days), counted at most every five minutes. */
+export async function seasonStandingRows(season: SeasonNow, now = Date.now()): Promise<GlobalRankEntry[]> {
+  const id = season.def.id
+  const kept = standingsKept.get(id)
+  if (kept && (season.status === 'over' || now - kept.at < STANDINGS_FRESH_MS)) return kept.rows
+  let asking = standingsAsked.get(id)
+  if (!asking) {
+    asking = globalRanksForWindow(season.startsAt, Math.min(season.endsAt, now + 1))
+      .then((rows) => {
+        standingsKept.set(id, { at: Date.now(), rows })
+        return rows
+      })
+      .finally(() => standingsAsked.delete(id))
+    standingsAsked.set(id, asking)
+  }
+  return asking
+}
+
+export type SeasonStandingsView = {
+  total: number
+  /** The top five, by place and name; the points between them stay on the full Standings. */
+  top: { rank: number; name: string; avatarId: string }[]
+  you: { rank: number; name: string } | null
+  cupPlaces: number
+  trophyPlaces: number
+}
+
+export async function seasonStandingsView(season: SeasonNow, accountId: string | null, now = Date.now()): Promise<SeasonStandingsView> {
+  const rows = await seasonStandingRows(season, now)
+  const top = await Promise.all(rows.slice(0, 5).map(async (row) => ({ rank: row.rank, name: row.name, avatarId: await resolveAvatarId(row.name) })))
+  let you: SeasonStandingsView['you'] = null
+  if (accountId) {
+    const tags = new Set((await namesOwnedByAccount(accountId)).map((t) => t.name))
+    const mine = rows.find((row) => tags.has(row.name))
+    if (mine) you = { rank: mine.rank, name: mine.name }
+  }
+  return { total: rows.length, top, you, cupPlaces: CUP_PLACES, trophyPlaces: TROPHY_PLACES }
+}
+
+/* ---------- the season's goals ---------- */
+
+export type SeasonGoalView = SeasonGoal & { have: number; done: boolean }
+
+const RUN_REASONS = ['run', 'best', 'pickup']
+
+async function goalCount(goal: SeasonGoal, accountId: string, season: SeasonNow, now: number): Promise<number> {
+  if (goal.id === 'dailies') {
+    const from = boardDateKey(season.startsAt)
+    const to = boardDateKey(Math.min(now, season.endsAt - 1))
+    let n = 0
+    for (const day of await keptDaysFor(accountId, now)) if (day >= from && day <= to) n++
+    return n
+  }
+  const [row] = await db()
+    .select({ n: sql<number>`count(distinct ${ticketLedger.game})::int` })
+    .from(ticketLedger)
+    .where(
+      and(
+        eq(ticketLedger.accountId, accountId),
+        gt(ticketLedger.amount, 0),
+        gte(ticketLedger.at, season.startsAt),
+        lt(ticketLedger.at, season.endsAt),
+        inArray(ticketLedger.reason, RUN_REASONS),
+        isNotNull(ticketLedger.game),
+      ),
+    )
+  return Number(row?.n ?? 0)
+}
+
+/** Where a player is on each of the season's goals, giving a goal's reward once it's done. */
+export async function seasonGoals(accountId: string, season: SeasonNow, now = Date.now()): Promise<SeasonGoalView[]> {
+  const { def } = season
+  return Promise.all(
+    def.goals.map(async (goal) => {
+      const have = await goalCount(goal, accountId, season, now)
+      const done = have >= goal.need
+      if (done && season.status === 'live') {
+        if (goal.reward.kind === 'tickets') {
+          await awardTickets(accountId, 'season', `s${def.id}:goal:${goal.id}`, goal.reward.amount, null, now)
+        } else if (prizeById(goal.reward.id)) {
+          await db().insert(prizesOwned).values({ accountId, prizeId: goal.reward.id, price: 0, at: now }).onConflictDoNothing()
+        }
+      }
+      return { ...goal, have: Math.min(have, goal.need), done }
+    }),
+  )
+}
+
+/* ---------- the season's end ---------- */
+
+const SETTLE_WITHIN_MS = 30 * 86_400_000
+
+/**
+ * When a season has ended (the sweep asks), its places are given as trophies, once: the cup to its top
+ * three and a trophy to the rest of its top ten, each in a field big enough to mean something. Counted
+ * over its real days, never a preview's.
+ */
+export async function settleSeasons(now = Date.now()): Promise<number> {
+  let given = 0
+  for (const def of SEASONS) {
+    const startsAt = dayStartMs(def.firstDay)
+    const endsAt = dayStartMs(nextDayKey(def.lastDay))
+    if (now < endsAt || now > endsAt + SETTLE_WITHIN_MS) continue
+    const key = `season_settled:${def.id}`
+    const [done] = await db().select({ value: appMeta.value }).from(appMeta).where(eq(appMeta.key, key)).limit(1)
+    if (done) continue
+    const rows = await globalRanksForWindow(startsAt, endsAt)
+    const field = rows.length
+    const places = field >= TROPHY_FIELD ? TROPHY_PLACES : field >= CUP_FIELD ? CUP_PLACES : 0
+    for (const row of rows.slice(0, places)) {
+      const accountId = (await getClaim(row.name))?.accountId ?? null
+      const inserted = await db()
+        .insert(trophyAwards)
+        .values({
+          id: `season-${def.id}-${row.name}`,
+          period: 'season',
+          periodKey: def.id,
+          name: row.name,
+          rank: row.rank,
+          score: row.score,
+          games: row.games,
+          accountId,
+          awardedAt: now,
+        })
+        .onConflictDoNothing()
+        .returning({ id: trophyAwards.id })
+      if (!inserted.length) continue
+      given++
+      if (accountId) {
+        await notify({
+          accountId,
+          kind: 'trophy',
+          title: row.rank <= CUP_PLACES ? `${ordinal(row.rank)} in Season ${def.id}` : `Top ten in Season ${def.id}`,
+          body:
+            row.rank <= CUP_PLACES
+              ? `${def.name} is over, and its cup is on your shelf.`
+              : `${def.name} is over: ${ordinal(row.rank)} of ${field}. The trophy is on your shelf.`,
+          href: '/rank/all?focus=trophies',
+          meta: { trophy: { period: 'season', rank: row.rank } },
+          digestKey: `trophy:season:${def.id}`,
+          once: true,
+          now,
+        }).catch(() => undefined)
+      }
+    }
+    await db().insert(appMeta).values({ key, value: String(now) }).onConflictDoNothing()
+    console.log(`[season] ${def.name} settled: ${given} trophies in a field of ${field}`)
+  }
+  return given
 }

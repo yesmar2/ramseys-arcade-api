@@ -1551,6 +1551,21 @@ export async function globalRanksForClosedPeriod(
   })
 }
 
+/**
+ * The standings over a stretch that isn't a week or a month: a season's (seasons.ts). Each game's runs in
+ * it make its board, as a closed week's do (a daily's, its day points), and the places add up as they do
+ * for any period. Seconds of work on a big history, so its caller keeps the answer a while.
+ */
+export async function globalRanksForWindow(startMs: number, endMs: number): Promise<GlobalRankEntry[]> {
+  return aggregateGlobalRanks(async (game) => {
+    await new Promise((resolve) => setImmediate(resolve))
+    // The history is in board order, so its runs in any stretch already are.
+    const runs = (await historyFor(game)).filter((e) => e.at >= startMs && e.at < endMs)
+    const pool = !DAILY_GAMES.has(game) ? runs : isRankedGame(game) ? dayPointsBoard(game, runs) : []
+    return placementsFromPool(pool)
+  })
+}
+
 export async function rankForName(
   name: string,
   neighborRadius = 2,

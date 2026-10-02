@@ -9,6 +9,7 @@ import { secretsForHole, type SecretFound } from './secrets.js'
 import { settleToday } from './today.js'
 import { addScore, bestForName, type DeviceType } from './store.js'
 import { payRun } from './tickets.js'
+import { seasonAfterRun, type SeasonRun } from './seasons.js'
 
 /*
  * Ace Chase's Today's Hole: a new hole every day, the same for everyone. The site builds the hole from the
@@ -60,6 +61,8 @@ export type DailyReply = {
   }
   /** What today's result paid for the prize counter, as it went on the board. */
   tickets?: { earned: number; balance: number }
+  /** What it did on the season's pass, as a saved run's answer says (seasons.ts). */
+  season?: SeasonRun
   /** Secrets today's result found (secrets.ts): Hole in One, and Grand Tour when the hole was the day's last game. */
   secrets?: SecretFound[]
 }
@@ -257,6 +260,7 @@ export async function recordResult(
       await settleToday(accountId, now).catch(() => undefined)
     }
   }
+  const season = tickets ? await seasonAfterRun(accountId, now).catch(() => null) : null
   const reply = await dailyReply(accountId, now)
-  return { ...reply, ...(tickets ? { tickets } : {}), ...(secrets.length ? { secrets } : {}) }
+  return { ...reply, ...(tickets ? { tickets } : {}), ...(season ? { season } : {}), ...(secrets.length ? { secrets } : {}) }
 }

@@ -13,9 +13,11 @@ import { ordinal } from './words.js'
 
 /**
  * `hunt`: every bug of a month's bug hunt caught, one award a month (periodKey YYYYMM). `secret`: a
- * secret trophy (secrets.ts), once an account (periodKey the secret's number).
+ * secret trophy (secrets.ts), once an account (periodKey the secret's number). `season`: a place in a
+ * season's standings when it ends (seasons.ts), periodKey the season's number: the cup for the top three,
+ * a trophy for the rest of the top ten.
  */
-export type TrophyPeriod = 'weekly' | 'monthly' | 'event' | 'hunt' | 'secret'
+export type TrophyPeriod = 'weekly' | 'monthly' | 'event' | 'hunt' | 'secret' | 'season'
 export const MAX_TROPHY_RANK = 10
 
 export type TrophyAward = {
@@ -93,7 +95,7 @@ async function setCursor(next: { weeklyInitialized: boolean; monthlyInitialized:
 
 /** Board trophies only — event wins are awarded directly, not by period. */
 async function awardClosedPeriod(
-  period: Exclude<TrophyPeriod, 'event' | 'hunt' | 'secret'>,
+  period: Exclude<TrophyPeriod, 'event' | 'hunt' | 'secret' | 'season'>,
   periodKey: number,
   now: number,
   /** Tell the players: only for the period that just closed, never a backfill. */
@@ -252,7 +254,7 @@ let ensuring: Promise<void> | null = null
  */
 const settledPeriods = new Set<string>()
 
-async function awardsGiven(period: Exclude<TrophyPeriod, 'event' | 'hunt' | 'secret'>, periodKey: number): Promise<number> {
+async function awardsGiven(period: Exclude<TrophyPeriod, 'event' | 'hunt' | 'secret' | 'season'>, periodKey: number): Promise<number> {
   const rows = await db()
     .select({ n: count() })
     .from(trophyAwards)

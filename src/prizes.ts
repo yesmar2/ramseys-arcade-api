@@ -95,6 +95,8 @@ export const PRIZES: readonly Prize[] = [
   { id: 'cf-stardust', kind: 'confetti', price: 0, earned: true },
   { id: 'cf-shooting', kind: 'confetti', price: 0, earned: true },
   { id: 'sign-liftoff', kind: 'sign', price: 0, earned: true },
+  // Season 1's goal of keeping the Dailies on 30 of its days (seasons.ts).
+  { id: 't-regular', kind: 'title', price: 0, earned: true },
 ]
 
 const byId = new Map(PRIZES.map((p) => [p.id, p]))

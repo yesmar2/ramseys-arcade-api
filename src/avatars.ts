@@ -60,6 +60,11 @@ export const AVATAR_BADGES = [
   'aurora',
   // Earned by a 30-day Today streak (today.ts), not traded for.
   'gilded',
+  // Season 1's pass (seasons.ts).
+  'orbit',
+  'ringed',
+  'mission',
+  'supernova',
 ] as const
 export type AvatarBadge = (typeof AVATAR_BADGES)[number]
 
@@ -86,8 +91,8 @@ export const AVATAR_GAME_PINS = [
   'fireflies',
 ] as const
 
-/** Worn on the badge's edge, for what you've done. */
-export const AVATAR_PINS = ['welcome', 'games', 'streak', 'today', 'crown', 'bugnet', ...AVATAR_GAME_PINS] as const
+/** Worn on the badge's edge, for what you've done. s1: Season 1's patch, for playing in it (seasons.ts). */
+export const AVATAR_PINS = ['welcome', 'games', 'streak', 'today', 'crown', 'bugnet', 's1', ...AVATAR_GAME_PINS] as const
 export type AvatarPin = (typeof AVATAR_PINS)[number]
 
 /** Palette size. Indices are what get saved, so this only ever grows. */

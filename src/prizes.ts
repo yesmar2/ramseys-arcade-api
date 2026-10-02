@@ -82,6 +82,19 @@ export const PRIZES: readonly Prize[] = [
   { id: 't-space-cadet', kind: 'title', price: 0, earned: true },
   { id: 't-zero-g', kind: 'title', price: 0, earned: true },
   { id: 't-moonwalker', kind: 'title', price: 0, earned: true },
+  { id: 'nm-starlight', kind: 'name', price: 0, earned: true },
+  { id: 'nm-countdown', kind: 'name', price: 0, earned: true },
+  { id: 'nm-nebula', kind: 'name', price: 0, earned: true },
+  { id: 'orbit', kind: 'finish', price: 0, earned: true },
+  { id: 'ringed', kind: 'finish', price: 0, earned: true },
+  { id: 'mission', kind: 'finish', price: 0, earned: true },
+  { id: 'supernova', kind: 'finish', price: 0, earned: true },
+  { id: 'cd-deepfield', kind: 'card', price: 0, earned: true },
+  { id: 'cd-launchpad', kind: 'card', price: 0, earned: true },
+  { id: 'cd-nebula', kind: 'card', price: 0, earned: true },
+  { id: 'cf-stardust', kind: 'confetti', price: 0, earned: true },
+  { id: 'cf-shooting', kind: 'confetti', price: 0, earned: true },
+  { id: 'sign-liftoff', kind: 'sign', price: 0, earned: true },
 ]
 
 const byId = new Map(PRIZES.map((p) => [p.id, p]))

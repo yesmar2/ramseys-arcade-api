@@ -55,36 +55,36 @@ function tickets(level: number, amount: number): SeasonReward {
 }
 
 const SPACE_RACE: SeasonReward[] = [
-  { level: 1, kind: 'pin', id: 's1-patch', name: 'Season 1 patch', what: 'Pin' },
-  { level: 2, kind: 'prize', id: 's1-starlight', name: 'Starlight', what: 'Name style' },
+  { level: 1, kind: 'pin', id: 's1', name: 'Season 1 patch', what: 'Pin' },
+  { level: 2, kind: 'prize', id: 'nm-starlight', name: 'Starlight', what: 'Name style' },
   tickets(3, 50),
-  { level: 4, kind: 'prize', id: 's1-orbit', name: 'Orbit', what: 'Badge finish' },
+  { level: 4, kind: 'prize', id: 'orbit', name: 'Orbit', what: 'Badge finish' },
   { level: 5, kind: 'prize', id: 't-space-race', name: 'Space Race', what: 'Title' },
-  { level: 6, kind: 'prize', id: 's1-deep-field', name: 'Deep field', what: 'Card theme' },
-  { level: 7, kind: 'prize', id: 's1-stardust', name: 'Stardust', what: 'Confetti' },
+  { level: 6, kind: 'prize', id: 'cd-deepfield', name: 'Deep field', what: 'Card theme' },
+  { level: 7, kind: 'prize', id: 'cf-stardust', name: 'Stardust', what: 'Confetti' },
   { level: 8, kind: 'skin', id: 'lander-moonhopper', name: 'Moonhopper', what: 'Lander ship', game: 'lander' },
   tickets(9, 75),
   { level: 10, kind: 'prize', id: 't-liftoff', name: 'Liftoff', what: 'Title' },
-  { level: 11, kind: 'prize', id: 's1-countdown', name: 'Countdown', what: 'Name style' },
+  { level: 11, kind: 'prize', id: 'nm-countdown', name: 'Countdown', what: 'Name style' },
   { level: 12, kind: 'skin', id: 'asteroids-comet', name: 'Comet', what: 'Asteroids ship', game: 'asteroids' },
   tickets(13, 100),
-  { level: 14, kind: 'prize', id: 's1-ringed', name: 'Ringed planet', what: 'Badge finish' },
+  { level: 14, kind: 'prize', id: 'ringed', name: 'Ringed planet', what: 'Badge finish' },
   { level: 15, kind: 'skin', id: 'barrage-nova', name: 'Nova fighter', what: 'Barrage ship', game: 'barrage' },
   { level: 16, kind: 'prize', id: 't-space-cadet', name: 'Space Cadet', what: 'Title' },
-  { level: 17, kind: 'prize', id: 's1-launch-pad', name: 'Launch pad', what: 'Card theme' },
+  { level: 17, kind: 'prize', id: 'cd-launchpad', name: 'Launch pad', what: 'Card theme' },
   tickets(18, 100),
   { level: 19, kind: 'skin', id: 'hotlap-rocket', name: 'Rocket car', what: 'Hot Lap car', game: 'hotlap' },
-  { level: 20, kind: 'prize', id: 's1-shooting-stars', name: 'Shooting stars', what: 'Confetti' },
+  { level: 20, kind: 'prize', id: 'cf-shooting', name: 'Shooting stars', what: 'Confetti' },
   { level: 21, kind: 'prize', id: 't-zero-g', name: 'Zero G', what: 'Title' },
-  { level: 22, kind: 'prize', id: 's1-patch-ring', name: 'Mission patch', what: 'Badge finish' },
+  { level: 22, kind: 'prize', id: 'mission', name: 'Mission patch', what: 'Badge finish' },
   tickets(23, 150),
-  { level: 24, kind: 'prize', id: 's1-nebula', name: 'Nebula', what: 'Name style' },
+  { level: 24, kind: 'prize', id: 'nm-nebula', name: 'Nebula', what: 'Name style' },
   { level: 25, kind: 'skin', id: 'snake-comet-tail', name: 'Comet tail', what: 'Snake skin', game: 'snake' },
   { level: 26, kind: 'prize', id: 't-moonwalker', name: 'Moonwalker', what: 'Title' },
   tickets(27, 150),
-  { level: 28, kind: 'prize', id: 's1-liftoff-sign', name: 'Liftoff sign', what: 'Wall sign' },
-  { level: 29, kind: 'prize', id: 's1-nebula-card', name: 'Nebula', what: 'Card theme' },
-  { level: 30, kind: 'prize', id: 's1-shine', name: 'Season 1 shine', what: 'Badge finish' },
+  { level: 28, kind: 'prize', id: 'sign-liftoff', name: 'Liftoff sign', what: 'Wall sign' },
+  { level: 29, kind: 'prize', id: 'cd-nebula', name: 'Nebula', what: 'Card theme' },
+  { level: 30, kind: 'prize', id: 'supernova', name: 'Supernova', what: 'Badge finish' },
 ]
 
 export const SEASONS: readonly SeasonDef[] = [
@@ -217,9 +217,12 @@ export function nextLevelAt(def: SeasonDef, level: number): number | null {
   return level >= def.levels ? null : Math.max(0, level) * def.perLevel
 }
 
-/** Whether this build can give a reward yet: tickets always; a prize once the catalogue has it. */
+/**
+ * Whether this build can give a reward yet: tickets always; a prize once the catalogue has it; the patch
+ * always, as it's flair, worn by whoever won a ticket in the season (flair.ts), with nothing to hand out.
+ */
 export function rewardReady(reward: SeasonReward): boolean {
-  if (reward.kind === 'tickets') return true
+  if (reward.kind === 'tickets' || reward.kind === 'pin') return true
   if (reward.kind === 'prize') return prizeById(reward.id) != null
   return false
 }

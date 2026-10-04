@@ -1,12 +1,17 @@
 import { eq } from 'drizzle-orm'
 import { db } from './db/client.js'
-import { accounts, memberships } from './db/schema.js'
+import { accounts, memberships, prizesOwned } from './db/schema.js'
 import { stripe, type CheckoutSession } from './payments.js'
+import { prizeById } from './prizes.js'
 import { seasonNow, syncSeason } from './seasons.js'
+import { boardDateKey } from './store.js'
 
 /*
- * Plus, the membership: what it's always been (more events and groups to host, plans.ts) and, since Ramsey
- * picked it on 2026-10-03, every season's Pass+ while you're a member (seasons.ts plusOf). Paid monthly
+ * Plus, the membership: what it's always been (more events and groups to host, plans.ts); since Ramsey
+ * picked it on 2026-10-03, every season's Pass+ while you're a member (seasons.ts plusOf); and since
+ * 2026-10-04, the Dailies + Seasons membership: every past day of every daily (the site opens the archive,
+ * archive.ts keeps those runs off the boards), a members' look each month, and new games first
+ * (earlyAccess.ts). Paid monthly
  * through a Stripe subscription; Stripe's own page takes the card, and its customer portal is where a member
  * changes the card or cancels. `accounts.plan` is what everything else reads; the subscription's state, sent
  * by Stripe's webhook, moves it.
@@ -17,6 +22,38 @@ import { seasonNow, syncSeason } from './seasons.js'
  * the season's Pass+ up to your level for good, so a month must never cost less than Pass+ itself.
  */
 export const PLUS_PRICE = { amount: 299, currency: 'usd', interval: 'month' } as const
+
+/**
+ * The members' looks: each month, every Plus member gets that month's (Ramsey's pick, 2026-10-04: the
+ * Dailies + Seasons membership), kept for good. Months are the boards' (America/New_York), YYYYMM. The
+ * arcade's opening months also give Founding Member.
+ */
+export const MEMBERS_LOOKS: readonly { month: number; id: string; name: string; what: string }[] = [
+  { month: 202610, id: 't-founder', name: 'Founding Member', what: 'Title' },
+  { month: 202611, id: 't-founder', name: 'Founding Member', what: 'Title' },
+  { month: 202611, id: 'nm-prism', name: 'Prism', what: 'Name style' },
+  { month: 202612, id: 't-founder', name: 'Founding Member', what: 'Title' },
+  { month: 202612, id: 'cd-snowglobe', name: 'Snow globe', what: 'Card theme' },
+  { month: 202701, id: 'cf-streamers', name: 'Streamers', what: 'Confetti' },
+]
+
+export function monthOf(now = Date.now()): number {
+  return Math.floor(boardDateKey(now) / 100)
+}
+
+/** This month's members' looks, the ones this release can give. */
+export function membersLooks(now = Date.now()) {
+  const month = monthOf(now)
+  return MEMBERS_LOOKS.filter((l) => l.month === month && prizeById(l.id) != null)
+}
+
+/** A member's looks for this month, given if they're on Plus: once, however often it's asked. */
+export async function giveMembersLooks(accountId: string, plan: string | null | undefined, now = Date.now()) {
+  if (plan !== 'plus') return
+  for (const look of membersLooks(now)) {
+    await db().insert(prizesOwned).values({ accountId, prizeId: look.id, price: 0, at: now }).onConflictDoNothing()
+  }
+}
 
 function refusal(message: string, status: number, code: string) {
   return Object.assign(new Error(message), { status, code })
@@ -53,6 +90,7 @@ export async function plusState(accountId: string): Promise<PlusState> {
 async function setPlan(accountId: string, plus: boolean, now = Date.now()) {
   await db().update(accounts).set({ plan: plus ? 'plus' : 'free' }).where(eq(accounts.id, accountId))
   if (!plus) return
+  await giveMembersLooks(accountId, 'plus', now)
   const season = await seasonNow(now)
   if (season?.status === 'live') await syncSeason(accountId, now, { catchUp: true, announce: false }).catch(() => null)
 }
@@ -116,7 +154,8 @@ export async function plusCheckout(accountId: string, origin: string, email?: st
           recurring: { interval: PLUS_PRICE.interval },
           product_data: {
             name: 'Blipka Plus',
-            description: 'Every season’s Pass+ while you’re a member, and more events and groups to host. Playing stays free.',
+            description:
+              'Every past day of every daily, every season’s Pass+, a members’ look each month, new games first, and more events and groups to host. Playing stays free.',
           },
         },
       },

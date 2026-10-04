@@ -13,8 +13,8 @@
 export type PrizeKind = 'finish' | 'name' | 'card' | 'confetti' | 'title' | 'sign'
 
 /**
- * `earned`: never for sale; a Today streak (today.ts) or a season's pass (seasons.ts) gives it, and only
- * that. Its price is nought.
+ * `earned`: never for sale; a Today streak (today.ts), a season's pass (seasons.ts) or a month of Plus
+ * (plus.ts) gives it, and only that. Its price is nought.
  */
 export type Prize = { id: string; kind: PrizeKind; price: number; earned?: true }
 
@@ -113,6 +113,11 @@ export const PRIZES: readonly Prize[] = [
   { id: 't-legend', kind: 'title', price: 0, earned: true },
   // Season 1's goal of keeping the Dailies on 30 of its days (seasons.ts).
   { id: 't-regular', kind: 'title', price: 0, earned: true },
+  // Plus: each month's look, given to every member that month (plus.ts), never traded for.
+  { id: 't-founder', kind: 'title', price: 0, earned: true },
+  { id: 'nm-prism', kind: 'name', price: 0, earned: true },
+  { id: 'cd-snowglobe', kind: 'card', price: 0, earned: true },
+  { id: 'cf-streamers', kind: 'confetti', price: 0, earned: true },
 ]
 
 const byId = new Map(PRIZES.map((p) => [p.id, p]))

@@ -1,3 +1,4 @@
+import { giveMembersLooks } from './plus.js'
 import { Router } from 'express'
 import { z } from 'zod'
 import { accountFromRequest } from './auth.js'
@@ -40,6 +41,8 @@ ticketsRouter.get('/', async (req, res) => {
     return
   }
   try {
+    // A Plus member's look for the month arrives with what they own, wherever they open the site.
+    await giveMembersLooks(account.id, account.plan)
     res.json(await ticketsFor(account.id))
   } catch (err) {
     fail(err, res)

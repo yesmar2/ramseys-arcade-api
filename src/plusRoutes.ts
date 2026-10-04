@@ -2,7 +2,7 @@ import { Router } from 'express'
 import { z } from 'zod'
 import { accountFromRequest } from './auth.js'
 import { paymentsEnabled, returnOrigin } from './payments.js'
-import { confirmPlus, PLUS_PRICE, plusCheckout, plusPortal, plusState } from './plus.js'
+import { confirmPlus, giveMembersLooks, membersLooks, PLUS_PRICE, plusCheckout, plusPortal, plusState } from './plus.js'
 import { takeToken } from './rateLimit.js'
 
 export const plusRouter = Router()
@@ -20,11 +20,14 @@ function fail(err: unknown, res: import('express').Response, fallback: string) {
 plusRouter.get('/', async (req, res) => {
   try {
     const account = await accountFromRequest(req).catch(() => null)
+    if (account) await giveMembersLooks(account.id, account.plan)
     res.json({
       price: PLUS_PRICE.amount,
       currency: PLUS_PRICE.currency,
       interval: PLUS_PRICE.interval,
       buyable: paymentsEnabled(),
+      // This month's members' looks, which every member has.
+      looks: membersLooks().map(({ id, name, what }) => ({ id, name, what })),
       you: account ? await plusState(account.id) : null,
     })
   } catch (err) {

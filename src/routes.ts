@@ -17,6 +17,7 @@ import { assertCanUseName, withAvatarId, withAvatarIds } from './names.js'
 import { updateCrossRunStreakRecords } from './records.js'
 import { noteDayRun } from './courseRecords.js'
 import { dailyFirstDay, dailyRecords, dayResultKeep, standingOn, type DailyTally } from './dailyRecords.js'
+import { inEarlyAccess } from './earlyAccess.js'
 import { recordChallengeRun } from './challenges.js'
 import { payRun, plausiblePickups, type RunTickets } from './tickets.js'
 import { seasonAfterRun } from './seasons.js'
@@ -489,6 +490,11 @@ leaderboardsRouter.post('/:game', async (req, res) => {
 
   const { name, token, device, runId, challengeId, pickups, pace, pours, skin } = parsed.data
   let score = parsed.data.score
+  // In early access, Plus members play it first as practice: its boards open to everyone on its day (earlyAccess.ts).
+  if (inEarlyAccess(game)) {
+    res.status(409).json({ error: 'This game’s boards open on its day, for everyone at once', code: 'EARLY_ACCESS' })
+    return
+  }
   // Ace Chase's board takes each day's first bullseye from Today's Hole (dailyHole.ts), one an account a day.
   if (game === 'acechase') {
     res.status(409).json({ error: 'Ace Chase results come from Today’s Hole', code: 'TODAYS_HOLE_ONLY' })

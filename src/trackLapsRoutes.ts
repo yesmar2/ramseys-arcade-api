@@ -1,6 +1,7 @@
 import { runSkin } from './skins.js'
 import { Router } from 'express'
 import { z } from 'zod'
+import { ARCHIVED, inArchive } from './archive.js'
 import { accountFromRequest } from './auth.js'
 import { isBanned } from './bans.js'
 import { GHOST_GAMES, GHOST_RATE, ghostFor, ghostProblem, ghostState, keepGhost } from './lapGhosts.js'
@@ -139,6 +140,11 @@ tracksRouter.post('/:game/:n/laps', async (req, res) => {
   }
   if (state === 'ahead') {
     res.status(409).json({ error: 'This track’s day hasn’t come yet', code: 'TRACK_AHEAD' })
+    return
+  }
+  // Older than a week, it's in the archive (archive.ts): its board keeps what it has.
+  if (inArchive(trackDayIso(n, game))) {
+    res.status(409).json(ARCHIVED)
     return
   }
   const parsed = lapSchema.safeParse(req.body)

@@ -1,5 +1,6 @@
 import { Router } from 'express'
 import { z } from 'zod'
+import { ARCHIVED, inArchive } from './archive.js'
 import { accountFromRequest } from './auth.js'
 import { isBanned } from './bans.js'
 import { noteCourseRecord } from './courseRecords.js'
@@ -139,6 +140,11 @@ holesRouter.post('/:game/:day/results', async (req, res) => {
   }
   if (state === 'ahead') {
     res.status(409).json({ error: 'This hole’s day hasn’t come yet', code: 'HOLE_AHEAD' })
+    return
+  }
+  // Older than a week, it's in the archive (archive.ts): its board keeps what it has.
+  if (inArchive(day)) {
+    res.status(409).json(ARCHIVED)
     return
   }
   const parsed = resultSchema.safeParse(req.body)

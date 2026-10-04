@@ -1,6 +1,6 @@
 import { and, eq, gt, gte, inArray, isNotNull, lt, notInArray, sql } from 'drizzle-orm'
 import { db } from './db/client.js'
-import { accounts, appMeta, prizesOwned, seasonPlus, seasonProgress, ticketLedger, trophyAwards } from './db/schema.js'
+import { accounts, appMeta, memberships, prizesOwned, seasonPlus, seasonProgress, ticketLedger, trophyAwards } from './db/schema.js'
 import { getClaim, namesOwnedByAccount, resolveAvatarId } from './names.js'
 import { notify } from './notifications.js'
 import { prizeById } from './prizes.js'
@@ -341,8 +341,14 @@ export async function plusOf(accountId: string, season: number): Promise<'pass' 
     .where(and(eq(seasonPlus.accountId, accountId), eq(seasonPlus.season, season)))
     .limit(1)
   if (row) return 'pass'
-  const [account] = await db().select({ plan: accounts.plan }).from(accounts).where(eq(accounts.id, accountId)).limit(1)
-  return account?.plan === 'plus' ? 'plus' : null
+  const [account] = await db()
+    .select({ plan: accounts.plan, status: memberships.status })
+    .from(accounts)
+    .leftJoin(memberships, eq(memberships.accountId, accounts.id))
+    .where(eq(accounts.id, accountId))
+    .limit(1)
+  // Plus's free week gives no Pass+: its rewards are kept for good, so they come with the first payment (plus.ts TRIAL_DAYS).
+  return account?.plan === 'plus' && account.status !== 'trialing' ? 'plus' : null
 }
 
 /** Whether a player has a season's Pass+, bought or with Plus. */

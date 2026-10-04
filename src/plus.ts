@@ -1,6 +1,6 @@
-import { eq } from 'drizzle-orm'
+import { and, eq, isNull, ne, or } from 'drizzle-orm'
 import { db } from './db/client.js'
-import { accounts, memberships, prizesOwned } from './db/schema.js'
+import { accounts, memberships, nameClaims, prizesOwned } from './db/schema.js'
 import { stripe, type CheckoutSession } from './payments.js'
 import { prizeById } from './prizes.js'
 import { seasonNow, syncSeason } from './seasons.js'
@@ -22,6 +22,22 @@ import { boardDateKey } from './store.js'
  * the season's Pass+ up to your level for good, so a month must never cost less than Pass+ itself.
  */
 export const PLUS_PRICE = { amount: 299, currency: 'usd', interval: 'month' } as const
+
+/**
+ * A year of Plus at once: $24.99, about $2.08 a month (2026-10-04, with the free week). It costs more than a
+ * year's Pass+ would (a season every two months or so), so it's never the cheap way to Pass+ alone.
+ */
+export const PLUS_YEAR = { amount: 2499, currency: 'usd', interval: 'year' } as const
+
+export type PlusInterval = 'month' | 'year'
+
+/**
+ * A free first week, once an account: Stripe takes the card and charges when it ends, unless it's cancelled
+ * first. The week opens what Plus opens (the archive, new games early, hosting), but gives nothing that's
+ * kept for good: Pass+ rewards and the month's look come with the first payment (seasons.ts plusOf,
+ * giveMembersLooks), so a free week and a cancel is never a free Pass+.
+ */
+export const TRIAL_DAYS = 7
 
 /**
  * The members' looks: each month, every Plus member gets that month's (Ramsey's pick, 2026-10-04: the
@@ -47,9 +63,15 @@ export function membersLooks(now = Date.now()) {
   return MEMBERS_LOOKS.filter((l) => l.month === month && prizeById(l.id) != null)
 }
 
-/** A member's looks for this month, given if they're on Plus: once, however often it's asked. */
+/** Whether a membership is a free week still: Plus opened, nothing kept for good given yet. */
+async function onFreeWeek(accountId: string): Promise<boolean> {
+  const [m] = await db().select({ status: memberships.status }).from(memberships).where(eq(memberships.accountId, accountId)).limit(1)
+  return m?.status === 'trialing'
+}
+
+/** A member's looks for this month, given if they're on Plus and past the free week: once, however often it's asked. */
 export async function giveMembersLooks(accountId: string, plan: string | null | undefined, now = Date.now()) {
-  if (plan !== 'plus') return
+  if (plan !== 'plus' || (await onFreeWeek(accountId))) return
   for (const look of membersLooks(now)) {
     await db().insert(prizesOwned).values({ accountId, prizeId: look.id, price: 0, at: now }).onConflictDoNothing()
   }
@@ -72,7 +94,15 @@ type Subscription = {
 /** Stripe's states that still count as a member: paying, trying it, or a card that failed and is being retried. */
 const MEMBER_STATES = new Set(['active', 'trialing', 'past_due'])
 
-export type PlusState = { plan: 'free' | 'plus'; status: string | null; renewsAt: number | null; cancelsAtEnd: boolean; source: string | null }
+export type PlusState = {
+  plan: 'free' | 'plus'
+  status: string | null
+  renewsAt: number | null
+  cancelsAtEnd: boolean
+  source: string | null
+  /** Whether joining starts with the free week: an account that has never paid for Plus or tried it. */
+  trialEligible: boolean
+}
 
 export async function plusState(accountId: string): Promise<PlusState> {
   const [account] = await db().select({ plan: accounts.plan }).from(accounts).where(eq(accounts.id, accountId)).limit(1)
@@ -83,12 +113,30 @@ export async function plusState(accountId: string): Promise<PlusState> {
     renewsAt: m?.renewsAt ?? null,
     cancelsAtEnd: m?.cancelsAtEnd ?? false,
     source: m?.source ?? null,
+    trialEligible: m?.source !== 'stripe',
   }
+}
+
+/** The tags of Plus members, for the mark beside their names: paying or given, not on a free week. Kept a few minutes. */
+let membersHeld: { at: number; names: string[] } | null = null
+const MEMBERS_HOLD_MS = 5 * 60 * 1000
+
+export async function memberNames(now = Date.now()): Promise<string[]> {
+  if (membersHeld && now - membersHeld.at < MEMBERS_HOLD_MS) return membersHeld.names
+  const rows = await db()
+    .select({ name: nameClaims.name })
+    .from(nameClaims)
+    .innerJoin(accounts, eq(accounts.id, nameClaims.accountId))
+    .leftJoin(memberships, eq(memberships.accountId, accounts.id))
+    .where(and(eq(accounts.plan, 'plus'), or(isNull(memberships.status), ne(memberships.status, 'trialing'))))
+  membersHeld = { at: now, names: rows.map((r) => r.name).sort() }
+  return membersHeld.names
 }
 
 /** The plan, and the season's Pass+ rewards up to their level the moment they become a member. */
 async function setPlan(accountId: string, plus: boolean, now = Date.now()) {
   await db().update(accounts).set({ plan: plus ? 'plus' : 'free' }).where(eq(accounts.id, accountId))
+  membersHeld = null
   if (!plus) return
   await giveMembersLooks(accountId, 'plus', now)
   const season = await seasonNow(now)
@@ -135,23 +183,24 @@ export async function noteSubscription(sub: Subscription, accountIdHint?: string
   return member
 }
 
-/** A Stripe Checkout for a Plus membership, monthly, for one account. Its page's address. */
-export async function plusCheckout(accountId: string, origin: string, email?: string | null): Promise<string> {
+/** A Stripe Checkout for a Plus membership, by the month or the year, for one account: with the free week, the first time. Its page's address. */
+export async function plusCheckout(accountId: string, origin: string, email?: string | null, interval: PlusInterval = 'month'): Promise<string> {
   const state = await plusState(accountId)
   if (state.plan === 'plus') throw refusal('You’re a Plus member already', 409, 'ALREADY_PLUS')
+  const price = interval === 'year' ? PLUS_YEAR : PLUS_PRICE
   const session = await stripe<CheckoutSession>('POST', '/checkout/sessions', {
     mode: 'subscription',
     client_reference_id: accountId,
     customer_email: email || undefined,
     metadata: { accountId, kind: 'plus' },
-    subscription_data: { metadata: { accountId } },
+    subscription_data: { metadata: { accountId }, ...(state.trialEligible ? { trial_period_days: TRIAL_DAYS } : {}) },
     line_items: {
       0: {
         quantity: 1,
         price_data: {
-          currency: PLUS_PRICE.currency,
-          unit_amount: PLUS_PRICE.amount,
-          recurring: { interval: PLUS_PRICE.interval },
+          currency: price.currency,
+          unit_amount: price.amount,
+          recurring: { interval: price.interval },
           product_data: {
             name: 'Blipka Plus',
             description:

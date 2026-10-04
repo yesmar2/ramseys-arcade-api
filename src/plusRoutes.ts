@@ -2,7 +2,7 @@ import { Router } from 'express'
 import { z } from 'zod'
 import { accountFromRequest } from './auth.js'
 import { paymentsEnabled, returnOrigin } from './payments.js'
-import { confirmPlus, giveMembersLooks, membersLooks, PLUS_PRICE, plusCheckout, plusPortal, plusState } from './plus.js'
+import { confirmPlus, giveMembersLooks, memberNames, membersLooks, PLUS_PRICE, PLUS_YEAR, plusCheckout, plusPortal, plusState, TRIAL_DAYS } from './plus.js'
 import { takeToken } from './rateLimit.js'
 
 export const plusRouter = Router()
@@ -25,6 +25,9 @@ plusRouter.get('/', async (req, res) => {
       price: PLUS_PRICE.amount,
       currency: PLUS_PRICE.currency,
       interval: PLUS_PRICE.interval,
+      // Both ways to pay, and the free week a first membership starts with.
+      prices: { month: PLUS_PRICE.amount, year: PLUS_YEAR.amount },
+      trialDays: TRIAL_DAYS,
       buyable: paymentsEnabled(),
       // This month's members' looks, which every member has.
       looks: membersLooks().map(({ id, name, what }) => ({ id, name, what })),
@@ -35,7 +38,17 @@ plusRouter.get('/', async (req, res) => {
   }
 })
 
-/** POST /plus/checkout: Stripe's checkout for a monthly Plus membership, and its address. */
+/** GET /plus/members: the tags of Plus members, for the mark the site shows beside their names. */
+plusRouter.get('/members', async (_req, res) => {
+  try {
+    res.setHeader('Cache-Control', 'public, max-age=120')
+    res.json({ names: await memberNames() })
+  } catch (err) {
+    fail(err, res, 'Couldn’t read the members')
+  }
+})
+
+/** POST /plus/checkout: Stripe's checkout for a Plus membership, by the month or the year ({ interval }), and its address. */
 plusRouter.post('/checkout', async (req, res) => {
   try {
     const account = await accountFromRequest(req)
@@ -47,7 +60,8 @@ plusRouter.post('/checkout', async (req, res) => {
       res.status(429).json({ error: 'Too many tries, give it a minute', code: 'RATE_LIMITED' })
       return
     }
-    res.json({ url: await plusCheckout(account.id, returnOrigin(req), account.email) })
+    const parsed = z.object({ interval: z.enum(['month', 'year']).optional() }).safeParse(req.body ?? {})
+    res.json({ url: await plusCheckout(account.id, returnOrigin(req), account.email, parsed.success ? parsed.data.interval : undefined) })
   } catch (err) {
     fail(err, res, 'Couldn’t open the payment page')
   }

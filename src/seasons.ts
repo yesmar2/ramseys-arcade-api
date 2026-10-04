@@ -1,6 +1,6 @@
 import { and, eq, gt, gte, inArray, isNotNull, lt, notInArray, sql } from 'drizzle-orm'
 import { db } from './db/client.js'
-import { appMeta, prizesOwned, seasonPlus, seasonProgress, ticketLedger, trophyAwards } from './db/schema.js'
+import { accounts, appMeta, prizesOwned, seasonPlus, seasonProgress, ticketLedger, trophyAwards } from './db/schema.js'
 import { getClaim, namesOwnedByAccount, resolveAvatarId } from './names.js'
 import { notify } from './notifications.js'
 import { prizeById } from './prizes.js'
@@ -60,7 +60,13 @@ export type SeasonDef = {
    * Its Pass+: a second row of looks on the same levels, bought once for the season (payments.ts). Looks
    * only, never score, and never a pin or a ring, which are only ever earned. What's on it is kept for good.
    */
-  plus: { price: number; currency: string; rewards: SeasonReward[] } | null
+  plus: {
+    price: number
+    currency: string
+    rewards: SeasonReward[]
+    /** Levels past the last that only Pass+ climbs, each another `perLevel` tickets. */
+    bonus: number
+  } | null
 }
 
 export type SeasonGoal = {
@@ -108,18 +114,37 @@ const SPACE_RACE: SeasonReward[] = [
   { level: 30, kind: 'prize', id: 'supernova', name: 'Supernova', what: 'Badge finish' },
 ]
 
-/** Season 1's Pass+ row: a second skin for each of its five skin games, and five looks. */
+/**
+ * Season 1's Pass+ row: a reward on two of every three levels (Ramsey: a fuller row, 2026-10-03), ten skins
+ * across the five skin games and fifteen looks, then five bonus levels only Pass+ climbs to.
+ */
 const SPACE_RACE_PLUS: SeasonReward[] = [
   { level: 1, kind: 'skin', id: 'asteroids-shuttle', name: 'Shuttle', what: 'Asteroids ship', game: 'asteroids', plus: true },
+  { level: 2, kind: 'prize', id: 't-flight-director', name: 'Flight Director', what: 'Title', plus: true },
   { level: 4, kind: 'prize', id: 'nm-aurora', name: 'Aurora', what: 'Name style', plus: true },
+  { level: 5, kind: 'prize', id: 'nm-telemetry', name: 'Telemetry', what: 'Name style', plus: true },
   { level: 7, kind: 'skin', id: 'lander-eagle', name: 'Eagle', what: 'Lander ship', game: 'lander', plus: true },
+  { level: 8, kind: 'prize', id: 'cd-porthole', name: 'Porthole', what: 'Card theme', plus: true },
   { level: 10, kind: 'prize', id: 'cd-mission', name: 'Mission control', what: 'Card theme', plus: true },
+  { level: 11, kind: 'skin', id: 'hotlap-sunracer', name: 'Sunracer', what: 'Hot Lap car', game: 'hotlap', plus: true },
   { level: 13, kind: 'skin', id: 'barrage-ringship', name: 'Ringship', what: 'Barrage ship', game: 'barrage', plus: true },
+  { level: 14, kind: 'prize', id: 'cf-splashdown', name: 'Splashdown', what: 'Confetti', plus: true },
   { level: 16, kind: 'prize', id: 'cf-meteors', name: 'Meteor shower', what: 'Confetti', plus: true },
+  { level: 17, kind: 'skin', id: 'barrage-stingray', name: 'Stingray', what: 'Barrage ship', game: 'barrage', plus: true },
   { level: 19, kind: 'skin', id: 'snake-nebula-tail', name: 'Nebula tail', what: 'Snake skin', game: 'snake', plus: true },
+  { level: 20, kind: 'prize', id: 'blue-marble', name: 'Blue marble', what: 'Badge finish', plus: true },
   { level: 22, kind: 'skin', id: 'hotlap-midnight', name: 'Midnight rocket', what: 'Hot Lap car', game: 'hotlap', plus: true },
+  { level: 23, kind: 'skin', id: 'snake-saturn-tail', name: 'Saturn tail', what: 'Snake skin', game: 'snake', plus: true },
   { level: 25, kind: 'prize', id: 't-commander', name: 'Commander', what: 'Title', plus: true },
+  { level: 26, kind: 'prize', id: 't-ace-pilot', name: 'Ace Pilot', what: 'Title', plus: true },
+  { level: 29, kind: 'prize', id: 'cd-station', name: 'Space station', what: 'Card theme', plus: true },
   { level: 30, kind: 'prize', id: 'eclipse', name: 'Eclipse', what: 'Badge finish', plus: true },
+  // The bonus levels, past the free row's last.
+  { level: 31, kind: 'skin', id: 'asteroids-orbiter', name: 'Orbiter', what: 'Asteroids ship', game: 'asteroids', plus: true },
+  { level: 32, kind: 'skin', id: 'lander-starhopper', name: 'Starhopper', what: 'Lander ship', game: 'lander', plus: true },
+  { level: 33, kind: 'prize', id: 'nm-wormhole', name: 'Wormhole', what: 'Name style', plus: true },
+  { level: 34, kind: 'prize', id: 'black-hole', name: 'Black hole', what: 'Badge finish', plus: true },
+  { level: 35, kind: 'prize', id: 't-legend', name: 'Space Race Legend', what: 'Title', plus: true },
 ]
 
 export const SEASONS: readonly SeasonDef[] = [
@@ -137,7 +162,7 @@ export const SEASONS: readonly SeasonDef[] = [
       { id: 'dailies', title: 'Keep the Dailies on 30 days', need: 30, reward: { kind: 'prize', id: 't-regular', name: 'The Regular title' } },
       { id: 'games', title: 'Win tickets in 12 different games', need: 12, reward: { kind: 'tickets', amount: 200, name: '200 tickets' } },
     ],
-    plus: { price: 499, currency: 'usd', rewards: SPACE_RACE_PLUS },
+    plus: { price: 499, currency: 'usd', rewards: SPACE_RACE_PLUS, bonus: 5 },
   },
 ]
 
@@ -246,15 +271,20 @@ export async function seasonEarned(accountId: string, startsAt: number, endsAt: 
   return Number(row?.total ?? 0)
 }
 
-/** Level 0 before the season's first ticket, then one more every `perLevel`, to the last. */
-export function levelFor(def: SeasonDef, earned: number): number {
+/** The highest level a player's pass reaches: the last, and with Pass+ its bonus levels too. */
+export function topLevel(def: SeasonDef, plus = false): number {
+  return def.levels + (plus && def.plus ? def.plus.bonus : 0)
+}
+
+/** Level 0 before the season's first ticket, then one more every `perLevel`, to the last (or the bonus levels' last with Pass+). */
+export function levelFor(def: SeasonDef, earned: number, plus = false): number {
   if (earned <= 0) return 0
-  return Math.min(def.levels, 1 + Math.floor(earned / def.perLevel))
+  return Math.min(topLevel(def, plus), 1 + Math.floor(earned / def.perLevel))
 }
 
 /** Season tickets the next level needs, all told, or null at the last. */
-export function nextLevelAt(def: SeasonDef, level: number): number | null {
-  return level >= def.levels ? null : Math.max(0, level) * def.perLevel
+export function nextLevelAt(def: SeasonDef, level: number, plus = false): number | null {
+  return level >= topLevel(def, plus) ? null : Math.max(0, level) * def.perLevel
 }
 
 /**
@@ -274,6 +304,11 @@ const SKINS_DRAWN = new Set([
   'barrage-ringship',
   'snake-nebula-tail',
   'hotlap-midnight',
+  'hotlap-sunracer',
+  'barrage-stingray',
+  'snake-saturn-tail',
+  'asteroids-orbiter',
+  'lander-starhopper',
 ])
 
 /** Every skin a season gives, free row and Pass+, and its game: what a saved run may say it was played in. */
@@ -294,14 +329,24 @@ export function rewardReady(reward: SeasonReward): boolean {
   return SKINS_DRAWN.has(reward.id)
 }
 
-/** Whether a player has a season's Pass+. */
-export async function hasPlus(accountId: string, season: number): Promise<boolean> {
+/**
+ * How a player has a season's Pass+: bought for it ('pass'), or as a Plus member ('plus': Plus includes every
+ * season's, Ramsey's pick, 2026-10-03); null without it. What a membership gave stays given when it ends.
+ */
+export async function plusOf(accountId: string, season: number): Promise<'pass' | 'plus' | null> {
   const [row] = await db()
     .select({ at: seasonPlus.at })
     .from(seasonPlus)
     .where(and(eq(seasonPlus.accountId, accountId), eq(seasonPlus.season, season)))
     .limit(1)
-  return row != null
+  if (row) return 'pass'
+  const [account] = await db().select({ plan: accounts.plan }).from(accounts).where(eq(accounts.id, accountId)).limit(1)
+  return account?.plan === 'plus' ? 'plus' : null
+}
+
+/** Whether a player has a season's Pass+, bought or with Plus. */
+export async function hasPlus(accountId: string, season: number): Promise<boolean> {
+  return (await plusOf(accountId, season)) != null
 }
 
 /** The rewards a player's pass gives: the free row, and the Pass+ row too with Pass+. */
@@ -348,7 +393,8 @@ export async function syncSeason(
   if (!season || season.status !== 'live') return null
   const { def } = season
   const earned = await seasonEarned(accountId, season.startsAt, season.endsAt)
-  const level = levelFor(def, earned)
+  const plus = def.plus ? await hasPlus(accountId, def.id) : false
+  const level = levelFor(def, earned, plus)
   const [last] = await db()
     .select({ earned: seasonProgress.earned, level: seasonProgress.level })
     .from(seasonProgress)
@@ -356,7 +402,6 @@ export async function syncSeason(
     .limit(1)
   const before = last?.earned ?? 0
   const lastLevel = last?.level ?? 0
-  const plus = def.plus ? await hasPlus(accountId, def.id) : false
   const lane = laneOf(def, plus)
   if (level > lastLevel || (catchUp && level > 0)) {
     await giveRewards(accountId, def, lane, catchUp ? 1 : lastLevel + 1, level, now)
@@ -398,7 +443,7 @@ export async function grantPlus(
   const season = await seasonNow(now)
   const window = season && season.def.id === seasonId ? season : { startsAt, endsAt }
   // Bought before the season's first ticket: level 1's Pass+ reward comes with it all the same.
-  const level = Math.max(1, levelFor(def, await seasonEarned(accountId, window.startsAt, window.endsAt)))
+  const level = Math.max(1, levelFor(def, await seasonEarned(accountId, window.startsAt, window.endsAt), true))
   await giveRewards(accountId, def, def.plus.rewards, 1, level, now)
   return true
 }
@@ -481,15 +526,15 @@ export async function seasonAfterRun(accountId: string, now = Date.now()): Promi
   const sync = await syncSeason(accountId, now)
   if (!sync) return null
   const { def } = sync.season
-  const nextAt = nextLevelAt(def, sync.level)
-  const next = def.rewards.find((r) => r.level === sync.level + 1)
+  const nextAt = nextLevelAt(def, sync.level, sync.plus)
+  const next = laneOf(def, sync.plus).find((r) => r.level === sync.level + 1)
   return {
     id: def.id,
     name: def.name,
     earned: sync.earned,
     added: Math.max(0, sync.earned - sync.before),
     level: sync.level,
-    levels: def.levels,
+    levels: topLevel(def, sync.plus),
     nextAt,
     next: next ? rewardView(next) : null,
     levelUp: sync.reached.map(rewardView),

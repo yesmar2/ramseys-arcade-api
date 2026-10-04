@@ -747,6 +747,25 @@ export const seasonProgress = pgTable(
 )
 
 /**
+ * A Plus membership (plus.ts): the monthly plan, through a Stripe subscription, or given by an admin
+ * ('grant'). `accounts.plan` is what the rest of the API reads; this is where it came from and how it stands.
+ */
+export const memberships = pgTable('memberships', {
+  accountId: text('account_id')
+    .primaryKey()
+    .references(() => accounts.id, { onDelete: 'cascade' }),
+  source: text('source').notNull(),
+  customer: text('customer'),
+  subscription: text('subscription'),
+  /** Stripe's word for it: active, trialing, past_due, canceled, unpaid…; 'active' for a grant. */
+  status: text('status').notNull(),
+  /** When it renews, or ends if it's been cancelled, in ms. */
+  renewsAt: bigint('renews_at', { mode: 'number' }),
+  cancelsAtEnd: boolean('cancels_at_end').notNull().default(false),
+  updatedAt: bigint('updated_at', { mode: 'number' }).notNull(),
+})
+
+/**
  * Who has a season's Pass+ (seasons.ts): the paid second row of its pass. Bought through Stripe Checkout
  * (`source` 'stripe', `ref` the checkout session, so a webhook told twice gives it once), or given by an
  * admin ('grant'), for trying it out.

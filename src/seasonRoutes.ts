@@ -6,6 +6,7 @@ import { takeToken } from './rateLimit.js'
 import {
   hasPlus,
   nextLevelAt,
+  plusOf,
   rewardView,
   seasonGoals,
   seasonInfo,
@@ -38,17 +39,19 @@ seasonRouter.get('/', async (req, res) => {
     let you: SeasonYou | null = null
     let goals: SeasonGoalView[] | undefined
     let plus = false
+    let via: 'pass' | 'plus' | null = null
     if (account && season.status === 'live') {
       // A page asking gives the rewards, but leaves the level for the next run to announce (seasons.ts).
       const sync = await syncSeason(account.id, now, { catchUp: page, announce: false })
       if (sync) {
-        you = { earned: sync.earned, level: sync.level, nextAt: nextLevelAt(season.def, sync.level) }
+        you = { earned: sync.earned, level: sync.level, nextAt: nextLevelAt(season.def, sync.level, sync.plus) }
         plus = sync.plus
       }
       if (page) goals = await seasonGoals(account.id, season, now)
     } else if (account && season.def.plus) {
       plus = await hasPlus(account.id, season.def.id)
     }
+    if (plus && account) via = await plusOf(account.id, season.def.id)
     let standings: SeasonStandingsView | undefined
     if (page && season.status !== 'upcoming') standings = await seasonStandingsView(season, account?.id ?? null, now)
     res.json({
@@ -60,7 +63,10 @@ seasonRouter.get('/', async (req, res) => {
             price: season.def.plus.price,
             currency: season.def.plus.currency,
             rewards: season.def.plus.rewards.map(rewardView),
+            bonus: season.def.plus.bonus,
             owned: plus,
+            // Bought for the season, or with a Plus membership.
+            via,
             buyable: paymentsEnabled() && season.status === 'live',
           }
         : null,

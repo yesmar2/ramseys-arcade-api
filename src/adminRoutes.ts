@@ -8,6 +8,7 @@ import { listFeedback } from './feedback.js'
 import { listFlags, reviewFlag, unreviewedCount } from './scoreFlags.js'
 import { getClaim } from './names.js'
 import { playerStats } from './playerStats.js'
+import { grantPlusMembership, plusState } from './plus.js'
 import { grantPlus, hasPlus, revokePlus, seasonInfo, seasonNow, seasonPreviewFrom, setSeasonPreview } from './seasons.js'
 import { setSiteEvents, siteEventsOn } from './siteEvents.js'
 import { resolveGameSlug } from './store.js'
@@ -144,6 +145,28 @@ adminRouter.post('/season-plus', async (req, res) => {
     if (parsed.data.on) await grantPlus(claim.accountId, season.def.id, { source: 'grant' })
     else await revokePlus(claim.accountId, season.def.id)
     res.json({ name, season: season.def.id, plus: await hasPlus(claim.accountId, season.def.id) })
+  } catch (err) {
+    refuse(err, res)
+  }
+})
+
+/** Plus for a tag's account, from an admin, or taken back: to try it without paying (plus.ts). */
+adminRouter.post('/plus', async (req, res) => {
+  try {
+    await requireAdmin(req)
+    const parsed = z.object({ name: z.string().min(1).max(12), on: z.boolean() }).safeParse(req.body)
+    if (!parsed.success) {
+      res.status(400).json({ error: 'Invalid body', code: 'INVALID_BODY' })
+      return
+    }
+    const name = parsed.data.name.trim().toUpperCase()
+    const claim = await getClaim(name)
+    if (!claim?.accountId) {
+      res.status(404).json({ error: 'That tag has no account', code: 'NO_ACCOUNT' })
+      return
+    }
+    await grantPlusMembership(claim.accountId, parsed.data.on)
+    res.json({ name, plan: (await plusState(claim.accountId)).plan })
   } catch (err) {
     refuse(err, res)
   }

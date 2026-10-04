@@ -183,6 +183,13 @@
       "when": 1790968722471,
       "tag": "0025_pass_plus_and_run_skins",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1791073972045,
+      "tag": "0026_plus_memberships",
+      "breakpoints": true
     }
   ]
 }

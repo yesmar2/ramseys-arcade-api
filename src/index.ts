@@ -30,6 +30,7 @@ import { tracksRouter } from './trackLapsRoutes.js'
 import { holesRouter } from './holesRoutes.js'
 import { todayRouter } from './todayRoutes.js'
 import { seasonRouter } from './seasonRoutes.js'
+import { plusRouter } from './plusRoutes.js'
 import { stripeWebhook } from './payments.js'
 import { syncCourseRecords } from './courseRecords.js'
 import { dailyHoleRouter } from './dailyHoleRoutes.js'
@@ -198,6 +199,7 @@ async function main() {
   app.use('/holes', holesRouter)
   app.use('/today', todayRouter)
   app.use('/season', seasonRouter)
+  app.use('/plus', plusRouter)
 
   logDbTarget()
 

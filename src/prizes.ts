@@ -101,6 +101,16 @@ export const PRIZES: readonly Prize[] = [
   { id: 'cf-meteors', kind: 'confetti', price: 0, earned: true },
   { id: 't-commander', kind: 'title', price: 0, earned: true },
   { id: 'eclipse', kind: 'finish', price: 0, earned: true },
+  { id: 't-flight-director', kind: 'title', price: 0, earned: true },
+  { id: 'nm-telemetry', kind: 'name', price: 0, earned: true },
+  { id: 'cd-porthole', kind: 'card', price: 0, earned: true },
+  { id: 'cf-splashdown', kind: 'confetti', price: 0, earned: true },
+  { id: 'blue-marble', kind: 'finish', price: 0, earned: true },
+  { id: 't-ace-pilot', kind: 'title', price: 0, earned: true },
+  { id: 'cd-station', kind: 'card', price: 0, earned: true },
+  { id: 'nm-wormhole', kind: 'name', price: 0, earned: true },
+  { id: 'black-hole', kind: 'finish', price: 0, earned: true },
+  { id: 't-legend', kind: 'title', price: 0, earned: true },
   // Season 1's goal of keeping the Dailies on 30 of its days (seasons.ts).
   { id: 't-regular', kind: 'title', price: 0, earned: true },
 ]

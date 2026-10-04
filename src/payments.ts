@@ -1,9 +1,11 @@
 import crypto from 'node:crypto'
 import type { Request, Response } from 'express'
+import { noteSubscription, settlePlusSession } from './plus.js'
 import { grantPlus, SEASONS, type SeasonDef } from './seasons.js'
 
 /*
- * Payments: a season's Pass+ (seasons.ts), bought through Stripe Checkout. Stripe's hosted page takes the
+ * Payments: a season's Pass+ (seasons.ts), bought once, and the Plus membership (plus.ts), monthly, both
+ * through Stripe Checkout. Stripe's hosted page takes the
  * card, so no card ever touches this server or the site; this asks Stripe for a checkout, and Stripe tells
  * the webhook (and the site's return, as a backstop) when it's paid. Off until STRIPE_SECRET_KEY is set:
  * the site then shows Pass+ without a way to buy it.
@@ -34,7 +36,7 @@ function form(params: Record<string, unknown>, prefix = ''): string[] {
   return out
 }
 
-async function stripe<T>(method: 'GET' | 'POST', path: string, params?: Record<string, unknown>): Promise<T> {
+export async function stripe<T>(method: 'GET' | 'POST', path: string, params?: Record<string, unknown>): Promise<T> {
   const key = process.env.STRIPE_SECRET_KEY?.trim()
   if (!key) throw refusal('Payments aren’t set up yet', 503, 'PAYMENTS_OFF')
   const res = await fetch(`${STRIPE}${path}`, {
@@ -58,8 +60,9 @@ export function returnOrigin(req: Request): string {
   return process.env.FRONTEND_ORIGIN?.replace(/\/$/, '') || 'http://localhost:5173'
 }
 
-type CheckoutSession = {
+export type CheckoutSession = {
   id: string
+  mode?: 'payment' | 'subscription' | 'setup'
   url: string | null
   payment_status: 'paid' | 'unpaid' | 'no_payment_required'
   amount_total: number | null
@@ -130,7 +133,7 @@ export function stripeSigned(raw: Buffer, header: string | undefined, secret: st
     })
 }
 
-/** POST /payments/stripe/webhook, mounted with a raw body: a checkout paid gives its Pass+. */
+/** POST /payments/stripe/webhook, mounted with a raw body: a checkout paid gives its Pass+ or starts Plus; a subscription's changes move the plan. */
 export async function stripeWebhook(req: Request, res: Response) {
   const secret = process.env.STRIPE_WEBHOOK_SECRET?.trim()
   const raw = req.body as Buffer
@@ -141,8 +144,16 @@ export async function stripeWebhook(req: Request, res: Response) {
   try {
     const event = JSON.parse(raw.toString('utf8')) as { type: string; data: { object: CheckoutSession } }
     if (event.type === 'checkout.session.completed' || event.type === 'checkout.session.async_payment_succeeded') {
-      const given = await settleCheckout(event.data.object)
-      if (given) console.log(`[payments] Pass+ from checkout ${event.data.object.id}`)
+      const session = event.data.object
+      if (session.mode === 'subscription') {
+        const member = await settlePlusSession(session)
+        if (member) console.log(`[payments] Plus from checkout ${session.id}`)
+      } else {
+        const given = await settleCheckout(session)
+        if (given) console.log(`[payments] Pass+ from checkout ${session.id}`)
+      }
+    } else if (event.type === 'customer.subscription.updated' || event.type === 'customer.subscription.deleted' || event.type === 'customer.subscription.created') {
+      await noteSubscription(event.data.object as unknown as Parameters<typeof noteSubscription>[0])
     }
     res.json({ received: true })
   } catch (err) {

@@ -10,8 +10,8 @@ import { boardDateKey } from './store.js'
  * Plus, the membership: what it's always been (more events and groups to host, plans.ts); since Ramsey
  * picked it on 2026-10-03, every season's Pass+ while you're a member (seasons.ts plusOf); and since
  * 2026-10-04, the Dailies + Seasons membership: every past day of every daily (the site opens the archive,
- * archive.ts keeps those runs off the boards), a members' look each month, and new games first
- * (earlyAccess.ts). Paid monthly
+ * archive.ts keeps those runs off the boards), a members' look each month, and new games a week before
+ * launch (earlyAccess.ts). Paid monthly
  * through a Stripe subscription; Stripe's own page takes the card, and its customer portal is where a member
  * changes the card or cancels. `accounts.plan` is what everything else reads; the subscription's state, sent
  * by Stripe's webhook, moves it.
@@ -155,7 +155,7 @@ export async function plusCheckout(accountId: string, origin: string, email?: st
           product_data: {
             name: 'Blipka Plus',
             description:
-              'Every past day of every daily, every season’s Pass+, a members’ look each month, brand-new games before launch, and more events and groups to host. Playing stays free.',
+              'Every past day of every daily, every season’s Pass+, a members’ look each month, new games a week before launch, and more events and groups to host. Playing stays free.',
           },
         },
       },

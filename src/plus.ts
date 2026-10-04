@@ -155,7 +155,7 @@ export async function plusCheckout(accountId: string, origin: string, email?: st
           product_data: {
             name: 'Blipka Plus',
             description:
-              'Every past day of every daily, every season’s Pass+, a members’ look each month, new games first, and more events and groups to host. Playing stays free.',
+              'Every past day of every daily, every season’s Pass+, a members’ look each month, brand-new games before launch, and more events and groups to host. Playing stays free.',
           },
         },
       },

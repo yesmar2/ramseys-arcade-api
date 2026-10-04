@@ -49,17 +49,17 @@ export const LANDER_TODAY_FROM: string | null = '2026-10-01'
 
 /**
  * The Today set's dailies, in the card's order, and the first board day (YYYYMMDD) each is on the card: 0
- * for from the start, null for not yet. The order is the site's (its lib/today.ts): the three just for fun,
- * then the three ranked (2026-10-02). The hole, the track and the Wanted have been on it from the start, so
- * no day before the pour joined is judged differently.
+ * for from the start, null for not yet. The order is the site's (its lib/today.ts): the three ranked, then
+ * the three just for fun (Ramsey, 2026-10-04; the other way round from 2026-10-02). The hole, the track and
+ * the Wanted have been on it from the start, so no day before the pour joined is judged differently.
  */
 export const TODAY_DAILIES: readonly { key: TodayKey; game: GameSlug; from: number | null }[] = [
-  { key: 'hole', game: 'acechase', from: 0 },
-  { key: 'wanted', game: 'findbug', from: 0 },
-  { key: 'pour', game: 'halffull', from: HALFFULL_TODAY_FROM ? keyOf(HALFFULL_TODAY_FROM) : null },
   { key: 'track', game: 'hotlap', from: 0 },
   { key: 'course', game: 'marblerun', from: MARBLERUN_TODAY_FROM ? keyOf(MARBLERUN_TODAY_FROM) : null },
   { key: 'cave', game: 'lander', from: LANDER_TODAY_FROM ? keyOf(LANDER_TODAY_FROM) : null },
+  { key: 'hole', game: 'acechase', from: 0 },
+  { key: 'wanted', game: 'findbug', from: 0 },
+  { key: 'pour', game: 'halffull', from: HALFFULL_TODAY_FROM ? keyOf(HALFFULL_TODAY_FROM) : null },
 ]
 
 /** A day's card: the dailies on it (live), in order, and how many of them keep the day. */

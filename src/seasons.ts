@@ -262,7 +262,19 @@ export function nextLevelAt(def: SeasonDef, level: number): number | null {
  * under its id, but it isn't in the counter's catalogue: it's chosen on its game's page, never worn on the
  * avatar, and never sold.
  */
-const SKINS_DRAWN = new Set(['lander-moonhopper', 'asteroids-comet', 'barrage-nova', 'hotlap-rocket', 'snake-comet-tail'])
+const SKINS_DRAWN = new Set([
+  'lander-moonhopper',
+  'asteroids-comet',
+  'barrage-nova',
+  'hotlap-rocket',
+  'snake-comet-tail',
+  // Season 1's Pass+ row.
+  'asteroids-shuttle',
+  'lander-eagle',
+  'barrage-ringship',
+  'snake-nebula-tail',
+  'hotlap-midnight',
+])
 
 /** Every skin a season gives, free row and Pass+, and its game: what a saved run may say it was played in. */
 export const SEASON_SKINS: ReadonlyMap<string, string> = new Map(

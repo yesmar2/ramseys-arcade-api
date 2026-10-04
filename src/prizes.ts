@@ -95,6 +95,12 @@ export const PRIZES: readonly Prize[] = [
   { id: 'cf-stardust', kind: 'confetti', price: 0, earned: true },
   { id: 'cf-shooting', kind: 'confetti', price: 0, earned: true },
   { id: 'sign-liftoff', kind: 'sign', price: 0, earned: true },
+  // Season 1's Pass+ row (seasons.ts), never traded for.
+  { id: 'nm-aurora', kind: 'name', price: 0, earned: true },
+  { id: 'cd-mission', kind: 'card', price: 0, earned: true },
+  { id: 'cf-meteors', kind: 'confetti', price: 0, earned: true },
+  { id: 't-commander', kind: 'title', price: 0, earned: true },
+  { id: 'eclipse', kind: 'finish', price: 0, earned: true },
   // Season 1's goal of keeping the Dailies on 30 of its days (seasons.ts).
   { id: 't-regular', kind: 'title', price: 0, earned: true },
 ]

@@ -65,6 +65,8 @@ export const AVATAR_BADGES = [
   'ringed',
   'mission',
   'supernova',
+  // Season 1's Pass+ (seasons.ts).
+  'eclipse',
 ] as const
 export type AvatarBadge = (typeof AVATAR_BADGES)[number]
 

@@ -12,8 +12,11 @@ import { seasonNow, syncSeason } from './seasons.js'
  * by Stripe's webhook, moves it.
  */
 
-/** Plus's price: $3.99 a month (Ramsey OK'd it with Pass+ at $4.99 a season, 2026-10-03). */
-export const PLUS_PRICE = { amount: 399, currency: 'usd', interval: 'month' } as const
+/**
+ * Plus's price: $2.99 a month, the same as a season's Pass+ (Ramsey, 2026-10-04). Joining for a month gives
+ * the season's Pass+ up to your level for good, so a month must never cost less than Pass+ itself.
+ */
+export const PLUS_PRICE = { amount: 299, currency: 'usd', interval: 'month' } as const
 
 function refusal(message: string, status: number, code: string) {
   return Object.assign(new Error(message), { status, code })

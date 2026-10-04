@@ -162,7 +162,8 @@ export const SEASONS: readonly SeasonDef[] = [
       { id: 'dailies', title: 'Keep the Dailies on 30 days', need: 30, reward: { kind: 'prize', id: 't-regular', name: 'The Regular title' } },
       { id: 'games', title: 'Win tickets in 12 different games', need: 12, reward: { kind: 'tickets', amount: 200, name: '200 tickets' } },
     ],
-    plus: { price: 499, currency: 'usd', rewards: SPACE_RACE_PLUS, bonus: 5 },
+    // $2.99 for the season, the same as a month of Plus, so joining Plus for a month and leaving is no cheaper (Ramsey, 2026-10-04).
+    plus: { price: 299, currency: 'usd', rewards: SPACE_RACE_PLUS, bonus: 5 },
   },
 ]
 

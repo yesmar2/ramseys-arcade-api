@@ -32,7 +32,8 @@ const foundSchema = z.object({ key: z.string().min(1).max(20) })
 
 /**
  * The site found an easter egg that hides a secret (EGG_SECRETS): the cheat code, the blip, the barrel roll,
- * the bouncing blip's corner, an old cheat, a coin at Game Over, a balanced plate broken in Centroid. It goes
+ * the bouncing blip's corner, an old cheat, a coin at Game Over, a balanced plate broken in Centroid, a game's own
+ * egg, the admin page's Staff Only door. It goes
  * on the shelf of the tag the account plays as. `found` is null if it was found before, or there's no tag yet.
  */
 secretsRouter.post('/found', async (req, res) => {

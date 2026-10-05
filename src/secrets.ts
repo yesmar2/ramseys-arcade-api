@@ -41,6 +41,7 @@ export const SECRETS = {
   alien: { n: 26, name: 'Little Green Friend', says: 'Got a wave from the alien in Lander’s cave.' },
   shootingstar: { n: 27, name: 'Shooting Star', says: 'Caught a shooting star over the Fireflies pond.' },
   moon: { n: 28, name: 'Shoot the Moon', says: 'Shot the moon over Barrage until it had a black eye.' },
+  staffonly: { n: 29, name: 'Staff Only', says: 'Tried the door marked Staff Only.' },
 } as const
 
 export type SecretKey = keyof typeof SECRETS
@@ -67,6 +68,7 @@ export const EGG_SECRETS: readonly SecretKey[] = [
   'alien',
   'shootingstar',
   'moon',
+  'staffonly',
 ]
 
 /** Saved runs in one of the boards' days that make a Marathon. */

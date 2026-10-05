@@ -93,6 +93,7 @@ export const AVATAR_GAME_PINS = [
   'barrage',
   'frenzy',
   'fireflies',
+  'pileup',
 ] as const
 
 /** Worn on the badge's edge, for what you've done. s1: Season 1's patch, for playing in it (seasons.ts). */

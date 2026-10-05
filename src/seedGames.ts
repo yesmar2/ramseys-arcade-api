@@ -55,6 +55,7 @@ export const SEEDED_GAMES: readonly GameSlug[] = [
   'barrage',
   'frenzy',
   'fireflies',
+  'pileup',
 ]
 
 /* ---------- shapes ---------- */
@@ -398,8 +399,7 @@ const fireflies: Model = (q, rng) => {
  * higher the level, so the score grows with the square of how far a run gets.
  * Matched to runs played through the game's own engine (2026-10-05): a slow
  * phone player's median reaches level 6 (about 2,000), a good one's level 12
- * (about 9,000), and a keyboard player's level 16 (about 15,000). Not in
- * SEEDED_GAMES while it's on deck: add it there the day it's released.
+ * (about 9,000), and a keyboard player's level 16 (about 15,000).
  */
 const pileup: Model = (q, rng) => {
   const level = Math.max(1, soften(curve(q, 3, 9, 17) * luck(rng, 0.35), 18, 26))

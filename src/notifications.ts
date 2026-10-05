@@ -26,6 +26,8 @@ export type NotificationKind =
   | 'today-beaten'
   /** Today's Dailies aren't kept yet and the day is nearly over: the streak ends with it (streakReminders.ts). */
   | 'streak-risk'
+  /** A run pushed you out of today's top three on a racing daily, while there's time to win it back (podiumLost.ts). */
+  | 'podium-lost'
 
 export const MATCH_KINDS: ReadonlySet<NotificationKind> = new Set<NotificationKind>([
   'match-open',

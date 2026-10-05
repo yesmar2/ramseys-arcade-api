@@ -6,6 +6,7 @@ import { accountFromRequest } from './auth.js'
 import { clientOffset, secretsForRun } from './secrets.js'
 import { settleToday } from './today.js'
 import { tellBeatenFriends } from './todayBeaten.js'
+import { hasPodium, podiumNames, tellPodiumLost } from './podiumLost.js'
 import { isBanned } from './bans.js'
 import { clientIp, hashIp, takeToken } from './rateLimit.js'
 import { claimRun, peekRun } from './runs.js'
@@ -644,6 +645,8 @@ leaderboardsRouter.post('/:game', async (req, res) => {
   // The player's own best before this run, for its tickets: a new best pays more, and none at all is a first go.
   // A daily's is its day points, which say only whether this is a first go (tickets.ts pays it no best).
   const priorBest = (await bestForName(game, claim.name, 'all'))?.score ?? null
+  // A racing daily's top three before this run, to tell whoever it pushes off the podium (podiumLost.ts).
+  const podium = hasPodium(game) ? await podiumNames(game).catch(() => []) : []
 
   const result = await addScore(game, claim.name, score, device ?? 'desktop', {
     runId: runId ?? null,
@@ -729,6 +732,12 @@ leaderboardsRouter.post('/:game', async (req, res) => {
     void tellBeatenFriends({ accountId: account.id, game, now: result.entry.at }).catch((err: unknown) => {
       console.warn(`[today] telling ${claim.name}'s friends:`, err)
     })
+    // And it may push someone off today's podium, who can still win it back.
+    if (podium.length && hasPodium(game)) {
+      void tellPodiumLost({ game, before: podium, name: claim.name, accountId: account.id, now: result.entry.at }).catch((err: unknown) => {
+        console.warn(`[today] podium after ${claim.name}'s run:`, err)
+      })
+    }
   }
 
   // The season's pass (seasons.ts), after every ticket the run brought: what it added, and any level it reached.

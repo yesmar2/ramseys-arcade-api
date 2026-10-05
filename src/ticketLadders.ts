@@ -157,8 +157,10 @@ export function hotlapLadder(paceMs: number | null | undefined): Ladder {
     steps: [
       { at: lap(pace * 1.02), tickets: 5, label: 'within 2% of the blue car' },
       { at: lap(pace) + 1, tickets: 8, label: 'beating the blue car' },
-      { at: lap(pace * 0.97), tickets: 11, label: 'beating it by 3%' },
-      { at: lap(pace * 0.94), tickets: 15, label: 'beating it by 6%' },
+      // Each rung names what it beats: a run's tickets say one rung on its own, where "it" would be nothing
+      // (Ramsey, 2026-10-05: "People won't know what 'it' is").
+      { at: lap(pace * 0.97), tickets: 11, label: 'beating the blue car by 3%' },
+      { at: lap(pace * 0.94), tickets: 15, label: 'beating the blue car by 6%' },
     ],
   }
 }
@@ -206,8 +208,8 @@ export function marblerunLadder(paceMs: number | null | undefined): Ladder {
     steps: [
       { at: run(pace * 1.02), tickets: 5, label: 'within 2% of the blue ball' },
       { at: run(pace) + 1, tickets: 8, label: 'beating the blue ball' },
-      { at: run(pace * 0.97), tickets: 11, label: 'beating it by 3%' },
-      { at: run(pace * 0.94), tickets: 15, label: 'beating it by 6%' },
+      { at: run(pace * 0.97), tickets: 11, label: 'beating the blue ball by 3%' },
+      { at: run(pace * 0.94), tickets: 15, label: 'beating the blue ball by 6%' },
     ],
   }
 }
@@ -236,8 +238,8 @@ export function landerLadder(paceMs: number | null | undefined): Ladder {
     steps: [
       { at: run(pace * 1.02), tickets: 5, label: 'within 2% of the blue ship' },
       { at: run(pace) + 1, tickets: 8, label: 'beating the blue ship' },
-      { at: run(pace * 0.97), tickets: 11, label: 'beating it by 3%' },
-      { at: run(pace * 0.94), tickets: 15, label: 'beating it by 6%' },
+      { at: run(pace * 0.97), tickets: 11, label: 'beating the blue ship by 3%' },
+      { at: run(pace * 0.94), tickets: 15, label: 'beating the blue ship by 6%' },
     ],
   }
 }

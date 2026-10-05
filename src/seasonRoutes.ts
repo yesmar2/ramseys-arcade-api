@@ -44,7 +44,13 @@ seasonRouter.get('/', async (req, res) => {
       // A page asking gives the rewards, but leaves the level for the next run to announce (seasons.ts).
       const sync = await syncSeason(account.id, now, { catchUp: page, announce: false })
       if (sync) {
-        you = { earned: sync.earned, level: sync.level, nextAt: nextLevelAt(season.def, sync.level, sync.plus) }
+        you = {
+          earned: sync.earned,
+          level: sync.level,
+          nextAt: nextLevelAt(season.def, sync.level, sync.plus),
+          announced: sync.announced,
+          pending: sync.level > sync.announced ? sync.reached.map(rewardView) : [],
+        }
         plus = sync.plus
       }
       if (page) goals = await seasonGoals(account.id, season, now)
@@ -77,6 +83,34 @@ seasonRouter.get('/', async (req, res) => {
   } catch (err) {
     console.warn('[season]', err)
     res.status(500).json({ error: 'Couldn’t read the season', code: 'SEASON_FAILED' })
+  }
+})
+
+/** A level-up is seen now and then: this only stops a script. */
+const SEEN_LIMIT = { limit: 30, windowMs: 10 * 60 * 1000 }
+
+/**
+ * POST /season/seen: the player has been told of the levels they've reached (the site's level-up, for levels
+ * no run report announced). Their announced level moves up to where they are, as a run's save moves it, so
+ * no device tells them again.
+ */
+seasonRouter.post('/seen', async (req, res) => {
+  const account = await accountFromRequest(req).catch(() => null)
+  if (!account) {
+    res.status(401).json({ error: 'Sign in first', code: 'AUTH_REQUIRED' })
+    return
+  }
+  const gate = takeToken(`season-seen:${account.id}`, SEEN_LIMIT)
+  if (!gate.ok) {
+    res.status(429).json({ error: 'Too many', code: 'RATE_LIMITED' })
+    return
+  }
+  try {
+    const sync = await syncSeason(account.id, Date.now(), { announce: true })
+    res.json({ level: sync?.level ?? 0, announced: sync?.announced ?? 0 })
+  } catch (err) {
+    console.warn('[season seen]', err)
+    res.status(500).json({ error: 'Couldn’t save that', code: 'SEASON_FAILED' })
   }
 })
 

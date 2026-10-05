@@ -381,6 +381,8 @@ export type SeasonSync = {
   /** The rewards of every level reached since the last look: the Pass+ row's too, with Pass+. */
   reached: SeasonReward[]
   plus: boolean
+  /** The last level the player was told of (a run's report, or the site's level-up: POST /season/seen). */
+  announced: number
 }
 
 /**
@@ -424,7 +426,7 @@ export async function syncSeason(
       })
   }
   const reached = lane.filter((r) => r.level > lastLevel && r.level <= level)
-  return { season, earned, before, level, reached, plus }
+  return { season, earned, before, level, reached, plus, announced: keptLevel }
 }
 
 /**
@@ -485,7 +487,19 @@ export type SeasonInfo = {
 
 export type SeasonRewardView = SeasonReward & { ready: boolean }
 
-export type SeasonYou = { earned: number; level: number; nextAt: number | null }
+/**
+ * Where a player is on the pass. `announced` is the last level they were told of; past it, `pending` are the
+ * rewards of the levels they've reached since, which the site tells them of once (POST /season/seen). Levels
+ * reached by tickets that came with no run report (a bug caught, a day's place paid at midnight, a record on
+ * a past course) wait here.
+ */
+export type SeasonYou = {
+  earned: number
+  level: number
+  nextAt: number | null
+  announced?: number
+  pending?: SeasonRewardView[]
+}
 
 /** What a run did on the pass, for the run report. */
 export type SeasonRun = {

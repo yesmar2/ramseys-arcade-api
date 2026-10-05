@@ -30,7 +30,8 @@ import {
 /** Default page of a record board, for callers that ask for no depth. */
 const BOARD_PAGE = 100
 const ASTEROIDS_WAVE_MAX = 20
-const SNAKE_LENGTH_MILESTONE_MIN = 20
+// Fastest to length 20 was retired (Ramsey, 2026-10-05): the books start at 30.
+const SNAKE_LENGTH_MILESTONE_MIN = 30
 const SNAKE_LENGTH_MILESTONE_MAX = 100
 const SNAKE_LENGTH_MILESTONE_STEP = 10
 const CROSSWALK_ROW_MILESTONE_MIN = 50

@@ -206,7 +206,7 @@ const snake: Model = (q, rng) => {
   const score = roundTo(foods * (21 + 0.17 * foods) * between(rng, 0.95, 1.05), 2)
   const times = stepTimes(rng, foods, lerp(2.8, 1.6, q) * between(rng, 0.92, 1.1), 0.4)
   const records: RunRecord[] = []
-  for (let m = 20; m <= 100; m += 10) {
+  for (let m = 30; m <= 100; m += 10) {
     if (length < m) break
     const at = times[m - 4]! * 1000
     records.push({ recordId: `fastest-length-${m}`, value: Math.round(at), atMs: at })

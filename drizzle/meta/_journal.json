@@ -197,6 +197,13 @@
       "when": 1791224943887,
       "tag": "0027_ticket_detail",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1791237965679,
+      "tag": "0028_day_ghosts",
+      "breakpoints": true
     }
   ]
 }

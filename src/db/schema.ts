@@ -900,3 +900,27 @@ export const lapGhosts = pgTable(
   },
   (t) => [primaryKey({ columns: [t.game, t.track] })],
 )
+
+/**
+ * Every player's best lap (or run) on today's track, course or cave, with its path, not only the fastest's
+ * (lapGhosts.ts keepDayGhost): so the ghost of the player one place above you can be raced, and the next one
+ * after you pass them. Rows of days gone by are let go as new ones come.
+ */
+export const dayGhosts = pgTable(
+  'day_ghosts',
+  {
+    game: text('game').notNull(),
+    track: integer('track').notNull(),
+    /** The tag the lap is on the board under. */
+    name: text('name').notNull(),
+    accountId: text('account_id')
+      .notNull()
+      .references(() => accounts.id, { onDelete: 'cascade' }),
+    timeMs: integer('time_ms').notNull(),
+    splits: jsonb('splits').notNull(),
+    path: jsonb('path').notNull(),
+    skin: text('skin'),
+    at: bigint('at', { mode: 'number' }).notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.game, t.track, t.name] })],
+)

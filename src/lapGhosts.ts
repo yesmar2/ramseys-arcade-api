@@ -1,6 +1,6 @@
-import { and, eq, sql } from 'drizzle-orm'
+import { and, eq, lt, sql } from 'drizzle-orm'
 import { db } from './db/client.js'
-import { lapGhosts } from './db/schema.js'
+import { dayGhosts, lapGhosts } from './db/schema.js'
 import { TIME_SCORE_BASE } from './scoreLimits.js'
 import type { GameSlug } from './store.js'
 import { trackBoard, trackState } from './trackLaps.js'
@@ -237,4 +237,80 @@ export async function keepGhost(input: {
     })
     .returning({ name: lapGhosts.name })
   return kept.length > 0
+}
+
+/*
+ * Next place up: every player's best lap (or run) on today's course is kept with its path (day_ghosts), not
+ * only the fastest's, so the ghost raced by default is the player's one place above you, and after you pass
+ * them, the next one's. Ramsey picked it (2026-10-05) so every run has a ghost in reach: the #1's is out of it
+ * for most. Kept the way the #1's is: the tag's best on today's board, to the millisecond.
+ */
+
+/** Courses back a day's ghosts are kept: about a week, well past their day. */
+const DAY_GHOSTS_KEPT = 8
+
+/** Keep a lap on today's course as its player's ghost, when it's their tag's best on the board. Answers whether it was kept. */
+export async function keepDayGhost(input: {
+  game: GameSlug
+  track: number
+  accountId: string
+  names: string[]
+  name: string
+  timeMs: number
+  splits: number[]
+  path: number[]
+  skin?: string | null
+  now?: number
+}): Promise<boolean> {
+  if (!input.names.includes(input.name)) return false
+  const board = await ghostBoard(input.game, input.track)
+  if (!board.some((e) => e.name === input.name && e.score === TIME_SCORE_BASE - input.timeMs)) return false
+  const now = input.now ?? Date.now()
+  const row = {
+    accountId: input.accountId,
+    timeMs: input.timeMs,
+    splits: input.splits,
+    path: input.path,
+    skin: input.skin ?? null,
+    at: now,
+  }
+  const kept = await db()
+    .insert(dayGhosts)
+    .values({ game: input.game, track: input.track, name: input.name, ...row })
+    // A faster lap of theirs takes its place; the same or slower leaves the one they have.
+    .onConflictDoUpdate({ target: [dayGhosts.game, dayGhosts.track, dayGhosts.name], set: row, setWhere: sql`${dayGhosts.timeMs} > excluded.time_ms` })
+    .returning({ name: dayGhosts.name })
+  // Courses long gone: let them go.
+  await db()
+    .delete(dayGhosts)
+    .where(and(eq(dayGhosts.game, input.game), lt(dayGhosts.track, input.track - DAY_GHOSTS_KEPT)))
+  return kept.length > 0
+}
+
+/**
+ * The player one place above `name` on a course's board, their place, and their lap's path if it's kept: the
+ * ghost to beat for a place. Null when `name` isn't on the board yet, or is its #1.
+ */
+export async function nextGhostFor(
+  game: GameSlug,
+  track: number,
+  name: string,
+): Promise<{ name: string; timeMs: number; place: number; ghost: LapGhost | null } | null> {
+  const board = await ghostBoard(game, track)
+  const at = board.findIndex((e) => e.name === name)
+  if (at <= 0) return null
+  const above = board[at - 1]!
+  const timeMs = TIME_SCORE_BASE - above.score
+  const [row] = await db()
+    .select()
+    .from(dayGhosts)
+    .where(and(eq(dayGhosts.game, game), eq(dayGhosts.track, track), eq(dayGhosts.name, above.name)))
+    .limit(1)
+  let ghost: LapGhost | null =
+    row && row.timeMs === timeMs
+      ? { name: row.name, timeMs: row.timeMs, splits: row.splits as number[], path: row.path as number[], at: row.at, ...(row.skin ? { skin: row.skin } : {}) }
+      : null
+  // The #1's may be kept only as the course's own ghost: one sent before every lap was kept.
+  if (!ghost && at === 1) ghost = (await ghostFor(game, track))?.ghost ?? null
+  return { name: above.name, timeMs, place: at, ghost }
 }

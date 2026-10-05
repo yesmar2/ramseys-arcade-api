@@ -4,7 +4,7 @@ import { z } from 'zod'
 import { ARCHIVED, inArchive } from './archive.js'
 import { accountFromRequest } from './auth.js'
 import { isBanned } from './bans.js'
-import { GHOST_GAMES, GHOST_RATE, ghostFor, ghostProblem, ghostState, keepGhost } from './lapGhosts.js'
+import { GHOST_GAMES, GHOST_RATE, ghostFor, ghostProblem, ghostState, keepDayGhost, keepGhost, nextGhostFor } from './lapGhosts.js'
 import { assertCanUseName, namesOwnedByAccount, withAvatarIds } from './names.js'
 import { pageParams } from './paging.js'
 import { takeToken } from './rateLimit.js'
@@ -26,8 +26,10 @@ import { addTrackLap, fastestBelievable, TRACK_GAMES, trackBoard, trackDayIso, t
  *                                      still to come)
  *   POST /tracks/:game/:n/laps         a lap on a track after its day, checked as a day's lap is; into the
  *                                      track's record book too, and taking the record pays RECORD_TICKETS once
- *   GET  /tracks/:game/:n/ghost        the track's #1, and their lap's path if it came with one (lapGhosts.ts)
- *   POST /tracks/:game/:n/ghost        a saved lap's path, kept if it's the track's fastest yet
+ *   GET  /tracks/:game/:n/ghost        the track's #1, and their lap's path if it came with one (lapGhosts.ts);
+ *                                      with ?above=TAG, on today's track, the player one place above TAG
+ *   POST /tracks/:game/:n/ghost        a saved lap's path, kept if it's the track's fastest yet, and on
+ *                                      today's track as its player's own ghost (next place up)
  *
  * Its #1's ghost races on it too, today's #1 on today's course (lapGhosts.ts).
  */
@@ -264,6 +266,29 @@ tracksRouter.get('/:game/:n/ghost', async (req, res) => {
     res.status(404).json({ error: 'No such track' })
     return
   }
+  // Next place up: on today's track, the player one place above a tag, to race for their place.
+  const above = cleanName(req.query.above)
+  if (above) {
+    const next = ghostState(game, n) === 'today' ? await nextGhostFor(game, n, above) : null
+    if (!next) {
+      res.status(404).json({ error: 'Nobody to race above that tag', code: 'NO_GHOST' })
+      return
+    }
+    const [player] = await withAvatarIds([{ name: next.name }])
+    res.setHeader('Cache-Control', 'private, max-age=15')
+    res.json({
+      game,
+      track: n,
+      name: next.name,
+      avatarId: player?.avatarId,
+      time: next.timeMs,
+      place: next.place,
+      ...(next.ghost?.skin ? { skin: next.ghost.skin } : {}),
+      // Without a path, the site drives the blue car's line at this time.
+      ...(next.ghost ? { splits: next.ghost.splits, rate: GHOST_RATE, path: next.ghost.path } : { path: null }),
+    })
+    return
+  }
   const top = await ghostFor(game, n)
   if (!top) {
     res.status(404).json({ error: 'Nobody has a lap on this track yet', code: 'NO_GHOST' })
@@ -317,7 +342,7 @@ tracksRouter.post('/:game/:n/ghost', async (req, res) => {
     return
   }
   const names = (await namesOwnedByAccount(account.id)).map((claim) => claim.name)
-  const kept = await keepGhost({
+  const lap = {
     game,
     track: n,
     accountId: account.id,
@@ -327,6 +352,9 @@ tracksRouter.post('/:game/:n/ghost', async (req, res) => {
     splits,
     path,
     skin: await runSkin(account.id, game, skin),
-  })
-  res.json({ kept })
+  }
+  const kept = await keepGhost(lap)
+  // On today's track every player's best is kept as well, for whoever is one place below them to race.
+  const day = state === 'today' ? await keepDayGhost(lap) : false
+  res.json({ kept, day })
 })

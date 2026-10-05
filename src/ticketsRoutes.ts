@@ -4,7 +4,7 @@ import { z } from 'zod'
 import { accountFromRequest } from './auth.js'
 import { takeToken } from './rateLimit.js'
 import { allLadders } from './ticketLadders.js'
-import { setGoal, ticketsFor, tradePrize } from './tickets.js'
+import { HISTORY_KINDS, setGoal, ticketHistory, ticketsFor, tradePrize } from './tickets.js'
 
 /*
  * The prize counter: a player's tickets, and trading them for prizes.
@@ -44,6 +44,31 @@ ticketsRouter.get('/', async (req, res) => {
     // A Plus member's look for the month arrives with what they own, wherever they open the site.
     await giveMembersLooks(account.id, account.plan)
     res.json(await ticketsFor(account.id))
+  } catch (err) {
+    fail(err, res)
+  }
+})
+
+const historySchema = z.object({
+  before: z.coerce.number().int().positive().optional(),
+  kind: z.enum(HISTORY_KINDS).optional(),
+  game: z.string().min(1).max(32).optional(),
+})
+
+/** Your tickets in and out, newest first, a week of days with something in them at a time. */
+ticketsRouter.get('/history', async (req, res) => {
+  const parsed = historySchema.safeParse(req.query)
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Invalid query', code: 'INVALID_QUERY' })
+    return
+  }
+  const account = await accountFromRequest(req)
+  if (!account) {
+    res.status(401).json({ error: 'Sign in to see your tickets', code: 'AUTH_REQUIRED' })
+    return
+  }
+  try {
+    res.json(await ticketHistory(account.id, parsed.data))
   } catch (err) {
     fail(err, res)
   }

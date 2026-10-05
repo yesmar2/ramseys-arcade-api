@@ -1,0 +1,1 @@
+ALTER TABLE "ticket_ledger" ADD COLUMN "detail" jsonb;

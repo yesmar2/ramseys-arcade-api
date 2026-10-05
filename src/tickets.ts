@@ -1,8 +1,8 @@
 import crypto from 'node:crypto'
-import { and, desc, eq, gt, gte, ne, sql } from 'drizzle-orm'
+import { and, desc, eq, gt, gte, inArray, lt, ne, notInArray, sql } from 'drizzle-orm'
 import { isBanned } from './bans.js'
 import { db } from './db/client.js'
-import { prizesOwned, ticketLedger, ticketWallets } from './db/schema.js'
+import { prizesOwned, ticketLedger, ticketWallets, type TicketDetail } from './db/schema.js'
 import { getClaim } from './names.js'
 import { prizeById } from './prizes.js'
 import {
@@ -10,6 +10,7 @@ import {
   boardDayStart,
   DAILY_GAMES,
   dayPlayers,
+  dayStartMs,
   isRankedGame,
   previousBoardDateKey,
   type GameSlug,
@@ -180,13 +181,30 @@ export async function payRun(input: {
     const usedToday = wallet.runDay === today ? wallet.runToday : 0
     let room = Math.max(0, RUN_TICKETS_PER_DAY - usedToday)
     let capped = 0
+    // The history shows a run's rows as one line, with the step it reached as its ladder said it then.
+    const ofRun: TicketDetail = { run: input.runId, score: input.score }
+    const stepDetail: TicketDetail = {
+      ...ofRun,
+      stepAt: reached?.at ?? null,
+      ...(reached?.label ? { label: reached.label } : !reached && ladder.baseLabel ? { label: ladder.baseLabel } : {}),
+      ...(paidBefore > 0 ? { before: paidBefore } : {}),
+    }
     const rows: (typeof ticketLedger.$inferInsert)[] = []
     for (const line of wanted) {
       const amount = Math.min(line.amount, room)
       room -= amount
       capped += line.amount - amount
       if (amount > 0) {
-        rows.push({ id: ledgerId(now), accountId: input.accountId, amount, reason: line.reason, ref: input.runId, game: input.game, at: now })
+        rows.push({
+          id: ledgerId(now),
+          accountId: input.accountId,
+          amount,
+          reason: line.reason,
+          ref: input.runId,
+          game: input.game,
+          at: now,
+          detail: line.reason === 'run' ? stepDetail : ofRun,
+        })
       }
     }
     if (input.priorBest == null) {
@@ -198,6 +216,7 @@ export async function payRun(input: {
         ref: input.game,
         game: input.game,
         at: now,
+        detail: ofRun,
       })
     }
     // The first paying run of a day, the day after one: a streak goes on.
@@ -210,6 +229,7 @@ export async function payRun(input: {
         ref: String(today),
         game: input.game,
         at: now,
+        detail: ofRun,
       })
     }
     const paid = rows.length
@@ -396,4 +416,85 @@ export async function ticketsFor(accountId: string, now = Date.now()): Promise<T
     owned: owned.map((row) => row.prizeId),
     recent,
   }
+}
+
+/** What the history can be narrowed to: a run's own pay (its step, a best, pickups), everything else earned, or trades. */
+export const HISTORY_KINDS = ['all', 'runs', 'bonuses', 'trades'] as const
+export type HistoryKind = (typeof HISTORY_KINDS)[number]
+
+export type LedgerLine = {
+  id: string
+  amount: number
+  reason: string
+  ref: string
+  game: string | null
+  at: number
+  detail: TicketDetail | null
+}
+
+export type TicketHistory = {
+  /** Board days with something in them, newest first, each with its rows newest first. */
+  days: { day: number; lines: LedgerLine[] }[]
+  /** Where the next page starts (rows from before this moment), or null when this page reaches the first ticket. */
+  next: number | null
+}
+
+/** The days a page of the history holds, and the most rows read to find them. A day's runs stop paying at 200. */
+const HISTORY_DAYS = 7
+const HISTORY_ROWS = 600
+
+/**
+ * Every ticket in and out, a page of days at a time, for the site's ticket history (Ramsey, 2026-10-05: "a
+ * page that shows how you earned tickets … lists out how you earned each of the tickets"). A page is whole
+ * days on the boards' clock, so a day's totals add up; the site words each row from its reason, ref and
+ * detail. A milestone that gave a look, not tickets, is a nought, and so is a streak freeze: not rows to show.
+ */
+export async function ticketHistory(
+  accountId: string,
+  options: { before?: number; kind?: HistoryKind; game?: string } = {},
+): Promise<TicketHistory> {
+  const kind = options.kind ?? 'all'
+  const where = [eq(ticketLedger.accountId, accountId), ne(ticketLedger.amount, 0)]
+  if (options.before) where.push(lt(ticketLedger.at, options.before))
+  if (kind === 'runs') where.push(inArray(ticketLedger.reason, [...RUN_REASONS]))
+  else if (kind === 'trades') where.push(eq(ticketLedger.reason, 'trade'))
+  else if (kind === 'bonuses') where.push(notInArray(ticketLedger.reason, [...RUN_REASONS, 'trade']))
+  if (options.game) where.push(eq(ticketLedger.game, options.game))
+  const rows = await db()
+    .select({
+      id: ticketLedger.id,
+      amount: ticketLedger.amount,
+      reason: ticketLedger.reason,
+      ref: ticketLedger.ref,
+      game: ticketLedger.game,
+      at: ticketLedger.at,
+      detail: ticketLedger.detail,
+    })
+    .from(ticketLedger)
+    .where(and(...where))
+    .orderBy(desc(ticketLedger.at), desc(ticketLedger.id))
+    .limit(HISTORY_ROWS + 1)
+
+  const days: TicketHistory['days'] = []
+  for (const row of rows.slice(0, HISTORY_ROWS)) {
+    const day = boardDateKey(row.at)
+    const last = days[days.length - 1]
+    if (last?.day === day) last.lines.push(row)
+    else days.push({ day, lines: [row] })
+  }
+  let next: number | null = null
+  if (days.length > HISTORY_DAYS) {
+    days.length = HISTORY_DAYS
+    next = dayStartMs(days[HISTORY_DAYS - 1]!.day)
+  } else if (rows.length > HISTORY_ROWS) {
+    if (days.length > 1) {
+      // The rows ran out partway through the last day: it comes whole on the next page.
+      days.pop()
+      next = dayStartMs(days[days.length - 1]!.day)
+    } else {
+      // A day longer than a page, which the cap on runs keeps from happening: the rest of it comes next.
+      next = rows[HISTORY_ROWS - 1]!.at
+    }
+  }
+  return { days, next }
 }

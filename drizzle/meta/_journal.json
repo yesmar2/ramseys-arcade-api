@@ -190,6 +190,13 @@
       "when": 1791073972045,
       "tag": "0026_plus_memberships",
       "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1791224943887,
+      "tag": "0027_ticket_detail",
+      "breakpoints": true
     }
   ]
 }

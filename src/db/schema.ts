@@ -687,6 +687,23 @@ export const ticketWallets = pgTable('ticket_wallets', {
 })
 
 /**
+ * What a ledger row was for beyond its reason and ref, for the ticket history (tickets.ts ticketHistory).
+ * A saved run's rows (its step, a new best, pickups, a first go, a day on a streak) carry the run, so the
+ * history shows them as one line; each carries the run's board score, and its 'run' row the step of the
+ * game's ladder it reached, as the ladder said it then. Rows from before 2026-10-05 have none.
+ */
+export type TicketDetail = {
+  run?: string
+  score?: number
+  /** The board score that reached the step, or null below the first step. */
+  stepAt?: number | null
+  /** How a daily says the step ("beating the blue car by 6%"), or its ladder's words for a run below the first. */
+  label?: string
+  /** A daily pays its step once a day: what its runs had already been paid of it that day. */
+  before?: number
+}
+
+/**
  * Every ticket in and out, and why. One row per reason and the thing it was
  * for (a run's id, a day, a game, a prize), so nothing pays twice.
  */
@@ -704,6 +721,7 @@ export const ticketLedger = pgTable(
     ref: text('ref').notNull(),
     game: text('game'),
     at: bigint('at', { mode: 'number' }).notNull(),
+    detail: jsonb('detail').$type<TicketDetail>(),
   },
   (t) => [
     uniqueIndex('ticket_ledger_account_reason_ref_idx').on(t.accountId, t.reason, t.ref),

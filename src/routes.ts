@@ -37,6 +37,7 @@ import {
   dayBoardPage,
   getBoard,
   getBoardPage,
+  playerBoard,
   globalRanksPage,
   isPeriod,
   isRankedGame,
@@ -319,6 +320,27 @@ leaderboardsRouter.get('/:game', async (req, res) => {
     return
   }
   const { limit, offset } = pageParams(req.query)
+  // As players: one row each with its place, worked out here, so a page shows any part of any board.
+  if (req.query.players === '1') {
+    const find = typeof req.query.find === 'string' ? req.query.find.slice(0, 12) : null
+    const around = Number(req.query.around)
+    const board = await playerBoard(game, period, { offset, limit, scope, name, find, around: Number.isFinite(around) ? around : 2 })
+    res.json({
+      game,
+      period,
+      offset,
+      total: board.total,
+      runs: board.runs,
+      entries: await withAvatarIds(board.entries),
+      you: board.you ? await withAvatarId(board.you) : null,
+      around: await withAvatarIds(board.around),
+      nextPlace: board.nextPlace,
+      band: board.band,
+      yourRuns: board.yourRuns,
+      found: await withAvatarIds(board.found),
+    })
+    return
+  }
   const page = await getBoardPage(game, period, { offset, limit, scope })
   res.json({
     game,

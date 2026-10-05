@@ -1097,6 +1097,131 @@ export async function getBoardPage(
   return { entries: pool.slice(offset, offset + limit), total: pool.length }
 }
 
+/* ---------- a board as players ---------- */
+
+/** One player on a board: their best run, its place among the players, and how many runs they have on it. */
+export type PlayerRow = LeaderboardEntry & { place: number; runs: number }
+
+/** A board's players, best first, with each one's run count: worked out once a view (or once a group's ask). */
+type PlayerField = { bests: LeaderboardEntry[]; runs: Map<string, number>; at: Map<string, number> }
+
+const playerFields = new WeakMap<PoolView, PlayerField>()
+
+function fieldOf(entries: LeaderboardEntry[]): PlayerField {
+  const bests: LeaderboardEntry[] = []
+  const runs = new Map<string, number>()
+  const at = new Map<string, number>()
+  // Board order: a player's first run met is their best.
+  for (const e of entries) {
+    const n = runs.get(e.name)
+    if (n === undefined) {
+      at.set(e.name, bests.length)
+      bests.push(e)
+      runs.set(e.name, 1)
+    } else runs.set(e.name, n + 1)
+  }
+  return { bests, runs, at }
+}
+
+/** How many of a board's players have a best better than `score` (higher is better on every board). */
+function playersAbove(bests: LeaderboardEntry[], score: number): number {
+  let lo = 0
+  let hi = bests.length
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1
+    if (bests[mid]!.score > score) lo = mid + 1
+    else hi = mid
+  }
+  return lo
+}
+
+/** The places a board is split at for "Beat X to reach the top …": the top 10, 100, 1,000 and half. */
+function bandPlaces(field: number): number[] {
+  const out = [10, 100, 1000].filter((p) => p < field)
+  const half = Math.ceil(field / 2)
+  if (field >= 20 && !out.includes(half)) out.push(half)
+  return out.sort((a, b) => a - b)
+}
+
+/**
+ * A board as players, a page at a time, with places worked out here so a page can show any part of a
+ * board of any size: the site used to read every run and count places itself, and stopped at 2,000 runs.
+ * With `name`: their row, the few players either side of them, the place a run just better than the
+ * player above takes, the next band up (the top 10, 100, 1,000 or half) and the score that gets into it,
+ * and their own runs on the board (for the chart of them). With `find`: up to ten players whose tag
+ * holds it. In a group (`scope`) all of it is among its members.
+ */
+export async function playerBoard(
+  game: GameSlug,
+  period: Period,
+  opts: { offset?: number; limit?: number; now?: number; scope?: NameScope; name?: string | null; find?: string | null; around?: number } = {},
+): Promise<{
+  entries: PlayerRow[]
+  total: number
+  runs: number
+  you: PlayerRow | null
+  around: PlayerRow[]
+  nextPlace: number | null
+  band: { place: number; half: boolean; score: number } | null
+  yourRuns: LeaderboardEntry[]
+  found: PlayerRow[]
+}> {
+  const view = await poolView(game, period, opts.now ?? Date.now())
+  let field: PlayerField
+  let runCount: number
+  if (opts.scope) {
+    const pool = filterByNames(view.entries, opts.scope)
+    field = fieldOf(pool)
+    runCount = pool.length
+  } else {
+    field = playerFields.get(view) ?? fieldOf(view.entries)
+    playerFields.set(view, field)
+    runCount = view.entries.length
+  }
+  const { bests } = field
+  const row = (i: number): PlayerRow => {
+    const e = bests[i]!
+    return { ...e, place: i + 1, runs: field.runs.get(e.name) ?? 1 }
+  }
+  const offset = Math.max(0, Math.floor(opts.offset ?? 0))
+  const limit = Math.max(1, Math.floor(opts.limit ?? BOARD_PAGE))
+  const entries: PlayerRow[] = []
+  for (let i = offset; i < Math.min(bests.length, offset + limit); i++) entries.push(row(i))
+
+  const who = opts.name ? opts.name.trim().slice(0, 12).toUpperCase() : ''
+  const mine = who ? field.at.get(who) : undefined
+  let you: PlayerRow | null = null
+  let around: PlayerRow[] = []
+  let nextPlace: number | null = null
+  let band: { place: number; half: boolean; score: number } | null = null
+  let yourRuns: LeaderboardEntry[] = []
+  if (mine !== undefined) {
+    you = row(mine)
+    const span = Math.max(0, Math.min(10, Math.floor(opts.around ?? 2)))
+    for (let i = Math.max(0, mine - span); i <= Math.min(bests.length - 1, mine + span); i++) around.push(row(i))
+    // A run just better than the player above: past everyone at or below their score.
+    nextPlace = mine > 0 ? playersAbove(bests, bests[mine - 1]!.score) + 1 : 1
+    const places = bandPlaces(bests.length).filter((p) => p < mine + 1)
+    const into = places[places.length - 1]
+    // The top half, when that's the band, is named as one rather than by its place.
+    const half = (p: number) => p === Math.ceil(bests.length / 2) && p !== 10 && p !== 100 && p !== 1000
+    if (into) band = { place: into, half: half(into), score: bests[into - 1]!.score }
+    const source = opts.scope ? filterByNames(view.entries, opts.scope) : view.entries
+    for (const e of source) {
+      if (e.name !== who) continue
+      yourRuns.push(e)
+      if (yourRuns.length >= 200) break
+    }
+  }
+
+  const q = opts.find ? opts.find.trim().toUpperCase() : ''
+  const found: PlayerRow[] = []
+  if (q) {
+    for (let i = 0; i < bests.length && found.length < 10; i++) if (bests[i]!.name.includes(q)) found.push(row(i))
+  }
+  return { entries, total: bests.length, runs: runCount, you, around, nextPlace, band, yourRuns, found }
+}
+
 export type PeriodBoardSummary = Record<Period, LeaderboardEntry[]>
 
 /** Top N entries per game for one period — one pass over local store. */

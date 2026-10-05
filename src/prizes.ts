@@ -10,7 +10,7 @@
  * (avatars.ts). The rest are worn in the avatar string's last part.
  */
 
-export type PrizeKind = 'finish' | 'name' | 'card' | 'confetti' | 'title' | 'sign'
+export type PrizeKind = 'finish' | 'name' | 'card' | 'confetti' | 'title' | 'sign' | 'skin'
 
 /**
  * `earned`: never for sale; a Today streak (today.ts), a season's pass (seasons.ts) or a month of Plus
@@ -73,6 +73,13 @@ export const PRIZES: readonly Prize[] = [
   { id: 'sign-marquee', kind: 'sign', price: 6500 },
   { id: 'sign', kind: 'sign', price: 10_000 },
   { id: 'sign-rooftop', kind: 'sign', price: 15_000 },
+  // The Hangar: skins for good, not a season's (skins.ts HANGAR_SKINS), each a game's ship, car or tail. Never
+  // a season's own skin, which only its pass gives. Worn on a game's page, as a season skin is.
+  { id: 'hotlap-green-flash', kind: 'skin', price: 1000 },
+  { id: 'lander-gold', kind: 'skin', price: 1500 },
+  { id: 'asteroids-retro', kind: 'skin', price: 800 },
+  { id: 'barrage-paper-plane', kind: 'skin', price: 1200 },
+  { id: 'snake-candy-stripe', kind: 'skin', price: 800 },
   // Earned by a Today streak (today.ts), never traded for.
   { id: 'gilded', kind: 'finish', price: 0, earned: true },
   { id: 't-everyday', kind: 'title', price: 0, earned: true },

@@ -713,12 +713,8 @@ leaderboardsRouter.post('/:game', async (req, res) => {
   const secrets = await secretsForRun({
     accountId: account.id,
     name: claim.name,
-    game,
-    score,
-    record: bestBefore,
     offset: clientOffset(req),
     at: result.entry.at,
-    entryId: result.entry.id,
   }).catch((err: unknown) => {
     console.warn(`[secrets] ${game} run for ${claim.name}:`, err)
     return []

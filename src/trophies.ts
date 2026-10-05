@@ -9,6 +9,7 @@ import {
   monthKey,
   weekStartKey,
 } from './store.js'
+import { SECRET_NUMBERS } from './secrets.js'
 import { ordinal } from './words.js'
 
 /**
@@ -332,7 +333,8 @@ export async function trophiesForName(name: string): Promise<TrophyAward[]> {
     .from(trophyAwards)
     .where(eq(trophyAwards.name, cleaned))
     .orderBy(desc(trophyAwards.awardedAt), trophyAwards.rank)
-  return rows.map(rowToAward)
+  // A find of a retired secret (secrets.ts) is kept, but shown nowhere and counted nowhere.
+  return rows.filter((r) => r.period !== 'secret' || SECRET_NUMBERS.has(r.periodKey)).map(rowToAward)
 }
 
 export async function recentTrophies(limit = 20): Promise<TrophyAward[]> {

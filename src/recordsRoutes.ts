@@ -12,6 +12,7 @@ import {
   bestRecordForName,
   courseOfRecord,
   getRecordBoard,
+  findOnRecordBoard,
   getRecordBoardPage,
   getRecordDef,
   getRecordProgression,
@@ -158,6 +159,9 @@ recordsRouter.get('/:game/:recordId', async (req, res) => {
     : null
   const { limit, offset } = pageParams(req.query)
   const page = await getRecordBoardPage(game, recordId, period, { offset, limit, scope })
+  // Find a player: up to ten whose tag holds it, with their places.
+  const find = typeof req.query.find === 'string' ? req.query.find : ''
+  const found = find ? await findOnRecordBoard(game, recordId, period, find, { scope }) : null
   /*
    * The record's story, and the asker's own, ride on the first page only: they
    * are the same on every page. The newest hundred breaks cover any record so
@@ -176,6 +180,7 @@ recordsRouter.get('/:game/:recordId', async (req, res) => {
     total: page.total,
     entries: await withAvatarIds(page.entries),
     you: you ? await withAvatarId(you) : null,
+    ...(found ? { found: await withAvatarIds(found) } : {}),
     ...(story
       ? {
           progression: await withAvatarIds(story.slice(-PROGRESSION_CAP)),

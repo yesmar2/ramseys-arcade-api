@@ -882,6 +882,23 @@ export async function getRecordBoardPage(
   return { entries: ranked.slice(offset, offset + limit), total: ranked.length }
 }
 
+/** Up to ten players on a record's board whose tag holds `find`, best first, each with its place (`rank`). */
+export async function findOnRecordBoard(
+  game: GameSlug,
+  recordId: string,
+  period: Period,
+  find: string,
+  opts: { now?: number; scope?: NameScope } = {},
+): Promise<YouRecordEntry[]> {
+  const def = getRecordDef(game, recordId)
+  const q = find.trim().slice(0, 12).toUpperCase()
+  if (!def || !q) return []
+  const ranked = rankedFor(await boardView(game, recordId, def, period, opts.now ?? Date.now()), opts.scope)
+  const found: YouRecordEntry[] = []
+  for (let i = 0; i < ranked.length && found.length < 10; i++) if (ranked[i]!.name.includes(q)) found.push({ ...ranked[i]!, rank: i + 1 })
+  return found
+}
+
 export async function bestRecordForName(
   game: GameSlug,
   recordId: string,

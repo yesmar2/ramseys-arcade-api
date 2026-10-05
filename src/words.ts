@@ -49,16 +49,16 @@ export function isTime(game: GameSlug) {
 }
 
 /**
- * A lap, or a run down a course or a cave, is won by hundredths, so Hot Lap's, Marble Run's and Lander's times
- * are printed to them; the other clocks to tenths.
+ * A lap, or a run down a course or a cave, can be won by thousandths, so Hot Lap's, Marble Run's and Lander's
+ * times are printed to them, as the site's boards show them; the other clocks to tenths.
  */
 function places(game: GameSlug) {
-  return game === 'hotlap' || game === 'marblerun' || game === 'lander' ? 2 : 1
+  return game === 'hotlap' || game === 'marblerun' || game === 'lander' ? 3 : 1
 }
 
-/** A time the way the site prints one: 47.5s, or 1:02.3 past a minute; to the hundredth, 53.36s. */
+/** A time the way the site prints one: 47.5s, or 1:02.3 past a minute; to the thousandth, 53.362s. */
 export function clock(ms: number, decimals = 1): string {
-  const total = decimals === 2 ? Math.round(Math.max(0, ms) / 10) / 100 : Math.max(0, ms) / 1000
+  const total = decimals >= 2 ? Math.round(Math.max(0, ms) / 10 ** (3 - decimals)) / 10 ** decimals : Math.max(0, ms) / 1000
   const m = Math.floor(total / 60)
   const s = total - m * 60
   return m > 0 ? `${m}:${s.toFixed(decimals).padStart(decimals + 3, '0')}` : `${s.toFixed(decimals)}s`

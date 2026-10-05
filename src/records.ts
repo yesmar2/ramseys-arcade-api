@@ -1292,11 +1292,11 @@ export {
   CROSSWALK_ROW_MILESTONE_STEP,
 }
 
-/** A record's value the way its book prints it: 47.5s for a clock, 23 for a count, 45.18s for a lap, 2 tries. */
+/** A record's value the way its book prints it: 47.5s for a clock, 23 for a count, 45.182s for a lap, 2 tries. */
 function recordValue(def: RecordDef, value: number): string {
   if (def.id.startsWith('pour-')) return scoreFigure('halffull', value)
   if (courseOfRecord(def.game, def.id) != null) {
-    return def.unit === 'ms' ? clock(value, 2) : `${value.toLocaleString('en-US')} ${value === 1 ? 'try' : 'tries'}`
+    return def.unit === 'ms' ? clock(value, 3) : `${value.toLocaleString('en-US')} ${value === 1 ? 'try' : 'tries'}`
   }
   return def.unit === 'ms' ? clock(value) : value.toLocaleString('en-US')
 }

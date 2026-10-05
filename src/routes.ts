@@ -324,7 +324,21 @@ leaderboardsRouter.get('/:game', async (req, res) => {
   if (req.query.players === '1') {
     const find = typeof req.query.find === 'string' ? req.query.find.slice(0, 12) : null
     const around = Number(req.query.around)
-    const board = await playerBoard(game, period, { offset, limit, scope, name, find, around: Number.isFinite(around) ? around : 2 })
+    const marks =
+      typeof req.query.marks === 'string'
+        ? req.query.marks.split(',').slice(0, 12).map(Number).filter((n) => Number.isInteger(n) && n > 0)
+        : []
+    const would = typeof req.query.would === 'string' && req.query.would !== '' ? Number(req.query.would) : null
+    const board = await playerBoard(game, period, {
+      offset,
+      limit,
+      scope,
+      name,
+      find,
+      around: Number.isFinite(around) ? around : 2,
+      marks,
+      would: would != null && Number.isFinite(would) ? would : null,
+    })
     res.json({
       game,
       period,
@@ -338,6 +352,8 @@ leaderboardsRouter.get('/:game', async (req, res) => {
       band: board.band,
       yourRuns: board.yourRuns,
       found: await withAvatarIds(board.found),
+      marked: await withAvatarIds(board.marked),
+      wouldPlace: board.wouldPlace,
     })
     return
   }

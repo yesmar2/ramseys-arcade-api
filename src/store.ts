@@ -1149,12 +1149,24 @@ function bandPlaces(field: number): number[] {
  * With `name`: their row, the few players either side of them, the place a run just better than the
  * player above takes, the next band up (the top 10, 100, 1,000 or half) and the score that gets into it,
  * and their own runs on the board (for the chart of them). With `find`: up to ten players whose tag
- * holds it. In a group (`scope`) all of it is among its members.
+ * holds it. With `marks`: the rows at those places (a game's page reads 1st, 10th, the middle and its share
+ * lines), each with the place a run just better than it takes. With `would`: the place a run of that
+ * score would take now, behind everyone at or above it. In a group (`scope`) all of it is among its members.
  */
 export async function playerBoard(
   game: GameSlug,
   period: Period,
-  opts: { offset?: number; limit?: number; now?: number; scope?: NameScope; name?: string | null; find?: string | null; around?: number } = {},
+  opts: {
+    offset?: number
+    limit?: number
+    now?: number
+    scope?: NameScope
+    name?: string | null
+    find?: string | null
+    around?: number
+    marks?: number[]
+    would?: number | null
+  } = {},
 ): Promise<{
   entries: PlayerRow[]
   total: number
@@ -1165,6 +1177,8 @@ export async function playerBoard(
   band: { place: number; half: boolean; score: number } | null
   yourRuns: LeaderboardEntry[]
   found: PlayerRow[]
+  marked: (PlayerRow & { beatPlace: number })[]
+  wouldPlace: number | null
 }> {
   const view = await poolView(game, period, opts.now ?? Date.now())
   let field: PlayerField
@@ -1219,7 +1233,15 @@ export async function playerBoard(
   if (q) {
     for (let i = 0; i < bests.length && found.length < 10; i++) if (bests[i]!.name.includes(q)) found.push(row(i))
   }
-  return { entries, total: bests.length, runs: runCount, you, around, nextPlace, band, yourRuns, found }
+  const marked: (PlayerRow & { beatPlace: number })[] = []
+  for (const place of new Set(opts.marks ?? [])) {
+    if (!Number.isInteger(place) || place < 1 || place > bests.length) continue
+    marked.push({ ...row(place - 1), beatPlace: playersAbove(bests, bests[place - 1]!.score) + 1 })
+  }
+  // Behind everyone at or above it (scores are whole numbers): a tie goes to whoever got there first, and a
+  // new run is the latest.
+  const wouldPlace = opts.would != null && Number.isFinite(opts.would) ? playersAbove(bests, Math.ceil(opts.would) - 1) + 1 : null
+  return { entries, total: bests.length, runs: runCount, you, around, nextPlace, band, yourRuns, found, marked, wouldPlace }
 }
 
 export type PeriodBoardSummary = Record<Period, LeaderboardEntry[]>

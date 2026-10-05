@@ -28,11 +28,13 @@ import {
   addScore,
   ALLOWED_GAMES,
   bestForName,
+  bestRunEver,
   bestsForName,
   boardDateKey,
   boardsSummaryForPeriod,
   DAILY_GAMES,
   DAILY_SINCE,
+  dailiesPlayed,
   dailyDays,
   dayBoardPage,
   getBoard,
@@ -103,15 +105,19 @@ leaderboardsRouter.get('/rank', async (req, res) => {
   if (name) {
     const data = await rankForName(name, 2, period, Date.now(), scope)
     // One avatar lookup for the player and their neighbours together.
-    const [me, nearby] = await Promise.all([
+    const [me, nearby, dailies] = await Promise.all([
       withAvatarId({ name: name.slice(0, 12).toUpperCase() }),
       withAvatarIds(data.nearby),
+      // All time leaves the dailies out (store.ts ALL_TIME_GAMES): which of them they've played, any day, so a
+      // player card's games played still has them.
+      period === 'all' ? dailiesPlayed(name) : Promise.resolve(null),
     ])
     res.json({
       ...data,
       period,
       avatarId: me.avatarId,
       nearby,
+      ...(dailies ? { dailies } : {}),
     })
     return
   }
@@ -678,11 +684,13 @@ leaderboardsRouter.post('/:game', async (req, res) => {
   }
 
   // Read before the write, so "was this far past the rest?" has an answer: a daily's today, the others' all time
-  // (a daily's all-time board is its days' points, store.ts dayPointsBoard, not a score to measure a run against).
+  // (a daily has no board for all time, store.ts ALL_TIME_GAMES, and days' runs can't be measured against each other).
   const bestBefore = (await getBoard(game, DAILY_GAMES.has(game) ? 'daily' : 'all'))[0]?.score ?? 0
   // The player's own best before this run, for its tickets: a new best pays more, and none at all is a first go.
-  // A daily's is its day points, which say only whether this is a first go (tickets.ts pays it no best).
-  const priorBest = (await bestForName(game, claim.name, 'all'))?.score ?? null
+  // A daily's, from its runs of any day, says only whether this is a first go (tickets.ts pays it no best).
+  const priorBest = DAILY_GAMES.has(game)
+    ? await bestRunEver(game, claim.name)
+    : ((await bestForName(game, claim.name, 'all'))?.score ?? null)
   // A racing daily's top three before this run, to tell whoever it pushes off the podium (podiumLost.ts).
   const podium = hasPodium(game) ? await podiumNames(game).catch(() => []) : []
 

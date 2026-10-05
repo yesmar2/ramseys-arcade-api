@@ -1,4 +1,4 @@
-import { allScores, boardDateKey, DAILY_GAMES, getBoard, previousBoardDateKey, type GameSlug } from './store.js'
+import { allScores, boardDateKey, DAILY_GAMES, previousBoardDateKey, type GameSlug } from './store.js'
 import { onRewrite } from './feed.js'
 
 /**
@@ -177,7 +177,7 @@ async function buildSiteRecords(scope?: { names: Set<string> } | null): Promise<
   const byGame = await allScores()
 
   const tallies = new Map<string, Tally>()
-  /** Name → games whose all-time board has them at #1 (a daily's is its day points), for "boards held". */
+  /** Name → games whose all-time board has them at #1 (a daily has none), for "boards held". */
   const held = new Map<string, number>()
 
   for (const [game, entries] of byGame) {
@@ -211,8 +211,8 @@ async function buildSiteRecords(scope?: { names: Set<string> } | null): Promise<
         dayTally.games++
       }
     }
-    // A daily's all-time board is its days' places (store.ts dayPointsBoard): its best run is only one day's course's #1.
-    if (DAILY_GAMES.has(game as GameSlug)) leader = (await getBoard(game as GameSlug, 'all', Date.now(), scope?.names, 1))[0]?.name ?? null
+    // A daily has no all-time board to hold (store.ts ALL_TIME_GAMES): its best run is only one day's course's #1.
+    if (DAILY_GAMES.has(game as GameSlug)) leader = null
     if (leader != null) held.set(leader, (held.get(leader) ?? 0) + 1)
   }
 

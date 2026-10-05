@@ -43,7 +43,7 @@ export type GameStat = {
   slug: string
   runs: number
   best: number
-  /** Rank on the all-time board, 1-based. */
+  /** Place on the period's board, 1-based; null with none (a daily has no board for all time). */
   rank: number | null
   totalPlayers: number
   /** Share of all runs on this game that your best beats, 0-100. */
@@ -176,9 +176,9 @@ export async function playerStats(
     })
     const ranked = isRankedGame(slug as GameSlug)
     if (!ranked || (DAILY_GAMES.has(slug as GameSlug) && period !== 'daily')) {
-      // A daily's board for longer than a day is its days' points (store.ts dayPointsBoard), one row a player:
-      // the player's place is their row's, and they're ahead of everyone below it. A daily just for fun
-      // places nobody, on any board (store.ts UNRANKED_GAMES).
+      // A daily's board for the week or the month is its days' points (store.ts dayPointsBoard), one row a
+      // player: the player's place is their row's, and they're ahead of everyone below it. It has none for all
+      // time (store.ts ALL_TIME_GAMES), and a daily just for fun places nobody, on any board (UNRANKED_GAMES).
       const at = ranked ? board.entries.findIndex((entry) => entry.name === name) : -1
       const field = ranked ? board.entries.length : 0
       games.push({

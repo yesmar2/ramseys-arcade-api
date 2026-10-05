@@ -14,6 +14,8 @@ const BOT_BEST: Partial<Record<GameSlug, { score: number; seconds: number }>> = 
   barrage: { score: 13_240, seconds: 177 },
   // Taps every tune back the instant it ends: faster than any hand.
   fireflies: { score: 525, seconds: 300 },
+  // Drops 2.5 pieces a second, perfectly, chasing four rows at a time.
+  pileup: { score: 254_525, seconds: 600 },
 }
 
 const only = process.argv[2] as GameSlug | undefined

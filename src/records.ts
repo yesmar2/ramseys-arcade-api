@@ -245,6 +245,7 @@ export const SCORE_STREAK_THRESHOLDS: Record<GameSlug, number> = {
   // Putt's five short holes are par 10, and a round at par pays 1,000: this is four under, or fewer with aces.
   putt: 1400,
   fireflies: 60,
+  pileup: 3000,
   // Dailies: none kept (see buildCrossRunStreakRecords).
   acechase: 0,
   hotlap: 0,

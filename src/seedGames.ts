@@ -393,6 +393,25 @@ const fireflies: Model = (q, rng) => {
   return finish('fireflies', rng, score, t, [])
 }
 
+/**
+ * Pileup: a run is the levels it reaches, ten rows each, and a row pays more the
+ * higher the level, so the score grows with the square of how far a run gets.
+ * Matched to runs played through the game's own engine (2026-10-05): a slow
+ * phone player's median reaches level 6 (about 2,000), a good one's level 12
+ * (about 9,000), and a keyboard player's level 16 (about 15,000). Not in
+ * SEEDED_GAMES while it's on deck: add it there the day it's released.
+ */
+const pileup: Model = (q, rng) => {
+  const level = Math.max(1, soften(curve(q, 3, 9, 17) * luck(rng, 0.35), 18, 26))
+  const rows = Math.max(0, Math.round((level - 1) * 10 + between(rng, 0, 9)))
+  // Points a row, before the level: mostly ones and twos at a time, more fours the better the player.
+  const perRow = lerp(9, 13, q) * between(rng, 0.85, 1.15)
+  let score = 0
+  for (let r = 0; r < rows; r++) score += perRow * (1 + Math.floor(r / 10))
+  const play = rows * lerp(9, 2.4, q) * between(rng, 0.85, 1.15) + between(rng, 10, 40)
+  return finish('pileup', rng, roundTo(score, 5), play, [])
+}
+
 const MODELS: Partial<Record<GameSlug, Model>> = {
   asteroids,
   patriot,
@@ -408,6 +427,7 @@ const MODELS: Partial<Record<GameSlug, Model>> = {
   barrage,
   frenzy,
   fireflies,
+  pileup,
 }
 
 /** One run of `game` by a player whose ability in it is `q` today. */

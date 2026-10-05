@@ -117,6 +117,15 @@ const SCORE_RULES: Record<GameSlug, ScoreRule> = {
    * watch, so no hand can go faster. These leave that bot under 60% of the cap.
    */
   fireflies: { kind: 'rate', floor: 20, perSecond: 3 },
+  /*
+   * Rows pay ten to eighty times the level, and the level climbs a step every
+   * ten rows, so the points compound as Frenzy's do. Measured with the game's
+   * own engine: a bot that drops 2.5 pieces a second, perfectly, chasing four
+   * rows at a time, scores 3,400 in a minute, 60,000 in five and 255,000 in
+   * ten; these leave it about three times that at every point. A bot at four
+   * pieces a second, faster than hands, still stays under (575,000 in ten).
+   */
+  pileup: { kind: 'curve', floor: 1_000, perSecond: 50, perSecondSquared: 2 },
   acechase: { kind: 'tries' },
   findbug: { kind: 'time' },
   spotter: { kind: 'time' },

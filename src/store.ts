@@ -27,6 +27,7 @@ export const ALLOWED_GAMES = [
   'halffull',
   'marblerun',
   'lander',
+  'pileup',
 ] as const
 export type GameSlug = (typeof ALLOWED_GAMES)[number]
 
@@ -104,6 +105,7 @@ function emptyStore(): Store {
     barrage: [],
     frenzy: [],
     fireflies: [],
+    pileup: [],
     acechase: [],
     hotlap: [],
     halffull: [],
@@ -161,6 +163,7 @@ export async function replaceAllBoards(next: Store) {
     barrage: Array.isArray(next.barrage) ? next.barrage : [],
     frenzy: Array.isArray(next.frenzy) ? next.frenzy : [],
     fireflies: Array.isArray(next.fireflies) ? next.fireflies : [],
+    pileup: Array.isArray(next.pileup) ? next.pileup : [],
     acechase: Array.isArray(next.acechase) ? next.acechase : [],
     hotlap: Array.isArray(next.hotlap) ? next.hotlap : [],
     halffull: Array.isArray(next.halffull) ? next.halffull : [],

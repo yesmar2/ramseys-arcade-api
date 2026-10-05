@@ -74,8 +74,11 @@ export const EGG_SECRETS: readonly SecretKey[] = [
 /** Saved runs in one of the boards' days that make a Marathon. */
 const MARATHON_RUNS = 50
 
-/** Every game the site lists (data/games.ts hides Simon and Spotter): the Grand Tour's. */
-const TOUR_GAMES: readonly GameSlug[] = ALLOWED_GAMES.filter((g) => g !== 'simon' && g !== 'spotter')
+/**
+ * Every game the site lists (data/games.ts hides Simon and Spotter, and holds Pileup back until it's
+ * released, as tournaments.ts ON_DECK_GAMES does): the Grand Tour's.
+ */
+const TOUR_GAMES: readonly GameSlug[] = ALLOWED_GAMES.filter((g) => g !== 'simon' && g !== 'spotter' && g !== 'pileup')
 
 /**
  * The player's own clock, as the site sends it with what it posts (X-TZ-Offset: Date#getTimezoneOffset,

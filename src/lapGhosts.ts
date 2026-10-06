@@ -55,8 +55,8 @@ const MOST_LINES = 12
 const SHIP_STEP = 8
 /** Farther than that is a crash, back to a gate: a run with more than this many isn't one. */
 const MOST_CRASHES = 200
-/** Metres a bird can go between two samples: a tenth of a second at far more than it ever flies. */
-const BIRD_STEP = 12
+/** Metres a bird can go between two samples: a tenth of a second at far more than it ever flies (about 100 m/s at best, on a streak). */
+const BIRD_STEP = 15
 
 export type LapGhost = { name: string; timeMs: number; splits: number[]; path: number[]; at: number; skin?: string }
 

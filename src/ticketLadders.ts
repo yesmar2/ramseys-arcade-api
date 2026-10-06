@@ -149,10 +149,11 @@ const TYPICAL_PACE_MS = 53_000
  * They were 3% and 6% for the top two until Ramsey found platinum came "almost every time" (2026-10-06): his
  * best runs of the day land 15 to 30% under the blue, which drives carefully, and each blue leaves its own
  * slack. Steps of 6, 7 and 8% put platinum about where his best runs land; he found that "still needs to be a
- * little harder", so it's a point more a step: platinum is 21% in Hot Lap, 24% in Lander and 27% in Marble
- * Run. A run slower than the blue pays the base 3.
+ * little harder", so it's a point more a step in Lander and Marble Run: platinum is 24% and 27% there. Hot Lap
+ * went to 7% too, then back to 6% (platinum 18%) once he found its platinum "just a little too hard". A run
+ * slower than the blue pays the base 3.
  */
-export const RACE_MEDAL_STEP = { hotlap: 0.07, marblerun: 0.09, lander: 0.08 } as const
+export const RACE_MEDAL_STEP = { hotlap: 0.06, marblerun: 0.09, lander: 0.08 } as const
 
 /**
  * A racing daily's steps on a day whose blue goes in `pace` ms, `score` turning a time into a board score.
@@ -170,8 +171,8 @@ function raceSteps(pace: number, step: number, blue: string, score: (ms: number)
 }
 
 /**
- * Hot Lap, on a day whose blue car laps in `paceMs`: slower than it 3, beating it 5, by 7% 8, by 14% 11, by
- * 21% 15. Without a blue car, a lap pays the 3 alone.
+ * Hot Lap, on a day whose blue car laps in `paceMs`: slower than it 3, beating it 5, by 6% 8, by 12% 11, by
+ * 18% 15. Without a blue car, a lap pays the 3 alone.
  */
 export function hotlapLadder(paceMs: number | null | undefined): Ladder {
   const base = { base: 3, baseLabel: 'a lap today' }

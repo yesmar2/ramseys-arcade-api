@@ -43,7 +43,7 @@ const resultSchema = z.object({
   token: z.string().min(1).max(128).optional(),
   tries: z.number().int().min(1).max(400),
   /** One letter a try (b bull, i inner ring, o outer ring, x off them, l lost), as Today's Hole sends. */
-  pattern: z.string().regex(/^[bioxl]{1,400}$/),
+  pattern: z.string().regex(/^[bionxl]{1,400}$/),
   device: z.enum(['phone', 'tablet', 'desktop']).optional(),
 })
 

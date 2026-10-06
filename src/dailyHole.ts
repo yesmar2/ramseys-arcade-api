@@ -34,7 +34,8 @@ const FIRST_DAY = '2026-09-25'
 /** A bullseye just before midnight, sent just after, still counts for its day. */
 const MIDNIGHT_GRACE_MS = 30 * 60_000
 const DAY = /^\d{4}-\d{2}-\d{2}$/
-const PATTERN = /^[bioxl]{1,400}$/
+// b bullseye, i inner ring, o outer ring, n near (within 3 m, from 2026-10-06), x further off, l lost.
+const PATTERN = /^[bionxl]{1,400}$/
 /** The day's spread: one to nine tries, and ten or more. */
 const SPREAD = 10
 

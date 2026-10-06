@@ -148,10 +148,11 @@ const TYPICAL_PACE_MS = 53_000
  * (bronze), and each step of the game's faster than it pays the next, 8, 11 and 15 (silver, gold, platinum).
  * They were 3% and 6% for the top two until Ramsey found platinum came "almost every time" (2026-10-06): his
  * best runs of the day land 15 to 30% under the blue, which drives carefully, and each blue leaves its own
- * slack. So platinum sits about where the best runs so far land, 18% in Hot Lap, 21% in Lander and 24% in
- * Marble Run. A run slower than the blue pays the base 3.
+ * slack. Steps of 6, 7 and 8% put platinum about where his best runs land; he found that "still needs to be a
+ * little harder", so it's a point more a step: platinum is 21% in Hot Lap, 24% in Lander and 27% in Marble
+ * Run. A run slower than the blue pays the base 3.
  */
-export const RACE_MEDAL_STEP = { hotlap: 0.06, marblerun: 0.08, lander: 0.07 } as const
+export const RACE_MEDAL_STEP = { hotlap: 0.07, marblerun: 0.09, lander: 0.08 } as const
 
 /**
  * A racing daily's steps on a day whose blue goes in `pace` ms, `score` turning a time into a board score.
@@ -169,8 +170,8 @@ function raceSteps(pace: number, step: number, blue: string, score: (ms: number)
 }
 
 /**
- * Hot Lap, on a day whose blue car laps in `paceMs`: slower than it 3, beating it 5, by 6% 8, by 12% 11, by
- * 18% 15. Without a blue car, a lap pays the 3 alone.
+ * Hot Lap, on a day whose blue car laps in `paceMs`: slower than it 3, beating it 5, by 7% 8, by 14% 11, by
+ * 21% 15. Without a blue car, a lap pays the 3 alone.
  */
 export function hotlapLadder(paceMs: number | null | undefined): Ladder {
   const base = { base: 3, baseLabel: 'a lap today' }
@@ -209,8 +210,8 @@ const BALL_MIN_MS = 30_000
 const BALL_MAX_MS = 90_000
 
 /**
- * Marble Run, on a day whose blue ball rolls down in `paceMs`: slower than it 3, beating it 5, by 8% 8, by
- * 16% 11, by 24% 15, as Hot Lap pays against its blue car. Without a blue ball, a run pays the 3 alone.
+ * Marble Run, on a day whose blue ball rolls down in `paceMs`: slower than it 3, beating it 5, by 9% 8, by
+ * 18% 11, by 27% 15, as Hot Lap pays against its blue car. Without a blue ball, a run pays the 3 alone.
  */
 export function marblerunLadder(paceMs: number | null | undefined): Ladder {
   const base = { base: 3, baseLabel: 'a run today' }
@@ -230,8 +231,8 @@ const SHIP_MIN_MS = 35_000
 const SHIP_MAX_MS = 100_000
 
 /**
- * Lander, on a day whose blue ship lands in `paceMs`: slower than it 3, beating it 5, by 7% 8, by 14% 11, by
- * 21% 15, as Hot Lap pays against its blue car and Marble Run against its blue ball. Without a blue ship, a
+ * Lander, on a day whose blue ship lands in `paceMs`: slower than it 3, beating it 5, by 8% 8, by 16% 11, by
+ * 24% 15, as Hot Lap pays against its blue car and Marble Run against its blue ball. Without a blue ship, a
  * run pays the 3 alone.
  */
 export function landerLadder(paceMs: number | null | undefined): Ladder {

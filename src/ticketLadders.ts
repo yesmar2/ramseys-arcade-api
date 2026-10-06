@@ -144,25 +144,40 @@ const PACE_MAX_MS = 100_000
 const TYPICAL_PACE_MS = 53_000
 
 /**
- * Hot Lap, on a day whose blue car laps in `paceMs`: slower than it 3, within 2% of it 5, beating it 8, by
- * 3% 11, by 6% 15. Without a blue car, a lap pays the 3 alone.
+ * The racing dailies' steps are their medals (the site's lib/raceMedals.ts): beating the day's blue pays 5
+ * (bronze), and each step of the game's faster than it pays the next, 8, 11 and 15 (silver, gold, platinum).
+ * They were 3% and 6% for the top two until Ramsey found platinum came "almost every time" (2026-10-06): his
+ * best runs of the day land 15 to 30% under the blue, which drives carefully, and each blue leaves its own
+ * slack. So platinum sits about where the best runs so far land, 18% in Hot Lap, 21% in Lander and 24% in
+ * Marble Run. A run slower than the blue pays the base 3.
+ */
+export const RACE_MEDAL_STEP = { hotlap: 0.06, marblerun: 0.08, lander: 0.07 } as const
+
+/**
+ * A racing daily's steps on a day whose blue goes in `pace` ms, `score` turning a time into a board score.
+ * Each rung names what it beats: a run's tickets say one rung on its own, where "it" would be nothing
+ * (Ramsey, 2026-10-05: "People won't know what 'it' is"). The same sums as the site's medalTimes.
+ */
+function raceSteps(pace: number, step: number, blue: string, score: (ms: number) => number): LadderStep[] {
+  const pct = (k: number) => Math.round(k * step * 100)
+  return [
+    { at: score(pace) + 1, tickets: 5, label: `beating the ${blue}` },
+    { at: score(pace * (1 - step)), tickets: 8, label: `beating the ${blue} by ${pct(1)}%` },
+    { at: score(pace * (1 - 2 * step)), tickets: 11, label: `beating the ${blue} by ${pct(2)}%` },
+    { at: score(pace * (1 - 3 * step)), tickets: 15, label: `beating the ${blue} by ${pct(3)}%` },
+  ]
+}
+
+/**
+ * Hot Lap, on a day whose blue car laps in `paceMs`: slower than it 3, beating it 5, by 6% 8, by 12% 11, by
+ * 18% 15. Without a blue car, a lap pays the 3 alone.
  */
 export function hotlapLadder(paceMs: number | null | undefined): Ladder {
   const base = { base: 3, baseLabel: 'a lap today' }
   if (!paceMs) return { ...base, steps: [] }
   const pace = Math.min(PACE_MAX_MS, Math.max(PACE_MIN_MS, Math.round(paceMs)))
   const lap = (ms: number) => TIME_SCORE_BASE - Math.round(ms)
-  return {
-    ...base,
-    steps: [
-      { at: lap(pace * 1.02), tickets: 5, label: 'within 2% of the blue car' },
-      { at: lap(pace) + 1, tickets: 8, label: 'beating the blue car' },
-      // Each rung names what it beats: a run's tickets say one rung on its own, where "it" would be nothing
-      // (Ramsey, 2026-10-05: "People won't know what 'it' is").
-      { at: lap(pace * 0.97), tickets: 11, label: 'beating the blue car by 3%' },
-      { at: lap(pace * 0.94), tickets: 15, label: 'beating the blue car by 6%' },
-    ],
-  }
+  return { ...base, steps: raceSteps(pace, RACE_MEDAL_STEP.hotlap, 'blue car', lap) }
 }
 
 /**
@@ -194,24 +209,15 @@ const BALL_MIN_MS = 30_000
 const BALL_MAX_MS = 90_000
 
 /**
- * Marble Run, on a day whose blue ball rolls down in `paceMs`: slower than it 3, within 2% of it 5,
- * beating it 8, by 3% 11, by 6% 15, as Hot Lap pays against its blue car. Without a blue ball, a run pays
- * the 3 alone.
+ * Marble Run, on a day whose blue ball rolls down in `paceMs`: slower than it 3, beating it 5, by 8% 8, by
+ * 16% 11, by 24% 15, as Hot Lap pays against its blue car. Without a blue ball, a run pays the 3 alone.
  */
 export function marblerunLadder(paceMs: number | null | undefined): Ladder {
   const base = { base: 3, baseLabel: 'a run today' }
   if (!paceMs) return { ...base, steps: [] }
   const pace = Math.min(BALL_MAX_MS, Math.max(BALL_MIN_MS, Math.round(paceMs)))
   const run = (ms: number) => TIME_SCORE_BASE - Math.round(ms)
-  return {
-    ...base,
-    steps: [
-      { at: run(pace * 1.02), tickets: 5, label: 'within 2% of the blue ball' },
-      { at: run(pace) + 1, tickets: 8, label: 'beating the blue ball' },
-      { at: run(pace * 0.97), tickets: 11, label: 'beating the blue ball by 3%' },
-      { at: run(pace * 0.94), tickets: 15, label: 'beating the blue ball by 6%' },
-    ],
-  }
+  return { ...base, steps: raceSteps(pace, RACE_MEDAL_STEP.marblerun, 'blue ball', run) }
 }
 
 /** The day's blue ship from Lander's plan. */
@@ -224,24 +230,16 @@ const SHIP_MIN_MS = 35_000
 const SHIP_MAX_MS = 100_000
 
 /**
- * Lander, on a day whose blue ship lands in `paceMs`: slower than it 3, within 2% of it 5, beating it 8, by 3%
- * 11, by 6% 15, as Hot Lap pays against its blue car and Marble Run against its blue ball. Without a blue
- * ship, a run pays the 3 alone.
+ * Lander, on a day whose blue ship lands in `paceMs`: slower than it 3, beating it 5, by 7% 8, by 14% 11, by
+ * 21% 15, as Hot Lap pays against its blue car and Marble Run against its blue ball. Without a blue ship, a
+ * run pays the 3 alone.
  */
 export function landerLadder(paceMs: number | null | undefined): Ladder {
   const base = { base: 3, baseLabel: 'a run today' }
   if (!paceMs) return { ...base, steps: [] }
   const pace = Math.min(SHIP_MAX_MS, Math.max(SHIP_MIN_MS, Math.round(paceMs)))
   const run = (ms: number) => TIME_SCORE_BASE - Math.round(ms)
-  return {
-    ...base,
-    steps: [
-      { at: run(pace * 1.02), tickets: 5, label: 'within 2% of the blue ship' },
-      { at: run(pace) + 1, tickets: 8, label: 'beating the blue ship' },
-      { at: run(pace * 0.97), tickets: 11, label: 'beating the blue ship by 3%' },
-      { at: run(pace * 0.94), tickets: 15, label: 'beating the blue ship by 6%' },
-    ],
-  }
+  return { ...base, steps: raceSteps(pace, RACE_MEDAL_STEP.lander, 'blue ship', run) }
 }
 
 /** A game's ladder today. Hot Lap's goes by the plan's blue car for the day, or else the one the site says. */

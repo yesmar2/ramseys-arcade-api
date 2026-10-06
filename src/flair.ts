@@ -17,8 +17,8 @@ import { trophiesForName } from './trophies.js'
  *   silver for a week in its top two, gold for winning a week, the record ring
  *   for holding a record in a record book, the laurel for winning an event.
  *   Pins, for what you've done: welcome (everyone), five different games, a
- *   seven-day streak, a seven-day Today streak (any three of the day's dailies
- *   each day, today.ts), the crown for winning a month, a season's patch for
+ *   seven-day streak, a seven-day Today streak (each day kept on the Dailies,
+ *   today.ts), the crown for winning a month, a season's patch for
  *   winning a ticket in that season (seasons.ts), and one per game for its
  *   all-time top ten.
  *

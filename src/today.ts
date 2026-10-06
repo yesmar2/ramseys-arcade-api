@@ -15,12 +15,13 @@ import { awardTickets } from './tickets.js'
  * Half Full's Today's Pour (the day's first run, on its board; halffull/launch.ts HALFFULL_TODAY_FROM),
  * Marble Run's Today's Course (a run on the day's board; MARBLERUN_TODAY_FROM below), Lander's Today's
  * Cave (a run on the day's board; LANDER_TODAY_FROM below) and Swoop's Today's Hills (a run on the day's
- * board; SWOOP_TODAY_FROM below). A
- * day is kept once any three of that day's dailies are done (TODAY_KEEP), so every day from before the pour
- * joined still needs all three it had. A day with more than three on the card and every one of them done
- * is a Full ticket. todayRule says which dailies are on a day's card and how many keep it; nothing else
- * decides a day. A day is the boards' day, New York time. Today's event, the One Shot and the bug hunt are the
- * card's bonus punches and don't count.
+ * board; SWOOP_TODAY_FROM below). Until 2026-10-05 a day was kept once any three of that day's dailies were
+ * done (TODAY_KEEP), so every day from before the pour joined still needs all three it had. Since 2026-10-06
+ * the card is the four races alone, and any two of them keep the day (RACES_KEEP): the hole, the Wanted and
+ * the pour came off it (PUZZLES_UNTIL), just for fun, under it on the site as "Also today". A day with more
+ * on the card than keep it, and every one of them done, is a Full ticket. todayRule says which dailies are on
+ * a day's card and how many keep it; nothing else decides a day. A day is the boards' day, New York time.
+ * Today's event, the One Shot and the bug hunt are the card's bonus punches and don't count.
  *
  * The streak earns looks at milestones, once an account however often it breaks: tickets, the Today pin
  * (flair.ts reads the best streak), the gilded badge finish and the "Every Day" title (prizes.ts: earned,
@@ -30,8 +31,22 @@ import { awardTickets } from './tickets.js'
 
 export type TodayKey = 'hole' | 'track' | 'wanted' | 'pour' | 'course' | 'cave' | 'hills'
 
-/** How many of a day's dailies keep it. A day with this many or fewer on the card needs every one. */
+/** How many of a day's dailies kept it, before RACES_ONLY_FROM. A day with this many or fewer on the card needs every one. */
 export const TODAY_KEEP = 3
+
+/**
+ * The last board day the puzzles (Ace Chase's hole, Find the Bug's Wanted, Half Full's pour) were on the card.
+ * From the next the Dailies are the four races, and any two of them keep the day (Ramsey, 2026-10-06, picking
+ * B from the "Dailies: races only?" canvas). The site's lib/today.ts PUZZLES_UNTIL says the same.
+ */
+export const PUZZLES_UNTIL = 20261005
+export const RACES_ONLY_FROM = 20261006
+export const RACES_KEEP = 2
+
+/** How many of a day's dailies keep it: three, and two from RACES_ONLY_FROM (the site's lib/today.ts keepOn). */
+export function keepOn(dayKey: number): number {
+  return dayKey >= RACES_ONLY_FROM ? RACES_KEEP : TODAY_KEEP
+}
 
 const keyOf = (day: string) => Number(day.replace(/-/g, ''))
 
@@ -56,25 +71,25 @@ export const LANDER_TODAY_FROM: string | null = '2026-10-01'
 export const SWOOP_TODAY_FROM: string | null = '2026-10-06'
 
 /**
- * The Today set's dailies, in the card's order, and the first board day (YYYYMMDD) each is on the card: 0
- * for from the start, null for not yet. The order is the site's (its lib/today.ts): the ranked ones, then
- * the three just for fun (Ramsey, 2026-10-04; the other way round from 2026-10-02). The hole, the track and
- * the Wanted have been on it from the start, so no day before the pour joined is judged differently.
+ * The Today set's dailies, in the card's order, the first board day (YYYYMMDD) each is on the card (0 for
+ * from the start, null for not yet) and, for one that came off it, the last. The order is the site's (its
+ * lib/today.ts): the races, then the three puzzles, just for fun (Ramsey, 2026-10-04). The hole, the track and
+ * the Wanted were on it from the start until the puzzles came off, so every day is judged as it was then.
  */
-export const TODAY_DAILIES: readonly { key: TodayKey; game: GameSlug; from: number | null }[] = [
+export const TODAY_DAILIES: readonly { key: TodayKey; game: GameSlug; from: number | null; until?: number }[] = [
   { key: 'track', game: 'hotlap', from: 0 },
   { key: 'course', game: 'marblerun', from: MARBLERUN_TODAY_FROM ? keyOf(MARBLERUN_TODAY_FROM) : null },
   { key: 'cave', game: 'lander', from: LANDER_TODAY_FROM ? keyOf(LANDER_TODAY_FROM) : null },
   { key: 'hills', game: 'swoop', from: SWOOP_TODAY_FROM ? keyOf(SWOOP_TODAY_FROM) : null },
-  { key: 'hole', game: 'acechase', from: 0 },
-  { key: 'wanted', game: 'findbug', from: 0 },
-  { key: 'pour', game: 'halffull', from: HALFFULL_TODAY_FROM ? keyOf(HALFFULL_TODAY_FROM) : null },
+  { key: 'hole', game: 'acechase', from: 0, until: PUZZLES_UNTIL },
+  { key: 'wanted', game: 'findbug', from: 0, until: PUZZLES_UNTIL },
+  { key: 'pour', game: 'halffull', from: HALFFULL_TODAY_FROM ? keyOf(HALFFULL_TODAY_FROM) : null, until: PUZZLES_UNTIL },
 ]
 
 /** A day's card: the dailies on it (live), in order, and how many of them keep the day. */
 export function todayRule(dayKey: number): { live: TodayKey[]; need: number } {
-  const live = TODAY_DAILIES.filter((d) => d.from != null && d.from <= dayKey).map((d) => d.key)
-  return { live, need: Math.min(TODAY_KEEP, live.length) }
+  const live = TODAY_DAILIES.filter((d) => d.from != null && d.from <= dayKey && (d.until == null || dayKey <= d.until)).map((d) => d.key)
+  return { live, need: Math.min(keepOn(dayKey), live.length) }
 }
 
 /** Whether a day was kept: at least as many of its card's dailies done as keep it. */
@@ -86,7 +101,7 @@ export function keptDay(done: ReadonlySet<TodayKey>, dayKey: number): boolean {
 /** Whether a day was a Full ticket: more dailies on its card than keep it, and every one of them done. */
 export function fullDay(done: ReadonlySet<TodayKey>, dayKey: number): boolean {
   const { live } = todayRule(dayKey)
-  return live.length > TODAY_KEEP && live.every((key) => done.has(key))
+  return live.length > keepOn(dayKey) && live.every((key) => done.has(key))
 }
 
 /** What was done of each daily, day by day: board day key → the day's result. */

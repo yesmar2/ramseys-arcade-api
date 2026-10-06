@@ -475,9 +475,9 @@ export const DAILY_SINCE: Partial<Record<GameSlug, number>> = {
  * the same for everyone and a friend can hand it over (a hole's power and angle, where the day's bugs hide,
  * how far to fill each glass), so they place nobody: no board longer than a day (no day points), nothing in
  * the standings, no record books, no tickets for a day's top three. A player's own result saves as before:
- * it punches the Dailies and keeps their streak, pays its tickets by its score and is what they share, and
- * the day's runs stay here for that (today's board is read, never shown). Hot Lap, Marble Run, Lander and
- * Swoop, where hands decide, are ranked.
+ * it keeps their days in a row on it (and, until 2026-10-05, punched the Dailies), pays its tickets by its
+ * score and is what they share, and the day's runs stay here for that (today's board is read, never shown).
+ * Hot Lap, Marble Run, Lander and Swoop, where hands decide, are ranked.
  */
 export const UNRANKED_GAMES: ReadonlySet<GameSlug> = new Set<GameSlug>(['acechase', 'findbug', 'halffull'])
 

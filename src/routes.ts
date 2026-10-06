@@ -38,6 +38,7 @@ import {
   dailyDays,
   dayBoardPage,
   getBoard,
+  findInStandings,
   getBoardPage,
   playerBoard,
   globalRanksPage,
@@ -119,6 +120,12 @@ leaderboardsRouter.get('/rank', async (req, res) => {
       nearby,
       ...(dailies ? { dailies } : {}),
     })
+    return
+  }
+  // Find a player: up to ten whose tag holds it, with their places.
+  const find = typeof req.query.find === 'string' ? req.query.find : ''
+  if (find) {
+    res.json({ period, found: await withAvatarIds(await findInStandings(period, find, Date.now(), scope)) })
     return
   }
   const { limit, offset } = pageParams(req.query, 50)

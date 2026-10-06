@@ -1739,6 +1739,22 @@ export async function globalRanksPage(
   return { total, entries }
 }
 
+/** Up to ten players on the Standings whose tag holds `find`, best first, each with its place. */
+export async function findInStandings(
+  period: Period,
+  find: string,
+  now = Date.now(),
+  scope?: NameScope,
+): Promise<GlobalRankEntry[]> {
+  const q = find.trim().slice(0, 12).toUpperCase()
+  if (!q) return []
+  if (scope) return (await globalRanks(period, now, scope)).filter((e) => e.name.includes(q)).slice(0, 10)
+  const view = await standingsView(period, now)
+  const found: GlobalRankEntry[] = []
+  for (let i = 0; i < view.order.length && found.length < 10; i++) if (view.order[i]!.name.includes(q)) found.push(standingAt(view, i))
+  return found
+}
+
 /** Global ranks for a completed weekly or monthly period. */
 export async function globalRanksForClosedPeriod(
   period: ClosedPeriod,

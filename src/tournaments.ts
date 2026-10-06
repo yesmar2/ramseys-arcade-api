@@ -62,8 +62,8 @@ const RETIRED_GAMES: ReadonlySet<GameSlug> = new Set<GameSlug>(['simon'])
  * its scores, until it ends. Take a game off this list the day the site
  * releases it (its onDeck flag in the web's data/games.ts).
  */
-// None on deck for now: every game is out (Pileup was released 2026-10-05).
-const ON_DECK_GAMES: ReadonlySet<GameSlug> = new Set<GameSlug>([])
+// Ace Chase is held back (Ramsey, 2026-10-06: "let's hide it for now"); it was never in the event pool anyway.
+const ON_DECK_GAMES: ReadonlySet<GameSlug> = new Set<GameSlug>(['acechase'])
 
 export type TournamentStatus = 'upcoming' | 'active' | 'ended'
 export type TournamentCadence = 'daily' | 'weekly' | 'oneshot'

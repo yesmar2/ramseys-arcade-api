@@ -13,10 +13,12 @@ import { ALLOWED_GAMES, boardDateKey, dayStartMs, type GameSlug } from './store.
  * same list, by number, with each one's art (lib/secrets.ts), and its admin page says every rule below in
  * words (components/AdminTrophies.tsx): change both with any rule here.
  *
- * Seven are retired, at Ramsey's word (2026-10-05): Palindrome, Lucky Sevens, Photo Finish and So Close
- * ("I don't like these secret trophies ... can you remove them?"), then Make a Wish, Déjà Vu and Round Number
- * ("remove these ones too"). Their numbers stay unused, so every other secret keeps the number its finds
- * are kept under, and a find of a retired one is kept but shown nowhere (trophies.ts trophiesForName).
+ * Eight are retired, at Ramsey's word: Palindrome, Lucky Sevens, Photo Finish and So Close ("I don't like
+ * these secret trophies ... can you remove them?"), then Make a Wish, Déjà Vu and Round Number ("remove these
+ * ones too"), on 2026-10-05; and Little Green Friend, Lander's waving alien, on 2026-10-06 ("remove the alien
+ * secret and add a new one"), for One Small Step. Their numbers stay unused, so every other secret keeps the
+ * number its finds are kept under, and a find of a retired one is kept but shown nowhere (trophies.ts
+ * trophiesForName).
  */
 
 export const SECRETS = {
@@ -38,10 +40,10 @@ export const SECRETS = {
   marbles: { n: 23, name: 'Lost Your Marbles', says: 'Fell off Marble Run three times before the first checkpoint.' },
   wargames: { n: 24, name: 'Shall We Play a Game?', says: 'Let a whole wave of Patriot fall without firing a shot.' },
   safespot: { n: 25, name: 'Safe Spot', says: 'Hid from the chasers in Pellets’ safe spot.' },
-  alien: { n: 26, name: 'Little Green Friend', says: 'Got a wave from the alien in Lander’s cave.' },
   shootingstar: { n: 27, name: 'Shooting Star', says: 'Caught a shooting star over the Fireflies pond.' },
   moon: { n: 28, name: 'Shoot the Moon', says: 'Shot the moon over Barrage until it had a black eye.' },
   staffonly: { n: 29, name: 'Staff Only', says: 'Tried the door marked Staff Only.' },
+  smallstep: { n: 30, name: 'One Small Step', says: 'Broke out of Lander’s cave and set down on the moon.' },
 } as const
 
 export type SecretKey = keyof typeof SECRETS
@@ -65,7 +67,7 @@ export const EGG_SECRETS: readonly SecretKey[] = [
   'marbles',
   'wargames',
   'safespot',
-  'alien',
+  'smallstep',
   'shootingstar',
   'moon',
   'staffonly',

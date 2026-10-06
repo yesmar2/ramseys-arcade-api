@@ -608,8 +608,9 @@ leaderboardsRouter.post('/:game', async (req, res) => {
     return
   }
   // Nor a day's Swoop (swoopPace.ts). The blue bird reacts a third of a second late and dives in the air only
-  // half the time; perfect hands came in at 47% of its time on the plan's quickest day, so the floor is 40%.
-  if (game === 'swoop' && TIME_SCORE_BASE - score < 0.4 * (swoopPlannedPace() ?? 55_000)) {
+  // half the time; perfect hands came in at 47% of its hands' time on the plan's quickest day, 52% of the time
+  // it's raced in since it went 10% quicker, so the floor is 44% of that: where 40% of the old one stood.
+  if (game === 'swoop' && TIME_SCORE_BASE - score < 0.44 * (swoopPlannedPace() ?? 50_000)) {
     console.warn(`[anticheat] rejected swoop ${score} from account ${account.id}: faster than the day's hills allow`)
     res.status(400).json({ error: 'That score is not possible in the time the run took', code: 'SCORE_IMPLAUSIBLE' })
     return

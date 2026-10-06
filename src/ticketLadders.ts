@@ -153,10 +153,12 @@ const TYPICAL_PACE_MS = 53_000
  * slack. Steps of 6, 7 and 8% put platinum about where his best runs land; he found that "still needs to be a
  * little harder", so it's a point more a step in Lander and Marble Run: platinum is 24% and 27% there. Hot Lap
  * went to 7% too, then back to 6% (platinum 18%) once he found its platinum "just a little too hard". Swoop
- * came at 7% (platinum 21%), between the two: its blue bird reacts a third of a second late, so a quick player
- * lands about 20% under it. A run slower than the blue pays the base 3.
+ * came at 7% (platinum 21%); on its first day his run was 36.6% under the blue bird, so the bird went 10%
+ * quicker (the site's swoop sim.ts BLUE_PACE; swoopPace.ts is its quicker times) and its steps went to 10%
+ * (platinum 30%), as he picked ("blue needs to be a little bit harder ... the medals for swoop need to be
+ * harder too"). A run slower than the blue pays the base 3.
  */
-export const RACE_MEDAL_STEP = { hotlap: 0.06, marblerun: 0.09, lander: 0.08, swoop: 0.07 } as const
+export const RACE_MEDAL_STEP = { hotlap: 0.06, marblerun: 0.09, lander: 0.08, swoop: 0.1 } as const
 
 /**
  * A racing daily's steps on a day whose blue goes in `pace` ms, `score` turning a time into a board score.
@@ -257,8 +259,8 @@ const BIRD_MIN_MS = 30_000
 const BIRD_MAX_MS = 100_000
 
 /**
- * Swoop, on a day whose blue bird crosses the line in `paceMs`: slower than it 3, beating it 5, by 7% 8, by
- * 14% 11, by 21% 15, as the other racing dailies pay against their blues. Without a blue bird, a run pays the
+ * Swoop, on a day whose blue bird crosses the line in `paceMs`: slower than it 3, beating it 5, by 10% 8, by
+ * 20% 11, by 30% 15, as the other racing dailies pay against their blues. Without a blue bird, a run pays the
  * 3 alone.
  */
 export function swoopLadder(paceMs: number | null | undefined): Ladder {

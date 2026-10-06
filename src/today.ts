@@ -49,11 +49,11 @@ export const MARBLERUN_TODAY_FROM: string | null = '2026-09-29'
 export const LANDER_TODAY_FROM: string | null = '2026-10-01'
 
 /**
- * The first day Swoop's Today's Hills are on the card: the day after the game came (the site's
- * games/swoop/daily.ts TODAY_FROM says the same). A day is judged as it began, and its first day's card
- * began with six.
+ * The first day Swoop's Today's Hills are on the card: the day the game came, as Marble Run's was (the site's
+ * games/swoop/daily.ts TODAY_FROM says the same), since a daily isn't on the games wall and the card is the
+ * way to it (Ramsey, 2026-10-06: "i don't see swoop on the dailies").
  */
-export const SWOOP_TODAY_FROM: string | null = '2026-10-07'
+export const SWOOP_TODAY_FROM: string | null = '2026-10-06'
 
 /**
  * The Today set's dailies, in the card's order, and the first board day (YYYYMMDD) each is on the card: 0

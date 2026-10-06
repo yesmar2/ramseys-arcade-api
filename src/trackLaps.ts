@@ -35,7 +35,7 @@ const PLANS: Partial<Record<GameSlug, CoursePlan>> = {
   // As a day's board believes them (routes.ts).
   marblerun: { firstDay: MARBLERUN_FIRST_DAY, pace: MARBLERUN_PACE_MS, repeats: false, floor: 0.6 },
   lander: { firstDay: LANDER_FIRST_DAY, pace: LANDER_PACE_MS, repeats: false, floor: 0.45 },
-  swoop: { firstDay: SWOOP_FIRST_DAY, pace: SWOOP_PACE_MS, repeats: false, floor: 0.33 },
+  swoop: { firstDay: SWOOP_FIRST_DAY, pace: SWOOP_PACE_MS, repeats: false, floor: 0.3 },
 }
 
 /** The games whose courses keep boards of their own. */

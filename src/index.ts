@@ -116,7 +116,12 @@ async function main() {
   app.post('/payments/stripe/webhook', express.raw({ type: 'application/json', limit: '256kb' }), (req, res) => {
     void stripeWebhook(req, res)
   })
-  app.use(express.json({ limit: '32kb' }))
+  // A ghost is a run's path, ten samples a second (trackLapsRoutes.ts takes 18,000 numbers at most): a slow run
+  // over a day's Swoop hills sends more than 32kb, so a ghost may be bigger than any other body.
+  const json = express.json({ limit: '32kb' })
+  const ghostJson = express.json({ limit: '160kb' })
+  const GHOST_POST = /^\/tracks\/[^/]+\/\d+\/ghost$/
+  app.use((req, res, next) => (req.method === 'POST' && GHOST_POST.test(req.path) ? ghostJson : json)(req, res, next))
 
   // Every response says what it cost: wall time and database round trips.
   // The database is a network hop away, so the round-trip count is the number

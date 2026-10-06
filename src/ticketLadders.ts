@@ -254,9 +254,9 @@ export function swoopPlannedPace(now = Date.now()): number | null {
   return paceOnDay(SWOOP_FIRST_DAY, SWOOP_PACE_MS, now)
 }
 
-/** Where a blue bird can fly: the plan's courses pace 42–70 s. */
-const BIRD_MIN_MS = 30_000
-const BIRD_MAX_MS = 100_000
+/** Where a blue bird can fly: the plan's hills, 75% longer since 2026-10-06, pace 67–107 s. */
+const BIRD_MIN_MS = 50_000
+const BIRD_MAX_MS = 140_000
 
 /**
  * Swoop, on a day whose blue bird crosses the line in `paceMs`: slower than it 3, beating it 5, by 10% 8, by

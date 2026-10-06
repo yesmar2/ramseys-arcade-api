@@ -72,8 +72,8 @@ export const GAME_BANDS: Record<GameSlug, ScoreProfile> = {
   marblerun: { min: 935_000, max: 958_000, step: 100 },
   // A run down the day's cave and onto its pad: 80 seconds to 50, about the blue ship's range.
   lander: { min: 920_000, max: 950_000, step: 100 },
-  // A run over the day's hills: 75 seconds to 45, about the blue bird's range.
-  swoop: { min: 925_000, max: 955_000, step: 100 },
+  // A run over the day's hills: 110 seconds to 60, about the blue bird's range.
+  swoop: { min: 890_000, max: 940_000, step: 100 },
 }
 
 function lerp(a: number, b: number, t: number) {

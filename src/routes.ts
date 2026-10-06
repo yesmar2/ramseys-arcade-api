@@ -608,11 +608,11 @@ leaderboardsRouter.post('/:game', async (req, res) => {
     return
   }
   // Nor a day's Swoop (swoopPace.ts). The blue bird reacts a third of a second late and dives in the air only
-  // half the time. On a streak of clean landings the bird can go faster (the site's swoop sim.ts capFor), and a
-  // search of every hold and let-go came in at 36.5% of the blue bird's hands' time on the plan's quickest day,
-  // 40.6% of the time it's raced in (0.9 of that). The floor is 33% of the raced time, under that with room for
-  // a line the search missed.
-  if (game === 'swoop' && TIME_SCORE_BASE - score < 0.33 * (swoopPlannedPace() ?? 50_000)) {
+  // half the time. On a streak of clean landings the bird can go faster (the site's swoop sim.ts capFor), and on
+  // the hills as they've been since they went 75% longer, a search of every hold and let-go came in at 36.9% of
+  // the blue bird's raced time on the plan's quickest day (#17). The floor is 30%, under that with room for a
+  // line the search missed.
+  if (game === 'swoop' && TIME_SCORE_BASE - score < 0.3 * (swoopPlannedPace() ?? 85_000)) {
     console.warn(`[anticheat] rejected swoop ${score} from account ${account.id}: faster than the day's hills allow`)
     res.status(400).json({ error: 'That score is not possible in the time the run took', code: 'SCORE_IMPLAUSIBLE' })
     return

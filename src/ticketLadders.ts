@@ -1,6 +1,7 @@
 import { HOTLAP_FIRST_DAY, HOTLAP_PACE_MS } from './hotlapPace.js'
 import { LANDER_FIRST_DAY, LANDER_PACE_MS } from './landerPace.js'
 import { MARBLERUN_FIRST_DAY, MARBLERUN_PACE_MS } from './marblerunPace.js'
+import { SWOOP_FIRST_DAY, SWOOP_PACE_MS } from './swoopPace.js'
 import { TIME_SCORE_BASE, TIME_SCORED_GAMES, TRIES_SCORE_BASE } from './scoreLimits.js'
 import { GAME_BANDS } from './seedBoards.js'
 import { ALLOWED_GAMES, boardDateKey, runScores, type GameSlug } from './store.js'
@@ -22,8 +23,9 @@ import { ALLOWED_GAMES, boardDateKey, runScores, type GameSlug } from './store.j
  * doesn't move them, as it moved its drawn ladder before. Half Full by the day's tier. Hot Lap goes by the day's blue car
  * (the pace car), since its track changes every day: the plan's own, kept in
  * hotlapPace.ts, so the site can't say a slower one; Marble Run by the day's
- * blue ball (its pace ball), from marblerunPace.ts, and Lander by the day's
- * blue ship, from landerPace.ts. A daily pays its best
+ * blue ball (its pace ball), from marblerunPace.ts, Lander by the day's
+ * blue ship, from landerPace.ts, and Swoop by the day's blue bird, from
+ * swoopPace.ts. A daily pays its best
  * step of the day once, as it's reached (tickets.ts).
  */
 
@@ -150,10 +152,11 @@ const TYPICAL_PACE_MS = 53_000
  * best runs of the day land 15 to 30% under the blue, which drives carefully, and each blue leaves its own
  * slack. Steps of 6, 7 and 8% put platinum about where his best runs land; he found that "still needs to be a
  * little harder", so it's a point more a step in Lander and Marble Run: platinum is 24% and 27% there. Hot Lap
- * went to 7% too, then back to 6% (platinum 18%) once he found its platinum "just a little too hard". A run
- * slower than the blue pays the base 3.
+ * went to 7% too, then back to 6% (platinum 18%) once he found its platinum "just a little too hard". Swoop
+ * came at 7% (platinum 21%), between the two: its blue bird reacts a third of a second late, so a quick player
+ * lands about 20% under it. A run slower than the blue pays the base 3.
  */
-export const RACE_MEDAL_STEP = { hotlap: 0.06, marblerun: 0.09, lander: 0.08 } as const
+export const RACE_MEDAL_STEP = { hotlap: 0.06, marblerun: 0.09, lander: 0.08, swoop: 0.07 } as const
 
 /**
  * A racing daily's steps on a day whose blue goes in `pace` ms, `score` turning a time into a board score.
@@ -244,6 +247,28 @@ export function landerLadder(paceMs: number | null | undefined): Ladder {
   return { ...base, steps: raceSteps(pace, RACE_MEDAL_STEP.lander, 'blue ship', run) }
 }
 
+/** The day's blue bird from Swoop's plan. */
+export function swoopPlannedPace(now = Date.now()): number | null {
+  return paceOnDay(SWOOP_FIRST_DAY, SWOOP_PACE_MS, now)
+}
+
+/** Where a blue bird can fly: the plan's courses pace 42–70 s. */
+const BIRD_MIN_MS = 30_000
+const BIRD_MAX_MS = 100_000
+
+/**
+ * Swoop, on a day whose blue bird crosses the line in `paceMs`: slower than it 3, beating it 5, by 7% 8, by
+ * 14% 11, by 21% 15, as the other racing dailies pay against their blues. Without a blue bird, a run pays the
+ * 3 alone.
+ */
+export function swoopLadder(paceMs: number | null | undefined): Ladder {
+  const base = { base: 3, baseLabel: 'a run today' }
+  if (!paceMs) return { ...base, steps: [] }
+  const pace = Math.min(BIRD_MAX_MS, Math.max(BIRD_MIN_MS, Math.round(paceMs)))
+  const run = (ms: number) => TIME_SCORE_BASE - Math.round(ms)
+  return { ...base, steps: raceSteps(pace, RACE_MEDAL_STEP.swoop, 'blue bird', run) }
+}
+
 /** A game's ladder today. Hot Lap's goes by the plan's blue car for the day, or else the one the site says. */
 export async function ladderFor(game: GameSlug, now = Date.now(), paceMs?: number | null): Promise<Ladder> {
   if (game === 'acechase') return ACECHASE_LADDER
@@ -252,6 +277,7 @@ export async function ladderFor(game: GameSlug, now = Date.now(), paceMs?: numbe
   if (game === 'hotlap') return hotlapLadder(plannedPace(now) ?? paceMs)
   if (game === 'marblerun') return marblerunLadder(marblerunPlannedPace(now) ?? paceMs)
   if (game === 'lander') return landerLadder(landerPlannedPace(now) ?? paceMs)
+  if (game === 'swoop') return swoopLadder(swoopPlannedPace(now) ?? paceMs)
   return drawnLadder(game, now)
 }
 

@@ -28,6 +28,7 @@ export const ALLOWED_GAMES = [
   'marblerun',
   'lander',
   'pileup',
+  'swoop',
 ] as const
 export type GameSlug = (typeof ALLOWED_GAMES)[number]
 
@@ -111,6 +112,7 @@ function emptyStore(): Store {
     halffull: [],
     marblerun: [],
     lander: [],
+    swoop: [],
   }
 }
 
@@ -169,6 +171,7 @@ export async function replaceAllBoards(next: Store) {
     halffull: Array.isArray(next.halffull) ? next.halffull : [],
     marblerun: Array.isArray(next.marblerun) ? next.marblerun : [],
     lander: Array.isArray(next.lander) ? next.lander : [],
+    swoop: Array.isArray(next.swoop) ? next.swoop : [],
   }
   await db().transaction(async (tx) => {
     await tx.delete(leaderboardScores)
@@ -447,7 +450,7 @@ export type ClosedPeriod = 'weekly' | 'monthly'
  * site marks these games `daily` in its data/games.ts, and prints a daily's board for longer than a day in
  * points. Find the Bug's and Half Full's boards take only a day's first run (firstRun.ts).
  */
-export const DAILY_GAMES: ReadonlySet<GameSlug> = new Set<GameSlug>(['hotlap', 'acechase', 'findbug', 'halffull', 'marblerun', 'lander'])
+export const DAILY_GAMES: ReadonlySet<GameSlug> = new Set<GameSlug>(['hotlap', 'acechase', 'findbug', 'halffull', 'marblerun', 'lander', 'swoop'])
 
 /**
  * The first day (YYYYMMDD) each daily's board was a day's: Ace Chase's held rounds of three holes before
@@ -463,6 +466,8 @@ export const DAILY_SINCE: Partial<Record<GameSlug, number>> = {
   marblerun: 20260929,
   // Lander's cave #1 (landerPace.ts LANDER_FIRST_DAY).
   lander: 20260930,
+  // Swoop's course #1 (swoopPace.ts SWOOP_FIRST_DAY).
+  swoop: 20261006,
 }
 
 /**
@@ -471,8 +476,8 @@ export const DAILY_SINCE: Partial<Record<GameSlug, number>> = {
  * how far to fill each glass), so they place nobody: no board longer than a day (no day points), nothing in
  * the standings, no record books, no tickets for a day's top three. A player's own result saves as before:
  * it punches the Dailies and keeps their streak, pays its tickets by its score and is what they share, and
- * the day's runs stay here for that (today's board is read, never shown). Hot Lap, Marble Run and Lander,
- * where hands decide, are ranked.
+ * the day's runs stay here for that (today's board is read, never shown). Hot Lap, Marble Run, Lander and
+ * Swoop, where hands decide, are ranked.
  */
 export const UNRANKED_GAMES: ReadonlySet<GameSlug> = new Set<GameSlug>(['acechase', 'findbug', 'halffull'])
 

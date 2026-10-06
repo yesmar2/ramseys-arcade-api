@@ -20,10 +20,14 @@ import { trackBoard, trackState } from './trackLaps.js'
  * Lander's caves have theirs the same way: a cave's #1 on its board. Its path is where
  * the ship was ten times a second from the go, x, y, its angle and its engine (0 off, 1 on, 2 a wreck after a
  * crash), with the landing's moment last, crashes and all: a crash puts it back at a gate.
+ *
+ * Swoop's courses have theirs the same way: a course's #1 on its board. Its path is where the bird was ten
+ * times a second from the go, x, y and whether it was diving (1) or not (0), with the line's moment last. A
+ * bird is never put back anywhere, so it never jumps.
  */
 
-/** The games whose #1 races as a ghost: Hot Lap's tracks, Marble Run's courses, and Lander's caves. */
-export const GHOST_GAMES: ReadonlySet<GameSlug> = new Set<GameSlug>(['hotlap', 'marblerun', 'lander'])
+/** The games whose #1 races as a ghost: Hot Lap's tracks, Marble Run's courses, Lander's caves and Swoop's hills. */
+export const GHOST_GAMES: ReadonlySet<GameSlug> = new Set<GameSlug>(['hotlap', 'marblerun', 'lander', 'swoop'])
 
 /** Where a game's track, course or cave stands today (trackLaps.ts trackState). */
 export function ghostState(game: GameSlug, n: number, now = Date.now()): 'past' | 'today' | 'ahead' | 'none' {
@@ -51,6 +55,8 @@ const MOST_LINES = 12
 const SHIP_STEP = 8
 /** Farther than that is a crash, back to a gate: a run with more than this many isn't one. */
 const MOST_CRASHES = 200
+/** Metres a bird can go between two samples: a tenth of a second at far more than it ever flies. */
+const BIRD_STEP = 12
 
 export type LapGhost = { name: string; timeMs: number; splits: number[]; path: number[]; at: number; skin?: string }
 
@@ -58,6 +64,7 @@ export type LapGhost = { name: string; timeMs: number; splits: number[]; path: n
 export function ghostProblem(game: GameSlug, timeMs: number, splits: unknown, path: unknown): string | null {
   if (game === 'marblerun') return runProblem(timeMs, splits, path)
   if (game === 'lander') return flightProblem(timeMs, splits, path)
+  if (game === 'swoop') return swoopProblem(timeMs, splits, path)
   const time = timeMs / 1000
   if (!Array.isArray(splits) || splits.length !== 3 || !splits.every((s) => typeof s === 'number' && Number.isFinite(s))) {
     return 'splits'
@@ -149,6 +156,39 @@ function flightProblem(timeMs: number, splits: unknown, path: unknown): string |
     if (k > 0 && Math.hypot(p[k * 4]! - p[k * 4 - 4]!, p[k * 4 + 1]! - p[k * 4 - 3]!) > SHIP_STEP) crashes += 1
   }
   return crashes > MOST_CRASHES ? 'step' : null
+}
+
+/**
+ * Why a Swoop run's splits and path can't be a run of `timeMs`, or null if they can. Its splits are the moment
+ * it passed each flag and crossed the line, in order; its path is ten samples a second from the go of x, y and
+ * whether it was diving (0 or 1), and the line's moment last.
+ */
+function swoopProblem(timeMs: number, splits: unknown, path: unknown): string | null {
+  const time = timeMs / 1000
+  if (
+    !Array.isArray(splits) ||
+    splits.length < 1 ||
+    splits.length > MOST_LINES ||
+    !splits.every((s) => typeof s === 'number' && Number.isFinite(s))
+  ) {
+    return 'splits'
+  }
+  const at = splits as number[]
+  if (!(at[0]! > 0) || at.some((s, k) => k > 0 && s < at[k - 1]!) || Math.abs(at.at(-1)! - time) > 0.05) return 'splits'
+  if (!Array.isArray(path) || path.length % 3 !== 0 || !path.every((v) => typeof v === 'number' && Number.isFinite(v))) {
+    return 'path'
+  }
+  const samples = path.length / 3
+  if (samples > MOST_SAMPLES || samples < Math.floor(time * GHOST_RATE) || samples > Math.ceil(time * GHOST_RATE) + 2) {
+    return 'length'
+  }
+  const p = path as number[]
+  for (let k = 0; k < samples; k++) {
+    const hold = p[k * 3 + 2]!
+    if (Math.abs(p[k * 3]!) > 5_000 || Math.abs(p[k * 3 + 1]!) > 5_000 || (hold !== 0 && hold !== 1)) return 'range'
+    if (k > 0 && Math.hypot(p[k * 3]! - p[k * 3 - 3]!, p[k * 3 + 1]! - p[k * 3 - 2]!) > BIRD_STEP) return 'step'
+  }
+  return null
 }
 
 /** The track's (or course's) #1, and their lap's path if it came with one. Null while nobody has a lap on it. */

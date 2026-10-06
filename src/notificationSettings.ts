@@ -59,11 +59,12 @@ export function isLevel(value: unknown): value is NotificationLevel {
 }
 
 /**
- * A note's topic: its kind, except a friend beating your lap on Today's Track or your run on Today's Course or
- * Today's Cave, which is its own: those you can still take back the same day.
+ * A note's topic: its kind, except a friend beating your lap on Today's Track or your run on Today's Course,
+ * Today's Cave or Today's Hills, which is its own: those you can still take back the same day.
  */
 export function topicOf(kind: NotificationKind, meta?: NotificationMeta | null): NotificationTopic {
-  return kind === 'today-beaten' && (meta?.game === 'hotlap' || meta?.game === 'marblerun' || meta?.game === 'lander') ? 'today-lap' : kind
+  const racing = meta?.game === 'hotlap' || meta?.game === 'marblerun' || meta?.game === 'lander' || meta?.game === 'swoop'
+  return kind === 'today-beaten' && racing ? 'today-lap' : kind
 }
 
 /** The player's choices over the defaults, leaving out anything kept that is no longer a topic or a level. */

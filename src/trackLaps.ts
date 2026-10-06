@@ -5,23 +5,25 @@ import { trackLaps } from './db/schema.js'
 import { HOTLAP_FIRST_DAY, HOTLAP_PACE_MS } from './hotlapPace.js'
 import { LANDER_FIRST_DAY, LANDER_PACE_MS } from './landerPace.js'
 import { MARBLERUN_FIRST_DAY, MARBLERUN_PACE_MS } from './marblerunPace.js'
+import { SWOOP_FIRST_DAY, SWOOP_PACE_MS } from './swoopPace.js'
 import { boardDateKey, dayPlayers, isDeviceType, type DeviceType, type GameSlug } from './store.js'
 
 /*
  * Course records. Every course of a ranked daily keeps a board of its own for good: Hot Lap's tracks, Marble
- * Run's courses and Lander's caves (the table and the routes still say "track", from when Hot Lap's were the
- * only ones). On its day a course is the Daily, and its runs are the day's board (store.ts), which closes at
- * midnight with the day's places, points and tickets. After that the course stays open: a run on it comes
- * here, and the course's board, its All time board, is its day's runs and every run since, each player's best.
+ * Run's courses, Lander's caves and Swoop's hills (the table and the routes still say "track", from when Hot
+ * Lap's were the only ones). On its day a course is the Daily, and its runs are the day's board (store.ts),
+ * which closes at midnight with the day's places, points and tickets. After that the course stays open: a run
+ * on it comes here, and the course's board, its All time board, is its day's runs and every run since, each
+ * player's best.
  * Nothing here feeds the day's board, the standings, events or the day's tickets, and nothing that reads those
  * reads this. A Hot Lap track's record is in Hot Lap's record book too (courseRecords.ts), and taking any
  * course's record after its day pays a few tickets, once (trackLapsRoutes.ts).
  *
  * Hot Lap's tracks are the plan's (the site's dailyPlan.ts; the API has its blue cars in hotlapPace.ts): track
  * n is day n's, and past the plan's end the days go round again, so day d drives track ((d − 1) % tracks) + 1.
- * Marble Run's courses and Lander's caves are numbered by their day, 1 on the first, and never come round
- * again: the plan's layouts may, but each day's is a course of its own (the site's daily.ts courseNumber and
- * caveNumber).
+ * Marble Run's courses, Lander's caves and Swoop's hills are numbered by their day, 1 on the first, and never
+ * come round again: the plan's layouts may, but each day's is a course of its own (the site's daily.ts
+ * courseNumber, caveNumber and hillsNumber).
  */
 
 /** How a game numbers its courses, and the fastest run on one it believes, as a share of the blue run's time. */
@@ -33,6 +35,7 @@ const PLANS: Partial<Record<GameSlug, CoursePlan>> = {
   // As a day's board believes them (routes.ts).
   marblerun: { firstDay: MARBLERUN_FIRST_DAY, pace: MARBLERUN_PACE_MS, repeats: false, floor: 0.6 },
   lander: { firstDay: LANDER_FIRST_DAY, pace: LANDER_PACE_MS, repeats: false, floor: 0.45 },
+  swoop: { firstDay: SWOOP_FIRST_DAY, pace: SWOOP_PACE_MS, repeats: false, floor: 0.4 },
 }
 
 /** The games whose courses keep boards of their own. */

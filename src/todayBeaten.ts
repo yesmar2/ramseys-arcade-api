@@ -21,7 +21,7 @@ import { scoreFigure } from './words.js'
  * moment.
  */
 
-export type TodayGame = 'acechase' | 'hotlap' | 'findbug' | 'halffull' | 'marblerun' | 'lander'
+export type TodayGame = 'acechase' | 'hotlap' | 'findbug' | 'halffull' | 'marblerun' | 'lander' | 'swoop'
 
 const WHAT: Record<TodayGame, { daily: string; mine: string }> = {
   acechase: { daily: 'Today’s Hole', mine: 'you on' },
@@ -30,6 +30,7 @@ const WHAT: Record<TodayGame, { daily: string; mine: string }> = {
   halffull: { daily: 'Today’s Pour', mine: 'you on' },
   marblerun: { daily: 'Today’s Course', mine: 'your run on' },
   lander: { daily: 'Today’s Cave', mine: 'your run in' },
+  swoop: { daily: 'Today’s Hills', mine: 'your run over' },
 }
 
 const tries = (n: number) => `${n} ${n === 1 ? 'try' : 'tries'}`
@@ -98,7 +99,8 @@ export async function tellBeatenFriends(opts: { accountId: string; game: TodayGa
     const theirResult = theirs.get(friend.accountId)
     if (theirResult == null || !beats(opts.game, yours, theirResult)) continue
     // A lap or a run can be had again the same day; the rest count once.
-    const again = opts.game === 'hotlap' || opts.game === 'marblerun' || opts.game === 'lander' ? ' There’s still time to take it back today.' : ''
+    const again =
+      opts.game === 'hotlap' || opts.game === 'marblerun' || opts.game === 'lander' || opts.game === 'swoop' ? ' There’s still time to take it back today.' : ''
     const filed = await notify({
       accountId: friend.accountId,
       kind: 'today-beaten',

@@ -31,6 +31,7 @@ export const GAME_LABELS: Record<GameSlug, string> = {
   halffull: 'Half Full',
   marblerun: 'Marble Run',
   lander: 'Lander',
+  swoop: 'Swoop',
 }
 
 export function gameLabel(game: string): string {
@@ -50,11 +51,12 @@ export function isTime(game: GameSlug) {
 }
 
 /**
- * A lap, or a run down a course or a cave, can be won by thousandths, so Hot Lap's, Marble Run's and Lander's
- * times are printed to them, as the site's boards show them; the other clocks to tenths.
+ * A lap, or a run down a course or a cave or over the hills, can be won by thousandths, so Hot Lap's, Marble
+ * Run's, Lander's and Swoop's times are printed to them, as the site's boards show them; the other clocks to
+ * tenths.
  */
 function places(game: GameSlug) {
-  return game === 'hotlap' || game === 'marblerun' || game === 'lander' ? 3 : 1
+  return game === 'hotlap' || game === 'marblerun' || game === 'lander' || game === 'swoop' ? 3 : 1
 }
 
 /** A time the way the site prints one: 47.5s, or 1:02.3 past a minute; to the thousandth, 53.362s. */

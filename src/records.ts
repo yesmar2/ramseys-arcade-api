@@ -47,6 +47,12 @@ export type RecordDef = {
   direction: RecordDirection
   /** Stored value unit (wave times are milliseconds). */
   unit: 'ms' | 'count'
+  /**
+   * The most a count can be, `floor` plus `perSecond` for every second the
+   * run it came from has been open: only where the game was measured for it
+   * (recordsRoutes.ts recordFits).
+   */
+  cap?: { floor: number; perSecond: number }
 }
 
 export type RecordEntry = LeaderboardEntry
@@ -216,6 +222,48 @@ const CRUMBTRAIL_ROWS: RecordDef = {
   unit: 'count',
 }
 
+/*
+ * Pileup's books, each capped by what a run that long can hold. Measured with
+ * the game's own engine: a bot dropping four pieces a second, quicker than
+ * hands, clears 1.4 rows a second, a four every 14 seconds, and a combo
+ * can't outrun its rows. A Shake can't clear more rows than the well has.
+ */
+const PILEUP_FOURS: RecordDef = {
+  id: 'fours',
+  game: 'pileup',
+  label: 'Fours in a run',
+  direction: 'higher',
+  unit: 'count',
+  cap: { floor: 5, perSecond: 0.5 },
+}
+
+const PILEUP_ROWS: RecordDef = {
+  id: 'rows-cleared',
+  game: 'pileup',
+  label: 'Rows cleared in a run',
+  direction: 'higher',
+  unit: 'count',
+  cap: { floor: 20, perSecond: 2 },
+}
+
+const PILEUP_COMBO: RecordDef = {
+  id: 'highest-combo',
+  game: 'pileup',
+  label: 'Highest combo',
+  direction: 'higher',
+  unit: 'count',
+  cap: { floor: 10, perSecond: 2 },
+}
+
+const PILEUP_SHAKE: RecordDef = {
+  id: 'biggest-shake',
+  game: 'pileup',
+  label: 'Biggest Shake',
+  direction: 'higher',
+  unit: 'count',
+  cap: { floor: 20, perSecond: 0 },
+}
+
 export const PLAY_DAYS_STREAK_ID = 'play-days-streak'
 export const THRESHOLD_STREAK_ID = 'threshold-streak'
 
@@ -300,6 +348,10 @@ const RECORD_DEFS: RecordDef[] = [
   CRUMBTRAIL_CRUMB_STREAK,
   CRUMBTRAIL_GHOSTS,
   SNAKE_LONGEST,
+  PILEUP_FOURS,
+  PILEUP_ROWS,
+  PILEUP_COMBO,
+  PILEUP_SHAKE,
   ...buildAsteroidsWaveRecords(),
   ...buildSnakeFastestLengthRecords(),
   ...buildCrosswalkFastestRowRecords(),

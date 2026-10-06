@@ -17,6 +17,7 @@ import {
   getRecordDef,
   getRecordProgression,
   listGameRecords,
+  type RecordDef,
 } from './records.js'
 import { siteRecords, siteRecordStandingFor } from './siteRecords.js'
 import { isPeriod, resolveGameSlug, type Period } from './store.js'
@@ -57,13 +58,15 @@ const RUN_ERRORS: Record<'UNKNOWN' | 'USED' | 'EXPIRED' | 'MISMATCH', string> = 
  *
  * The only plausibility check that holds for every record book without knowing
  * the game: a time recorded inside a run has to fit inside the time the run has
- * been open. Counts get no equivalent — how many combos a second can hold is a
- * per-game question, and a wrong guess there would throw away real play, so
- * they lean on the run, the rate limit and the ban list instead.
+ * been open. Counts get one only where their game was measured for it (a
+ * book's `cap`): how many combos a second can hold is a per-game question, and
+ * a guess there would throw away real play, so the rest lean on the run, the
+ * rate limit and the ban list instead.
  */
-function timeRecordFits(def: { unit: string }, score: number, elapsedMs: number): boolean {
-  if (def.unit !== 'ms') return true
-  return score <= elapsedMs * 1.1
+function recordFits(def: RecordDef, score: number, elapsedMs: number): boolean {
+  if (def.unit === 'ms') return score <= elapsedMs * 1.1
+  if (def.cap) return score <= def.cap.floor + (def.cap.perSecond * elapsedMs) / 1000
+  return true
 }
 
 function parsePeriod(raw: unknown): Period {
@@ -243,12 +246,12 @@ recordsRouter.post('/:game/:recordId', async (req, res) => {
       res.status(400).json({ error: RUN_ERRORS[run.code], code: `RUN_${run.code}` })
       return
     }
-    if (!timeRecordFits(def, score, run.elapsedMs)) {
+    if (!recordFits(def, score, run.elapsedMs)) {
       console.warn(
-        `[anticheat] rejected ${game}/${recordId} of ${score}ms from account ${account.id} after only ${run.elapsedMs}ms`,
+        `[anticheat] rejected ${game}/${recordId} of ${score}${def.unit === 'ms' ? 'ms' : ''} from account ${account.id} after only ${run.elapsedMs}ms`,
       )
       res.status(400).json({
-        error: 'That time is longer than the run it came from',
+        error: def.unit === 'ms' ? 'That time is longer than the run it came from' : 'That is more than the run it came from could hold',
         code: 'RECORD_IMPLAUSIBLE',
       })
       return

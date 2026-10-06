@@ -409,7 +409,21 @@ const pileup: Model = (q, rng) => {
   let score = 0
   for (let r = 0; r < rows; r++) score += perRow * (1 + Math.floor(r / 10))
   const play = rows * lerp(9, 2.4, q) * between(rng, 0.85, 1.15) + between(rng, 10, 40)
-  return finish('pileup', rng, roundTo(score, 5), play, [])
+  // Its books, at the floors the site posts from (lib/records.ts PILEUP_BOOK_MIN).
+  const records: RunRecord[] = []
+  const end = play * 1000
+  // A four is four rows at once: the better the player, the more of their rows come that way.
+  const fours = Math.floor((rows * lerp(0.02, 0.3, q) * between(rng, 0.6, 1.3)) / 4)
+  if (fours >= 1) records.push({ recordId: 'fours', value: fours, atMs: end })
+  if (rows >= 10) records.push({ recordId: 'rows-cleared', value: rows, atMs: end })
+  const combo = Math.min(rows, Math.round(curve(q, 2, 4, 8) * luck(rng, 0.35)))
+  if (combo >= 3) records.push({ recordId: 'highest-combo', value: combo, atMs: end * between(rng, 0.3, 0.95) })
+  // A Shake comes every twelve rows, and the messier the pile it shakes, the more rows it clears.
+  if (rows >= 12) {
+    const shake = Math.min(14, Math.round(lerp(6, 3, q) * between(rng, 0.6, 1.5)))
+    if (shake >= 2) records.push({ recordId: 'biggest-shake', value: shake, atMs: end * between(rng, 0.2, 0.9) })
+  }
+  return finish('pileup', rng, roundTo(score, 5), play, records)
 }
 
 const MODELS: Partial<Record<GameSlug, Model>> = {

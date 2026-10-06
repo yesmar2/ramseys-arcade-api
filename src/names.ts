@@ -287,13 +287,28 @@ export async function assertCanUseName(
     const next: NameClaim = { token: mintToken(), claimedAt: Date.now() }
     next.accountId = accountId
     await releaseAndMigrateAccountNames(accountId, cleaned)
-    await db().insert(nameClaims).values({
-      name: cleaned,
-      token: next.token,
-      claimedAt: next.claimedAt,
-      accountId: next.accountId ?? null,
-      avatarId: null,
-    })
+    const added = await db()
+      .insert(nameClaims)
+      .values({
+        name: cleaned,
+        token: next.token,
+        claimedAt: next.claimedAt,
+        accountId: next.accountId ?? null,
+        avatarId: null,
+      })
+      .onConflictDoNothing()
+      .returning({ name: nameClaims.name })
+    if (!added.length) {
+      /*
+       * Claimed in the moment since we looked: a run's score and its record
+       * books go up together, so a new player's first save claims their tag
+       * twice at once. Theirs to use if the claim that got there is theirs;
+       * anyone else's is taken.
+       */
+      const now = await getClaim(cleaned)
+      if (now && now.accountId === accountId) return { name: cleaned, token: now.token, created: false }
+      throw Object.assign(new Error('That name is already taken'), { status: 409, code: 'NAME_TAKEN' })
+    }
     await refreshClaims([cleaned])
     return { name: cleaned, token: next.token, created: true }
   }

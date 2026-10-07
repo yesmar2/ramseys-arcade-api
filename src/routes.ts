@@ -12,6 +12,7 @@ import { clientIp, hashIp, takeToken } from './rateLimit.js'
 import { claimRun, peekRun } from './runs.js'
 import { claimFirstRunDay, FIRST_RUN_DAILIES, FIRST_RUN_TTL_MS, firstRunError, firstRunProblem } from './firstRun.js'
 import { judgePours, minPourMs, poursSchema } from './halffull/save.js'
+import { judgePlates, minPlatesMs, platesSchema } from './centroid/save.js'
 import { flagIfSuspicious } from './scoreFlags.js'
 import { resolveBoardScope } from './groups.js'
 import { assertCanUseName, withAvatarId, withAvatarIds } from './names.js'
@@ -179,6 +180,8 @@ const submitSchema = z.object({
   pace: z.number().int().min(10_000).max(300_000).optional(),
   /** Half Full: the day and its five locked levels, from which the API works out the score itself. */
   pours: poursSchema.optional(),
+  /** Centroid: the day and its six taps, from which the API works out the score itself. */
+  plates: platesSchema.optional(),
   /** The season skin it was played in (skins.ts): kept only if it's the game's and the player owns it. */
   skin: z.string().min(1).max(40).optional(),
 })
@@ -540,7 +543,7 @@ leaderboardsRouter.post('/:game', async (req, res) => {
     return
   }
 
-  const { name, token, device, runId, challengeId, pickups, pace, pours, skin } = parsed.data
+  const { name, token, device, runId, challengeId, pickups, pace, pours, plates, skin } = parsed.data
   let score = parsed.data.score
   // Before launch, Plus members play a new game as practice: its boards open to everyone on launch day (earlyAccess.ts).
   if (beforeLaunch(game)) {
@@ -568,6 +571,24 @@ leaderboardsRouter.post('/:game', async (req, res) => {
       return
     }
     if (judged.board !== score) console.warn(`[halffull] a day sent as ${score} works out at ${judged.board}; kept ${judged.board}`)
+    score = judged.board
+  }
+  // Centroid's daily is worked out here from the day's six taps (centroid/save.ts): the figure sent is never taken.
+  if (game === 'centroid') {
+    if (!plates) {
+      res.status(400).json({ error: 'A Centroid day is saved with its taps', code: 'PLATES_REQUIRED' })
+      return
+    }
+    if (plates.day !== dayOfKey(boardDateKey(Date.now()))) {
+      res.status(409).json({ error: firstRunError(game, 'DAY_OVER'), code: 'DAY_OVER' })
+      return
+    }
+    const judged = judgePlates(plates)
+    if (!judged.ok) {
+      res.status(400).json({ error: 'Those taps can’t be a run of today’s plates', code: 'PLATES_INVALID' })
+      return
+    }
+    if (judged.board !== score) console.warn(`[centroid] a day sent as ${score} works out at ${judged.board}; kept ${judged.board}`)
     score = judged.board
   }
   if (score > scoreCeiling(game)) {
@@ -630,6 +651,12 @@ leaderboardsRouter.post('/:game', async (req, res) => {
     // Five pours can't be locked faster than each glass's lock allows (halffull/save.ts minPourMs).
     if (game === 'halffull' && run.elapsedMs < minPourMs(pours?.auto)) {
       console.warn(`[anticheat] rejected halffull from account ${account.id}: five pours in ${run.elapsedMs}ms`)
+      res.status(400).json({ error: 'That score is not possible in the time the run took', code: 'SCORE_IMPLAUSIBLE' })
+      return
+    }
+    // Six plates can't be played faster than each comes on and stands (centroid/save.ts minPlatesMs).
+    if (game === 'centroid' && run.elapsedMs < minPlatesMs()) {
+      console.warn(`[anticheat] rejected centroid from account ${account.id}: six plates in ${run.elapsedMs}ms`)
       res.status(400).json({ error: 'That score is not possible in the time the run took', code: 'SCORE_IMPLAUSIBLE' })
       return
     }
@@ -758,7 +785,7 @@ leaderboardsRouter.post('/:game', async (req, res) => {
 
   // Tickets for a run the server timed; one saved without a run id pays none, but for a Half Full day, whose
   // score the server worked out itself and which saves once a day: it's paid under the day.
-  const payRef = runId ?? (game === 'halffull' ? `halffull-${boardDateKey(result.entry.at)}` : null)
+  const payRef = runId ?? (game === 'halffull' || game === 'centroid' ? `${game}-${boardDateKey(result.entry.at)}` : null)
   const tickets: RunTickets | null = payRef
     ? await payRun({
         accountId: account.id,
@@ -787,7 +814,7 @@ leaderboardsRouter.post('/:game', async (req, res) => {
   })
 
   // A daily of the Today set (today.ts) may keep the day, or make it a Full ticket, and reach a streak reward.
-  if (game === 'hotlap' || game === 'findbug' || game === 'halffull' || game === 'marblerun' || game === 'lander' || game === 'swoop') {
+  if (game === 'hotlap' || game === 'findbug' || game === 'halffull' || game === 'centroid' || game === 'marblerun' || game === 'lander' || game === 'swoop') {
     await settleToday(account.id, result.entry.at).catch((err: unknown) => {
       console.warn(`[today] ${game} run for ${claim.name}:`, err)
     })

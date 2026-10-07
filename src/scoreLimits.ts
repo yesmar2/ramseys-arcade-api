@@ -23,6 +23,8 @@ export const TRIES_SCORED_GAMES: ReadonlySet<GameSlug> = new Set<GameSlug>(['ace
 export function scoreCeiling(game: GameSlug): number {
   // Half Full's day, in hundredths of a point: 10,000 is five pours dead on half.
   if (game === 'halffull') return 10_000
+  // Centroid's day (since 2026-10-06 a daily), in hundredths of a point: 10,000 is six pins dead on.
+  if (game === 'centroid') return 10_000
   if (TIME_SCORED_GAMES.has(game)) return TIME_SCORE_BASE - 1
   if (TRIES_SCORED_GAMES.has(game)) return TRIES_SCORE_BASE - 1
   return TIME_SCORE_BASE
@@ -97,7 +99,8 @@ const SCORE_RULES: Record<GameSlug, ScoreRule> = {
   snake: { kind: 'rate', floor: 200, perSecond: 25 },
   crosswalk: { kind: 'rate', floor: 50, perSecond: 12 },
   stacker: { kind: 'rate', floor: 30, perSecond: 4 },
-  centroid: { kind: 'rate', floor: 1_000, perSecond: 150 },
+  // A daily since 2026-10-06: the API works its day out from the six taps (centroid/save.ts).
+  centroid: { kind: 'judged' },
   pop: { kind: 'rate', floor: 200, perSecond: 60 },
   simon: { kind: 'rate', floor: 5, perSecond: 1.5 },
   pellets: { kind: 'rate', floor: 2_000, perSecond: 250 },

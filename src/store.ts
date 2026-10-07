@@ -3,6 +3,7 @@ import { db } from './db/client.js'
 import { leaderboardScores } from './db/schema.js'
 import { announceRewrite, insertWithFeed, MULTI_INSTANCE, onChange, onRewrite } from './feed.js'
 import { HALFFULL_FIRST_KEY } from './halffull/launch.js'
+import { CENTROID_FIRST_KEY } from './centroid/launch.js'
 
 export const ALLOWED_GAMES = [
   'asteroids',
@@ -450,7 +451,7 @@ export type ClosedPeriod = 'weekly' | 'monthly'
  * site marks these games `daily` in its data/games.ts, and prints a daily's board for longer than a day in
  * points. Find the Bug's and Half Full's boards take only a day's first run (firstRun.ts).
  */
-export const DAILY_GAMES: ReadonlySet<GameSlug> = new Set<GameSlug>(['hotlap', 'acechase', 'findbug', 'halffull', 'marblerun', 'lander', 'swoop'])
+export const DAILY_GAMES: ReadonlySet<GameSlug> = new Set<GameSlug>(['hotlap', 'acechase', 'findbug', 'halffull', 'centroid', 'marblerun', 'lander', 'swoop'])
 
 /**
  * The first day (YYYYMMDD) each daily's board was a day's: Ace Chase's held rounds of three holes before
@@ -462,6 +463,8 @@ export const DAILY_SINCE: Partial<Record<GameSlug, number>> = {
   acechase: 20260927,
   findbug: 20260927,
   halffull: HALFFULL_FIRST_KEY,
+  // Centroid's daily #1 (centroid/launch.ts): before it, an endless arcade game.
+  centroid: CENTROID_FIRST_KEY,
   // Marble Run's course #1 (marblerunPace.ts MARBLERUN_FIRST_DAY).
   marblerun: 20260929,
   // Lander's cave #1 (landerPace.ts LANDER_FIRST_DAY).
@@ -479,7 +482,7 @@ export const DAILY_SINCE: Partial<Record<GameSlug, number>> = {
  * score and is what they share, and the day's runs stay here for that (today's board is read, never shown).
  * Hot Lap, Marble Run, Lander and Swoop, where hands decide, are ranked.
  */
-export const UNRANKED_GAMES: ReadonlySet<GameSlug> = new Set<GameSlug>(['acechase', 'findbug', 'halffull'])
+export const UNRANKED_GAMES: ReadonlySet<GameSlug> = new Set<GameSlug>(['acechase', 'findbug', 'halffull', 'centroid'])
 
 /** Whether a game's results place its players: on its boards, in the standings and in the record books. */
 export const isRankedGame = (game: GameSlug) => !UNRANKED_GAMES.has(game)

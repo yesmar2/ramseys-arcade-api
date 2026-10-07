@@ -2,6 +2,7 @@ import { and, eq, gte, inArray } from 'drizzle-orm'
 import { db } from './db/client.js'
 import { dailyHoleResults, leaderboardScores, prizesOwned, ticketLedger } from './db/schema.js'
 import { HALFFULL_TODAY_FROM } from './halffull/launch.js'
+import { CENTROID_TODAY_FROM } from './centroid/launch.js'
 import { namesOwnedByAccount } from './names.js'
 import { notify, withdrawNotification } from './notifications.js'
 import { DAILY_SINCE, boardDateKey, previousBoardDateKey, type GameSlug } from './store.js'
@@ -29,7 +30,7 @@ import { awardTickets } from './tickets.js'
  * milestones (its lib/today.ts).
  */
 
-export type TodayKey = 'hole' | 'track' | 'wanted' | 'pour' | 'course' | 'cave' | 'hills'
+export type TodayKey = 'hole' | 'track' | 'wanted' | 'pour' | 'course' | 'cave' | 'hills' | 'plates'
 
 /** How many of a day's dailies kept it, before RACES_ONLY_FROM. A day with this many or fewer on the card needs every one. */
 export const TODAY_KEEP = 3
@@ -84,6 +85,8 @@ export const TODAY_DAILIES: readonly { key: TodayKey; game: GameSlug; from: numb
   { key: 'hole', game: 'acechase', from: 0, until: PUZZLES_UNTIL },
   { key: 'wanted', game: 'findbug', from: 0, until: PUZZLES_UNTIL },
   { key: 'pour', game: 'halffull', from: HALFFULL_TODAY_FROM ? keyOf(HALFFULL_TODAY_FROM) : null, until: PUZZLES_UNTIL },
+  // Centroid's daily came after the puzzles left the ticket (2026-10-06): one of them, under it, and never on it.
+  { key: 'plates', game: 'centroid', from: CENTROID_TODAY_FROM ? keyOf(CENTROID_TODAY_FROM) : null, until: PUZZLES_UNTIL },
 ]
 
 /** A day's card: the dailies on it (live), in order, and how many of them keep the day. */
@@ -275,6 +278,7 @@ export type TodayState = {
     track: { score: number } | null
     wanted: { score: number } | null
     pour: { score: number } | null
+    plates: { score: number } | null
     course: { score: number } | null
     cave: { score: number } | null
     hills: { score: number } | null
@@ -306,14 +310,14 @@ async function playedDays(accountId: string, now: number): Promise<Record<TodayK
   const fromMs = now - LOOKBACK_DAYS * 86_400_000
   const fromDay = dayOf(boardDateKey(fromMs))
   const tags = (await namesOwnedByAccount(accountId)).map((t) => t.name)
-  const runs = (game: 'hotlap' | 'findbug' | 'halffull' | 'marblerun' | 'lander' | 'swoop') =>
+  const runs = (game: 'hotlap' | 'findbug' | 'halffull' | 'centroid' | 'marblerun' | 'lander' | 'swoop') =>
     tags.length
       ? db()
           .select({ score: leaderboardScores.score, at: leaderboardScores.at })
           .from(leaderboardScores)
           .where(and(eq(leaderboardScores.game, game), inArray(leaderboardScores.name, tags), gte(leaderboardScores.at, fromMs)))
       : Promise.resolve([] as { score: number; at: number }[])
-  const [holes, laps, finds, pours, courses, caves, flights] = await Promise.all([
+  const [holes, laps, finds, pours, courses, caves, flights, plateDays] = await Promise.all([
     db()
       .select({ day: dailyHoleResults.day, tries: dailyHoleResults.tries })
       .from(dailyHoleResults)
@@ -324,6 +328,7 @@ async function playedDays(accountId: string, now: number): Promise<Record<TodayK
     runs('marblerun'),
     runs('lander'),
     runs('swoop'),
+    runs('centroid'),
   ])
   const played: Record<TodayKey, Map<number, number>> = {
     hole: new Map(),
@@ -333,6 +338,7 @@ async function playedDays(accountId: string, now: number): Promise<Record<TodayK
     course: new Map(),
     cave: new Map(),
     hills: new Map(),
+    plates: new Map(),
   }
   for (const h of holes) played.hole.set(keyOf(h.day), h.tries)
   // A lap's board score is higher the faster it was: the day's best is its highest.
@@ -352,6 +358,12 @@ async function playedDays(accountId: string, now: number): Promise<Record<TodayK
     const key = boardDateKey(run.at)
     if (key < (DAILY_SINCE.halffull ?? 0)) continue
     played.pour.set(key, Math.max(played.pour.get(key) ?? 0, run.score))
+  }
+  // Centroid's daily takes only the day's first run too, so its rows are its days, from its #1.
+  for (const run of plateDays) {
+    const key = boardDateKey(run.at)
+    if (key < (DAILY_SINCE.centroid ?? 0)) continue
+    played.plates.set(key, Math.max(played.plates.get(key) ?? 0, run.score))
   }
   // A run down the day's course, as a lap is: the day's best is its highest board score, from course #1.
   for (const run of courses) {
@@ -390,6 +402,7 @@ export async function todayState(accountId: string, now = Date.now()): Promise<T
   const course = played.course.get(today)
   const cave = played.cave.get(today)
   const hills = played.hills.get(today)
+  const plates = played.plates.get(today)
   return {
     day: dayOf(today),
     done: {
@@ -400,6 +413,7 @@ export async function todayState(accountId: string, now = Date.now()): Promise<T
       course: played.course.has(today),
       cave: played.cave.has(today),
       hills: played.hills.has(today),
+      plates: played.plates.has(today),
     },
     results: {
       hole: played.hole.has(today) ? { tries: played.hole.get(today)! } : null,
@@ -409,6 +423,7 @@ export async function todayState(accountId: string, now = Date.now()): Promise<T
       course: course != null ? { score: course } : null,
       cave: cave != null ? { score: cave } : null,
       hills: hills != null ? { score: hills } : null,
+      plates: plates != null ? { score: plates } : null,
     },
     live,
     need,

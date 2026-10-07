@@ -49,7 +49,8 @@ export const GAME_BANDS: Record<GameSlug, ScoreProfile> = {
   patriot: { min: 480, max: 28600, step: 5 },
   snake: { min: 30, max: 1180, step: 10 },
   pop: { min: 70, max: 920, step: 5 },
-  centroid: { min: 420, max: 7420, step: 10 },
+  // Today's Plates, in hundredths of a point (a daily since 2026-10-06): Tipsy to Dead Center.
+  centroid: { min: 7_000, max: 9_600, step: 1 },
   asteroids: { min: 280, max: 14200, step: 10 },
   simon: { min: 2, max: 26 },
   crosswalk: { min: 12, max: 420, step: 1 },

@@ -122,6 +122,21 @@ export const FINDBUG_LADDER: Ladder = {
 }
 
 /**
+ * Centroid's daily, by the day's tier (the site's dead-center/score.ts tierFor; the board is hundredths of a
+ * point): a day 3, Tipsy 5, Wobbly 7, Steady 10, Dead Center 15.
+ */
+export const CENTROID_LADDER: Ladder = {
+  base: 3,
+  baseLabel: 'today’s plates',
+  steps: [
+    { at: 7_000, tickets: 5, label: 'Tipsy' },
+    { at: 8_200, tickets: 7, label: 'Wobbly' },
+    { at: 9_000, tickets: 10, label: 'Steady' },
+    { at: 9_500, tickets: 15, label: 'Dead Center' },
+  ],
+}
+
+/**
  * Half Full, by the day's tier (the site's score.ts tierFor; the board is hundredths of a point): a pour 3,
  * Sloshy 5, Good Pour 7, Steady Hand 10, Spot On 15.
  */
@@ -276,6 +291,7 @@ export async function ladderFor(game: GameSlug, now = Date.now(), paceMs?: numbe
   if (game === 'acechase') return ACECHASE_LADDER
   if (game === 'findbug') return FINDBUG_LADDER
   if (game === 'halffull') return HALFFULL_LADDER
+  if (game === 'centroid') return CENTROID_LADDER
   if (game === 'hotlap') return hotlapLadder(plannedPace(now) ?? paceMs)
   if (game === 'marblerun') return marblerunLadder(marblerunPlannedPace(now) ?? paceMs)
   if (game === 'lander') return landerLadder(landerPlannedPace(now) ?? paceMs)

@@ -31,6 +31,8 @@ export type Rival = {
   course: number | null
   cave: number | null
   hills: number | null
+  /** Today's plates' board score (Centroid's daily, under the ticket); null if not yet. */
+  plates: number | null
   /** Today streak: from today once today is kept, else from yesterday. */
   streak: number
 }
@@ -101,7 +103,7 @@ export async function todayRivals(accountId: string, groupId: string | null, now
   const fromDay = dayOf(boardDateKey(fromMs))
 
   // One look at each daily for everyone: the day's result, per player per day.
-  const perDay = (game: 'hotlap' | 'findbug' | 'halffull' | 'marblerun' | 'lander' | 'swoop') =>
+  const perDay = (game: 'hotlap' | 'findbug' | 'halffull' | 'centroid' | 'marblerun' | 'lander' | 'swoop') =>
     names.length
       ? db()
           .select({ name: leaderboardScores.name, day: dayKeySql, best: sql<number>`max(${leaderboardScores.score})::int` })
@@ -109,7 +111,7 @@ export async function todayRivals(accountId: string, groupId: string | null, now
           .where(and(eq(leaderboardScores.game, game), inArray(leaderboardScores.name, names), gte(leaderboardScores.at, fromMs)))
           .groupBy(leaderboardScores.name, dayKeySql)
       : Promise.resolve([] as { name: string; day: number; best: number }[])
-  const [holes, laps, finds, pours, courses, caves, flights] = await Promise.all([
+  const [holes, laps, finds, pours, courses, caves, flights, plateRuns] = await Promise.all([
     accounts.length
       ? db()
           .select({ accountId: dailyHoleResults.accountId, day: dailyHoleResults.day, tries: dailyHoleResults.tries })
@@ -122,6 +124,7 @@ export async function todayRivals(accountId: string, groupId: string | null, now
     perDay('marblerun'),
     perDay('lander'),
     perDay('swoop'),
+    perDay('centroid'),
   ])
 
   const holeDays = new Map<string, Map<number, number>>()
@@ -147,6 +150,7 @@ export async function todayRivals(accountId: string, groupId: string | null, now
   const courseDays = byName(courses, DAILY_SINCE.marblerun)
   const caveDays = byName(caves, DAILY_SINCE.lander)
   const hillsDays = byName(flights, DAILY_SINCE.swoop)
+  const plateDays = byName(plateRuns, DAILY_SINCE.centroid)
 
   // Freezes given by hand count in a rival's streak as in their own (today.ts freezeGrants).
   const grants = await freezeGrants(accounts)
@@ -158,6 +162,7 @@ export async function todayRivals(accountId: string, groupId: string | null, now
     const course = courseDays.get(p.name) ?? new Map<number, number>()
     const cave = caveDays.get(p.name) ?? new Map<number, number>()
     const hills = hillsDays.get(p.name) ?? new Map<number, number>()
+    const plates = plateDays.get(p.name) ?? new Map<number, number>()
     return {
       name: p.name,
       me: p.me,
@@ -168,8 +173,9 @@ export async function todayRivals(accountId: string, groupId: string | null, now
       course: course.get(today) ?? null,
       cave: cave.get(today) ?? null,
       hills: hills.get(today) ?? null,
+      plates: plates.get(today) ?? null,
       streak: walkStreak(
-        keptDays({ hole, track, wanted, pour, course, cave, hills }),
+        keptDays({ hole, track, wanted, pour, course, cave, hills, plates }),
         today,
         walkFrom,
         p.accountId ? grants.get(p.accountId) : undefined,

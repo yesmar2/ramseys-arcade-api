@@ -282,7 +282,7 @@ export const SCORE_STREAK_THRESHOLDS: Record<GameSlug, number> = {
   snake: 500,
   crosswalk: 75,
   stacker: 15,
-  centroid: 6000,
+  centroid: 0,
   pop: 300,
   simon: 10,
   spotter: 955_000, // ≈ under 45s

@@ -69,7 +69,7 @@ export function clock(ms: number, decimals = 1): string {
 
 /** A score as the board shows it: 447, 14,310, 47.5s. */
 export function scoreFigure(game: GameSlug, score: number): string {
-  if (game === 'halffull') return formatBoard(score)
+  if (game === 'halffull' || game === 'centroid') return formatBoard(score)
   return isTime(game) ? clock(TIME_SCORE_BASE - score, places(game)) : score.toLocaleString('en-US')
 }
 
@@ -85,7 +85,7 @@ export function scoreWords(game: GameSlug, score: number): string {
 export function gapWords(game: GameSlug, gap: number): string {
   if (isTime(game)) return `${(gap / 1000).toFixed(places(game))}s`
   // Half Full's board is in hundredths of a point: 40 is 0.4 of a point, 4 is 0.04.
-  if (game === 'halffull') return `${(gap / 100).toFixed(gap % 10 ? 2 : 1)}%`
+  if (game === 'halffull' || game === 'centroid') return `${(gap / 100).toFixed(gap % 10 ? 2 : 1)}%`
   const [one, many] = UNITS[game] ?? ['point', 'points']
   return `${gap.toLocaleString('en-US')} ${gap === 1 ? one : many}`
 }

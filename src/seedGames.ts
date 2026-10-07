@@ -46,7 +46,7 @@ export const SEEDED_GAMES: readonly GameSlug[] = [
   'snake',
   'crosswalk',
   'stacker',
-  'centroid',
+  // Centroid left the arcade games for the dailies on 2026-10-06: its old runs aren't a day's.
   'pop',
   'pellets',
   'crumbtrail',

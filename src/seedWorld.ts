@@ -882,7 +882,7 @@ function hostedScoreEvents(players: Player[]): HostedPlan[] {
     },
     {
       title: 'Lunch Break Ladder',
-      games: ['pop', 'centroid', 'fireflies'],
+      games: ['pop', 'pileup', 'fireflies'],
       startsAt: dayStart(addDays(TODAY, -1)) + 11.5 * HOUR,
       hours: 72,
       size: 12,

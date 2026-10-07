@@ -21,13 +21,14 @@ import { scoreFigure } from './words.js'
  * moment.
  */
 
-export type TodayGame = 'acechase' | 'hotlap' | 'findbug' | 'halffull' | 'marblerun' | 'lander' | 'swoop'
+export type TodayGame = 'acechase' | 'hotlap' | 'findbug' | 'halffull' | 'centroid' | 'marblerun' | 'lander' | 'swoop'
 
 const WHAT: Record<TodayGame, { daily: string; mine: string }> = {
   acechase: { daily: 'Today’s Hole', mine: 'you on' },
   hotlap: { daily: 'Today’s Track', mine: 'your lap on' },
   findbug: { daily: 'Today’s Wanted', mine: 'you on' },
   halffull: { daily: 'Today’s Pour', mine: 'you on' },
+  centroid: { daily: 'Today’s Plates', mine: 'you on' },
   marblerun: { daily: 'Today’s Course', mine: 'your run on' },
   lander: { daily: 'Today’s Cave', mine: 'your run in' },
   swoop: { daily: 'Today’s Hills', mine: 'your run over' },

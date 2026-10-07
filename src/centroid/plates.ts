@@ -275,7 +275,7 @@ function familyFor(n: number): PlateKind {
  * The nth plate, in `hue`, drawn from `random` (Math.random for a run of the arcade game; a day's seeded
  * stream for the daily, plan.ts, so everyone gets the same plates and the API can build them again).
  */
-export function makePlate(n: number, hue: number = PLATE_HUES[n % PLATE_HUES.length]!, random: () => number = Math.random, tricky = false): Plate {
+export function makePlate(n: number, hue: number = PLATE_HUES[n % PLATE_HUES.length]!, random: () => number = Math.random, tricky = 0): Plate {
   const was = rng
   rng = random
   try {
@@ -285,14 +285,21 @@ export function makePlate(n: number, hue: number = PLATE_HUES[n % PLATE_HUES.len
   }
 }
 
-/** `tricky`: never a plain plate (the daily's, since 2026-10-07), from the third on. */
-function makePlateNow(n: number, hue: number, tricky: boolean): Plate {
+/**
+ * `tricky` (the daily's, since 2026-10-07): never a plain plate, Ls and bitten plates far more often, and
+ * every plate's balance point at least this far from the middle of its box, in plate sizes, so the eye that
+ * pins the middle is fooled by that much. 0 is the arcade's plates.
+ */
+function makePlateNow(n: number, hue: number, tricky: number): Plate {
   const margin = marginFor(n)
   let kind = familyFor(n)
-  while (tricky && n > 2 && kind === 'plain') kind = familyFor(n)
+  if (tricky > 0) {
+    const r = rng()
+    kind = r < 0.3 ? 'elbow' : r < 0.58 ? 'notched' : 'lopsided'
+  }
   let best: Plate | null = null
   let bestScore = -Infinity
-  for (let tries = 0; tries < 50; tries++) {
+  for (let tries = 0; tries < (tricky > 0 ? 160 : 50); tries++) {
     const corners = Math.floor(rand(3, n <= 2 ? 6 : 8))
     const raw =
       kind === 'notched'
@@ -311,7 +318,7 @@ function makePlateNow(n: number, hue: number, tricky: boolean): Plate {
     const plate: Plate = { kind, points, centroid, size: Math.sqrt(area), hue }
     // A plain plate should be plainly fair; a lopsided one should fool a pin in the middle of its box.
     const fooled = deception(plate)
-    const want = kind === 'plain' ? -margin * 0.9 : kind === 'lopsided' ? margin * 1.15 : 0
+    const want = Math.max(kind === 'plain' ? -margin * 0.9 : kind === 'lopsided' ? margin * 1.15 : 0, tricky)
     const score = kind === 'plain' ? -fooled : fooled
     if (score >= want) return plate
     if (score > bestScore) {

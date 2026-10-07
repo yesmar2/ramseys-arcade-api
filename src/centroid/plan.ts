@@ -41,6 +41,14 @@ export const DAY_LEVELS: Record<number, readonly [levels: readonly number[], lab
   0: [[9, 10, 12, 13, 15, 17], 'Brutal'],
 }
 
+/**
+ * How far each day's plates must fool an eye that pins the middle of their box, in plate sizes, by weekday:
+ * the first plate's, rising a little plate by plate (Ramsey, 2026-10-07: "can we make the shapes a little
+ * more difficult?").
+ */
+export const DAY_DECEIVE: Record<number, number> = { 1: 0.08, 2: 0.09, 3: 0.1, 4: 0.11, 5: 0.12, 6: 0.13, 0: 0.14 }
+const DECEIVE_STEP = 0.006
+
 export type DayPlan = {
   day: string
   label: DayLabel
@@ -71,7 +79,8 @@ export function dayPlan(day: string): DayPlan {
     ;[hues[i], hues[j]] = [hues[j]!, hues[i]!]
   }
   // None plain: each is lopsided, an L or bitten, so a pin in the middle of its box never does.
-  const plates = levels.map((n, i) => settled(makePlate(n, hues[i % hues.length]!, rng, true)))
+  const deceive = DAY_DECEIVE[weekday]!
+  const plates = levels.map((n, i) => settled(makePlate(n, hues[i % hues.length]!, rng, deceive + i * DECEIVE_STEP)))
   const plan: DayPlan = { day, label, plates }
   if (plans.size > 60) plans.clear()
   plans.set(day, plan)

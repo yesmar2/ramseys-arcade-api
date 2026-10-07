@@ -98,7 +98,7 @@ export async function flairFor(rawName: string, now = Date.now()): Promise<Flair
   const hit = cache.get(name)
   if (hit && now - hit.at < CACHE_MS) return hit.flair
 
-  const [trophies, standing, runs, records, todayBest, season1] = await Promise.all([
+  const [trophies, standing, runs, records, todayBest, season1, season2] = await Promise.all([
     trophiesForName(name),
     rankForName(name, 0, 'all', now),
     db()
@@ -108,6 +108,7 @@ export async function flairFor(rawName: string, now = Date.now()): Promise<Flair
     recordStanding(name),
     todayBestFor(name, now),
     playedSeason(name, 1),
+    playedSeason(name, 2),
   ])
 
   const weekly = trophies.filter((t) => t.period === 'weekly').map((t) => t.rank)
@@ -149,6 +150,8 @@ export async function flairFor(rawName: string, now = Date.now()): Promise<Flair
         return { id, earned: sets > 0, best: sets }
       case 's1':
         return { id, earned: season1, best: null }
+      case 's2':
+        return { id, earned: season2, best: null }
       default: {
         const place = standing.byGame[id as GameSlug]?.place ?? null
         return { id, earned: place != null && place <= TOP_FOR_PIN, best: place }

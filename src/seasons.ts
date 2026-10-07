@@ -147,6 +147,74 @@ const SPACE_RACE_PLUS: SeasonReward[] = [
   { level: 35, kind: 'prize', id: 't-legend', name: 'Space Race Legend', what: 'Title', plus: true },
 ]
 
+/**
+ * Season 2, Cold Snap: winter, from the day after Space Race's last, so a pass is always running (Ramsey wants
+ * seasons back to back, 2026-10-06). The same shape as Season 1's: a skin for each skin game, looks between,
+ * tickets every few levels, and the patch at level 1.
+ */
+const COLD_SNAP: SeasonReward[] = [
+  { level: 1, kind: 'pin', id: 's2', name: 'Season 2 patch', what: 'Pin' },
+  { level: 2, kind: 'prize', id: 'nm-frost', name: 'Frost', what: 'Name style' },
+  tickets(3, 50),
+  { level: 4, kind: 'prize', id: 'snowflake', name: 'Snowflake', what: 'Badge finish' },
+  { level: 5, kind: 'prize', id: 't-cold-snap', name: 'Cold Snap', what: 'Title' },
+  { level: 6, kind: 'prize', id: 'cd-snowfield', name: 'Snowfield', what: 'Card theme' },
+  { level: 7, kind: 'prize', id: 'cf-snowfall', name: 'Snowfall', what: 'Confetti' },
+  { level: 8, kind: 'skin', id: 'lander-icebreaker', name: 'Ice Breaker', what: 'Lander ship', game: 'lander' },
+  tickets(9, 75),
+  { level: 10, kind: 'prize', id: 't-snow-day', name: 'Snow Day', what: 'Title' },
+  { level: 11, kind: 'prize', id: 'nm-frostbite', name: 'Frostbite', what: 'Name style' },
+  { level: 12, kind: 'skin', id: 'asteroids-icicle', name: 'Icicle', what: 'Asteroids ship', game: 'asteroids' },
+  tickets(13, 100),
+  { level: 14, kind: 'prize', id: 'igloo', name: 'Igloo', what: 'Badge finish' },
+  { level: 15, kind: 'skin', id: 'barrage-snowbird', name: 'Snowbird', what: 'Barrage ship', game: 'barrage' },
+  { level: 16, kind: 'prize', id: 't-hot-cocoa', name: 'Hot Cocoa', what: 'Title' },
+  { level: 17, kind: 'prize', id: 'cd-ski-lodge', name: 'Ski lodge', what: 'Card theme' },
+  tickets(18, 100),
+  { level: 19, kind: 'skin', id: 'hotlap-ice-rocket', name: 'Ice rocket', what: 'Hot Lap car', game: 'hotlap' },
+  { level: 20, kind: 'prize', id: 'cf-snowballs', name: 'Snowballs', what: 'Confetti' },
+  { level: 21, kind: 'prize', id: 't-first-frost', name: 'First Frost', what: 'Title' },
+  { level: 22, kind: 'prize', id: 'snowman', name: 'Snowman', what: 'Badge finish' },
+  tickets(23, 150),
+  { level: 24, kind: 'prize', id: 'nm-glacier', name: 'Glacier', what: 'Name style' },
+  { level: 25, kind: 'skin', id: 'snake-snowdrift-tail', name: 'Snowdrift tail', what: 'Snake skin', game: 'snake' },
+  { level: 26, kind: 'prize', id: 't-snow-bunny', name: 'Snow Bunny', what: 'Title' },
+  tickets(27, 150),
+  { level: 28, kind: 'prize', id: 'sign-cold-snap', name: 'Cold Snap sign', what: 'Wall sign' },
+  { level: 29, kind: 'prize', id: 'cd-pine-forest', name: 'Pine forest', what: 'Card theme' },
+  { level: 30, kind: 'prize', id: 'blizzard', name: 'Blizzard', what: 'Badge finish' },
+]
+
+/** Season 2's Pass+ row: as Season 1's, ten skins and fifteen looks on two of every three levels, then five bonus levels. */
+const COLD_SNAP_PLUS: SeasonReward[] = [
+  { level: 1, kind: 'skin', id: 'asteroids-ice-crystal', name: 'Ice crystal', what: 'Asteroids ship', game: 'asteroids', plus: true },
+  { level: 2, kind: 'prize', id: 't-snow-angel', name: 'Snow Angel', what: 'Title', plus: true },
+  { level: 4, kind: 'prize', id: 'nm-hoarfrost', name: 'Hoarfrost', what: 'Name style', plus: true },
+  { level: 5, kind: 'prize', id: 'nm-polar', name: 'Polar', what: 'Name style', plus: true },
+  { level: 7, kind: 'skin', id: 'lander-gondola', name: 'Gondola', what: 'Lander ship', game: 'lander', plus: true },
+  { level: 8, kind: 'prize', id: 'cd-frozen-lake', name: 'Frozen lake', what: 'Card theme', plus: true },
+  { level: 10, kind: 'prize', id: 'cd-ice-cave', name: 'Ice cave', what: 'Card theme', plus: true },
+  { level: 11, kind: 'skin', id: 'hotlap-whiteout', name: 'Whiteout', what: 'Hot Lap car', game: 'hotlap', plus: true },
+  { level: 13, kind: 'skin', id: 'barrage-snowy-owl', name: 'Snowy owl', what: 'Barrage ship', game: 'barrage', plus: true },
+  { level: 14, kind: 'prize', id: 'cf-icicles', name: 'Icicles', what: 'Confetti', plus: true },
+  { level: 16, kind: 'prize', id: 'cf-flurry', name: 'Flurry', what: 'Confetti', plus: true },
+  { level: 17, kind: 'skin', id: 'asteroids-north-star', name: 'North Star', what: 'Asteroids ship', game: 'asteroids', plus: true },
+  { level: 19, kind: 'skin', id: 'snake-aurora-tail', name: 'Aurora tail', what: 'Snake skin', game: 'snake', plus: true },
+  { level: 20, kind: 'prize', id: 'polar-bear', name: 'Polar bear', what: 'Badge finish', plus: true },
+  { level: 22, kind: 'skin', id: 'hotlap-borealis', name: 'Borealis', what: 'Hot Lap car', game: 'hotlap', plus: true },
+  { level: 23, kind: 'skin', id: 'snake-fireside-tail', name: 'Fireside tail', what: 'Snake skin', game: 'snake', plus: true },
+  { level: 25, kind: 'prize', id: 't-ice-cold', name: 'Ice Cold', what: 'Title', plus: true },
+  { level: 26, kind: 'prize', id: 't-polar-explorer', name: 'Polar Explorer', what: 'Title', plus: true },
+  { level: 29, kind: 'prize', id: 'cd-northern-lights', name: 'Northern lights', what: 'Card theme', plus: true },
+  { level: 30, kind: 'prize', id: 'diamond-dust', name: 'Diamond dust', what: 'Badge finish', plus: true },
+  // The bonus levels, past the free row's last.
+  { level: 31, kind: 'skin', id: 'barrage-frost-dragon', name: 'Frost dragon', what: 'Barrage ship', game: 'barrage', plus: true },
+  { level: 32, kind: 'skin', id: 'lander-yeti', name: 'Yeti', what: 'Lander ship', game: 'lander', plus: true },
+  { level: 33, kind: 'prize', id: 'nm-crystal', name: 'Crystal', what: 'Name style', plus: true },
+  { level: 34, kind: 'prize', id: 'ice-crown', name: 'Ice crown', what: 'Badge finish', plus: true },
+  { level: 35, kind: 'prize', id: 't-cold-legend', name: 'Cold Snap Legend', what: 'Title', plus: true },
+]
+
 export const SEASONS: readonly SeasonDef[] = [
   {
     id: 1,
@@ -164,6 +232,23 @@ export const SEASONS: readonly SeasonDef[] = [
     ],
     // $2.99 for the season, the same as a month of Plus, so joining Plus for a month and leaving is no cheaper (Ramsey, 2026-10-04).
     plus: { price: 299, currency: 'usd', rewards: SPACE_RACE_PLUS, bonus: 5 },
+  },
+  {
+    id: 2,
+    slug: 'cold-snap',
+    name: 'Cold Snap',
+    // The day after Space Race's last, to Mar 8: nine weeks.
+    firstDay: 20270105,
+    lastDay: 20270308,
+    levels: 30,
+    perLevel: 150,
+    spotlight: ['hotlap', 'snake', 'barrage'],
+    rewards: COLD_SNAP,
+    goals: [
+      { id: 'dailies', title: 'Keep the Dailies on 30 days', need: 30, reward: { kind: 'prize', id: 't-snowbound', name: 'The Snowbound title' } },
+      { id: 'games', title: 'Win tickets in 12 different games', need: 12, reward: { kind: 'tickets', amount: 200, name: '200 tickets' } },
+    ],
+    plus: { price: 299, currency: 'usd', rewards: COLD_SNAP_PLUS, bonus: 5 },
   },
 ]
 
@@ -192,54 +277,81 @@ export function dayLabel(key: number): string {
 
 const PREVIEW_KEY = 'season_preview'
 const FRESH_MS = 30_000
-let previewKnown: { from: number | null; at: number } | null = null
-let previewAsking: Promise<number | null> | null = null
 
-/** The day an early preview counts from (YYYYMMDD), or null when it's off. */
-export async function seasonPreviewFrom(now = Date.now()): Promise<number | null> {
-  if (previewKnown && now - previewKnown.at < FRESH_MS) return previewKnown.from
+/**
+ * The early preview: the day it counts from (YYYYMMDD), and the season it shows, when an admin picked one
+ * ('YYYYMMDD:2' in app_meta). Without one, the next season to come is live early; with one, that season is
+ * live from the day, over any other, so the season after the live one can be tried before it comes.
+ */
+export type SeasonPreview = { from: number; season: number | null }
+
+let previewKnown: { preview: SeasonPreview | null; at: number } | null = null
+let previewAsking: Promise<SeasonPreview | null> | null = null
+
+function readPreview(value: string): SeasonPreview | null {
+  const m = /^(\d{8})(?::(\d+))?$/.exec(value)
+  return m ? { from: Number(m[1]), season: m[2] ? Number(m[2]) : null } : null
+}
+
+/** The early preview, or null when it's off. */
+export async function seasonPreview(now = Date.now()): Promise<SeasonPreview | null> {
+  if (previewKnown && now - previewKnown.at < FRESH_MS) return previewKnown.preview
   previewAsking ??= db()
     .select({ value: appMeta.value })
     .from(appMeta)
     .where(eq(appMeta.key, PREVIEW_KEY))
     .limit(1)
     .then(([row]) => {
-      const from = row && /^\d{8}$/.test(row.value) ? Number(row.value) : null
-      previewKnown = { from, at: Date.now() }
-      return from
+      const preview = row ? readPreview(row.value) : null
+      previewKnown = { preview, at: Date.now() }
+      return preview
     })
-    .catch(() => previewKnown?.from ?? null)
+    .catch(() => previewKnown?.preview ?? null)
     .finally(() => {
       previewAsking = null
     })
   return previewAsking
 }
 
-/** Turn the preview on, counting from the first of this month, or off. */
-export async function setSeasonPreview(on: boolean, now = Date.now()): Promise<number | null> {
+/** The day an early preview counts from (YYYYMMDD), or null when it's off. */
+export async function seasonPreviewFrom(now = Date.now()): Promise<number | null> {
+  return (await seasonPreview(now))?.from ?? null
+}
+
+/** Turn the preview on, counting from the first of this month (of `season`, when one is picked), or off. */
+export async function setSeasonPreview(on: boolean, now = Date.now(), season: number | null = null): Promise<SeasonPreview | null> {
   if (!on) {
     await db().delete(appMeta).where(eq(appMeta.key, PREVIEW_KEY))
-    previewKnown = { from: null, at: Date.now() }
+    previewKnown = { preview: null, at: Date.now() }
     return null
   }
-  const from = Math.floor(boardDateKey(now) / 100) * 100 + 1
-  const value = String(from)
+  const pick = season != null && SEASONS.some((s) => s.id === season) ? season : null
+  const preview = { from: Math.floor(boardDateKey(now) / 100) * 100 + 1, season: pick }
+  const value = pick != null ? `${preview.from}:${pick}` : String(preview.from)
   await db().insert(appMeta).values({ key: PREVIEW_KEY, value }).onConflictDoUpdate({ target: appMeta.key, set: { value } })
-  previewKnown = { from, at: Date.now() }
-  return from
+  previewKnown = { preview, at: Date.now() }
+  return preview
 }
 
 /* ---------- which season it is ---------- */
 
 /** The live season, else the next to come, else the last one over; null when there are none. */
 export async function seasonNow(now = Date.now()): Promise<SeasonNow | null> {
-  const previewFrom = await seasonPreviewFrom(now)
+  const preview = await seasonPreview(now)
+  const previewFrom = preview?.from ?? null
+  // A season an admin picked to preview is live from the preview's day, over any other, until it ends.
+  const picked = preview?.season != null ? SEASONS.find((s) => s.id === preview.season) : undefined
+  if (picked && previewFrom != null) {
+    const realStart = dayStartMs(picked.firstDay)
+    const endsAt = dayStartMs(nextDayKey(picked.lastDay))
+    if (now < realStart && now >= dayStartMs(previewFrom)) return { def: picked, startsAt: dayStartMs(previewFrom), endsAt, status: 'live', preview: true }
+  }
   let next: SeasonNow | null = null
   let last: SeasonNow | null = null
   for (const def of SEASONS) {
     const realStart = dayStartMs(def.firstDay)
     const endsAt = dayStartMs(nextDayKey(def.lastDay))
-    const early = previewFrom != null && now < realStart && now >= dayStartMs(previewFrom)
+    const early = !picked && previewFrom != null && now < realStart && now >= dayStartMs(previewFrom)
     const startsAt = early ? dayStartMs(previewFrom) : realStart
     if (now >= startsAt && now < endsAt) return { def, startsAt, endsAt, status: 'live', preview: early }
     if (now < startsAt) {
@@ -310,6 +422,22 @@ const SKINS_DRAWN = new Set([
   'snake-saturn-tail',
   'asteroids-orbiter',
   'lander-starhopper',
+  // Season 2's, free row and Pass+.
+  'lander-icebreaker',
+  'asteroids-icicle',
+  'barrage-snowbird',
+  'hotlap-ice-rocket',
+  'snake-snowdrift-tail',
+  'asteroids-ice-crystal',
+  'lander-gondola',
+  'hotlap-whiteout',
+  'barrage-snowy-owl',
+  'asteroids-north-star',
+  'snake-aurora-tail',
+  'hotlap-borealis',
+  'snake-fireside-tail',
+  'barrage-frost-dragon',
+  'lander-yeti',
 ])
 
 /** Every skin a season gives, free row and Pass+, and its game: what a saved run may say it was played in. */

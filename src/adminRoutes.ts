@@ -9,7 +9,7 @@ import { listFlags, reviewFlag, unreviewedCount } from './scoreFlags.js'
 import { getClaim } from './names.js'
 import { playerStats } from './playerStats.js'
 import { grantPlusMembership, plusState } from './plus.js'
-import { grantPlus, hasPlus, revokePlus, seasonInfo, seasonNow, seasonPreviewFrom, setSeasonPreview } from './seasons.js'
+import { grantPlus, hasPlus, revokePlus, seasonInfo, seasonNow, seasonPreview, SEASONS, setSeasonPreview } from './seasons.js'
 import { setSiteEvents, siteEventsOn } from './siteEvents.js'
 import { resolveGameSlug } from './store.js'
 import { awardTickets } from './tickets.js'
@@ -86,12 +86,19 @@ adminRouter.post('/site-events', async (req, res) => {
   }
 })
 
-/** The season, and whether it's previewed early (seasons.ts): live before its first day, to try it on staging. */
+/**
+ * The season, and whether it's previewed early (seasons.ts): live before its first day, to try it on staging.
+ * `previewSeason` is the season the preview was told to show (the next to come when it's null), and `seasons`
+ * the ones there are to pick from.
+ */
 async function seasonPreviewState() {
   const season = await seasonNow()
+  const preview = await seasonPreview()
   return {
     season: season ? seasonInfo(season) : null,
-    previewFrom: await seasonPreviewFrom(),
+    previewFrom: preview?.from ?? null,
+    previewSeason: preview?.season ?? null,
+    seasons: SEASONS.map((s) => ({ id: s.id, name: s.name })),
   }
 }
 
@@ -107,12 +114,12 @@ adminRouter.get('/season-preview', async (req, res) => {
 adminRouter.post('/season-preview', async (req, res) => {
   try {
     await requireAdmin(req)
-    const parsed = z.object({ on: z.boolean() }).safeParse(req.body)
+    const parsed = z.object({ on: z.boolean(), season: z.number().int().positive().nullable().optional() }).safeParse(req.body)
     if (!parsed.success) {
       res.status(400).json({ error: 'Invalid body', code: 'INVALID_BODY' })
       return
     }
-    await setSeasonPreview(parsed.data.on)
+    await setSeasonPreview(parsed.data.on, Date.now(), parsed.data.season ?? null)
     res.json(await seasonPreviewState())
   } catch (err) {
     refuse(err, res)

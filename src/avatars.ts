@@ -69,6 +69,15 @@ export const AVATAR_BADGES = [
   'eclipse',
   'blue-marble',
   'black-hole',
+  // Season 2's pass.
+  'snowflake',
+  'igloo',
+  'snowman',
+  'blizzard',
+  // Season 2's Pass+.
+  'polar-bear',
+  'diamond-dust',
+  'ice-crown',
 ] as const
 export type AvatarBadge = (typeof AVATAR_BADGES)[number]
 
@@ -96,8 +105,8 @@ export const AVATAR_GAME_PINS = [
   'pileup',
 ] as const
 
-/** Worn on the badge's edge, for what you've done. s1: Season 1's patch, for playing in it (seasons.ts). */
-export const AVATAR_PINS = ['welcome', 'games', 'streak', 'today', 'crown', 'bugnet', 's1', ...AVATAR_GAME_PINS] as const
+/** Worn on the badge's edge, for what you've done. s1, s2: a season's patch, for playing in it (seasons.ts). */
+export const AVATAR_PINS = ['welcome', 'games', 'streak', 'today', 'crown', 'bugnet', 's1', 's2', ...AVATAR_GAME_PINS] as const
 export type AvatarPin = (typeof AVATAR_PINS)[number]
 
 /** Palette size. Indices are what get saved, so this only ever grows. */

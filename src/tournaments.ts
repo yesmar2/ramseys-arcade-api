@@ -37,7 +37,17 @@ import { notify, type NotificationMeta } from './notifications.js'
 import { RUN_TTL_MS } from './runs.js'
 import { siteEventsOn } from './siteEvents.js'
 import { awardEventWin } from './trophies.js'
-import { ALLOWED_GAMES, BOARD_TZ, canonicalizeGameSlug, DAILY_GAMES, isAllowedGame, resolveGameSlug, type GameSlug } from './store.js'
+import {
+  ALLOWED_GAMES,
+  BOARD_TZ,
+  canonicalizeGameSlug,
+  DAILY_GAMES,
+  isAllowedGame,
+  ON_DECK_GAMES,
+  resolveGameSlug,
+  RETIRED_GAMES,
+  type GameSlug,
+} from './store.js'
 import { GAME_LABELS, ordinal, scoreWords } from './words.js'
 
 export type { TournamentKind } from './bracket.js'
@@ -48,22 +58,12 @@ export type { PublicBracket, PublicBracketMatch, PublicBracketSide } from './bra
 // everyone, with boards of the day's: they stay out of events (and out of the pool's shuffle).
 const EVENT_GAMES = ALLOWED_GAMES.filter((g) => g !== 'crosswalk' && g !== 'spotter' && !DAILY_GAMES.has(g))
 
-/**
- * Games the site has retired: no new event picks one, but an event already
- * running with it keeps it, and its scores, until it ends. Simon became
- * Fireflies.
+/*
+ * Retired and on-deck games (store.ts RETIRED_GAMES, ON_DECK_GAMES): no new event picks one and none can be
+ * chosen for a new event, but an event already running with one keeps it, and its scores, until it ends.
+ * They stay in EVENT_GAMES all the same: a running event whose games leave that list is rebuilt without
+ * them, and their scores go (upsertRollingEvent).
  */
-const RETIRED_GAMES: ReadonlySet<GameSlug> = new Set<GameSlug>(['simon'])
-
-/**
- * Games the site is holding back to release after launch, one at a time (its
- * on-deck games). Like a retired game, no new event picks one and none can be
- * chosen for a new event, but an event already running with one keeps it, and
- * its scores, until it ends. Take a game off this list the day the site
- * releases it (its onDeck flag in the web's data/games.ts).
- */
-// Ace Chase is held back (Ramsey, 2026-10-06: "let's hide it for now"); it was never in the event pool anyway.
-const ON_DECK_GAMES: ReadonlySet<GameSlug> = new Set<GameSlug>(['acechase'])
 
 export type TournamentStatus = 'upcoming' | 'active' | 'ended'
 export type TournamentCadence = 'daily' | 'weekly' | 'oneshot'

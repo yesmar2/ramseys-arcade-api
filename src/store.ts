@@ -487,8 +487,29 @@ export const UNRANKED_GAMES: ReadonlySet<GameSlug> = new Set<GameSlug>(['acechas
 /** Whether a game's results place its players: on its boards, in the standings and in the record books. */
 export const isRankedGame = (game: GameSlug) => !UNRANKED_GAMES.has(game)
 
-/** The games the standings add up. */
-export const RANKED_GAMES: readonly GameSlug[] = ALLOWED_GAMES.filter(isRankedGame)
+/**
+ * Games the site has retired (the web's hidden flag): Simon became Fireflies, and Spotter never opened.
+ * Their scores stay where they are, but no new event picks one (tournaments.ts), an event already running
+ * with one keeps it until it ends, and they count toward nobody's standings (RANKED_GAMES).
+ */
+export const RETIRED_GAMES: ReadonlySet<GameSlug> = new Set<GameSlug>(['simon', 'spotter'])
+
+/**
+ * Games the site is holding back to release after launch, one at a time (the web's onDeck flag): listed
+ * nowhere, though their own pages still play. Like a retired game, no new event picks one, and they count
+ * toward nobody's standings. Take a game off this list the day the site releases it.
+ */
+// Ace Chase is held back (Ramsey, 2026-10-06: "let's hide it for now").
+export const ON_DECK_GAMES: ReadonlySet<GameSlug> = new Set<GameSlug>(['acechase'])
+
+/** Whether a visitor can find a game on the site: neither retired nor on deck (the web's isListedGame). */
+export const isListedGame = (game: GameSlug) => !RETIRED_GAMES.has(game) && !ON_DECK_GAMES.has(game)
+
+/**
+ * The games the standings add up: the ranked games a visitor can find. A place on a board nobody can see
+ * lifts no rank (Ramsey, 2026-10-07: "if games aren't visible, they shouldn't be counted towards rank").
+ */
+export const RANKED_GAMES: readonly GameSlug[] = ALLOWED_GAMES.filter((game) => isRankedGame(game) && isListedGame(game))
 
 /**
  * The games with a board for all time, and so in the all-time standings: the ranked games but the dailies.

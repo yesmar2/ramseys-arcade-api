@@ -171,9 +171,11 @@ const TYPICAL_PACE_MS = 53_000
  * came at 7% (platinum 21%); on its first day his run was 36.6% under the blue bird, so the bird went 10%
  * quicker (the site's swoop sim.ts BLUE_PACE; swoopPace.ts is its quicker times) and its steps went to 10%
  * (platinum 30%), as he picked ("blue needs to be a little bit harder ... the medals for swoop need to be
- * harder too"). A run slower than the blue pays the base 3.
+ * harder too"). On the longer hills his best runs then landed 35 to 38% under the bird, platinum every time,
+ * so Swoop's steps went to 12% (platinum 36%) when he found its medals still needed to be "a little more
+ * difficult" (2026-10-07). A run slower than the blue pays the base 3.
  */
-export const RACE_MEDAL_STEP = { hotlap: 0.06, marblerun: 0.09, lander: 0.08, swoop: 0.1 } as const
+export const RACE_MEDAL_STEP = { hotlap: 0.06, marblerun: 0.09, lander: 0.08, swoop: 0.12 } as const
 
 /**
  * A racing daily's steps on a day whose blue goes in `pace` ms, `score` turning a time into a board score.

@@ -149,8 +149,10 @@ const SPACE_RACE_PLUS: SeasonReward[] = [
 
 /**
  * Season 2, Cold Snap: winter, from the day after Space Race's last, so a pass is always running (Ramsey wants
- * seasons back to back, 2026-10-06). The same shape as Season 1's: a skin for each skin game, looks between,
- * tickets every few levels, and the patch at level 1.
+ * seasons back to back, 2026-10-06). The same shape as Season 1's: a skin for each of its skin games, looks
+ * between, tickets every few levels, and the patch at level 1. Skins go round the games a season at a time
+ * (Ramsey, 2026-10-07): Cold Snap's are Hot Lap's and Snake's, and Swoop's, Marble Run's and Pileup's for the
+ * first time, and its spotlight is the games with new skins.
  */
 const COLD_SNAP: SeasonReward[] = [
   { level: 1, kind: 'pin', id: 's2', name: 'Season 2 patch', what: 'Pin' },
@@ -160,14 +162,14 @@ const COLD_SNAP: SeasonReward[] = [
   { level: 5, kind: 'prize', id: 't-cold-snap', name: 'Cold Snap', what: 'Title' },
   { level: 6, kind: 'prize', id: 'cd-snowfield', name: 'Snowfield', what: 'Card theme' },
   { level: 7, kind: 'prize', id: 'cf-snowfall', name: 'Snowfall', what: 'Confetti' },
-  { level: 8, kind: 'skin', id: 'lander-icebreaker', name: 'Ice Breaker', what: 'Lander ship', game: 'lander' },
+  { level: 8, kind: 'skin', id: 'swoop-snow-swift', name: 'Snow swift', what: 'Swoop bird', game: 'swoop' },
   tickets(9, 75),
   { level: 10, kind: 'prize', id: 't-snow-day', name: 'Snow Day', what: 'Title' },
   { level: 11, kind: 'prize', id: 'nm-frostbite', name: 'Frostbite', what: 'Name style' },
-  { level: 12, kind: 'skin', id: 'asteroids-icicle', name: 'Icicle', what: 'Asteroids ship', game: 'asteroids' },
+  { level: 12, kind: 'skin', id: 'marblerun-snowball', name: 'Snowball', what: 'Marble Run marble', game: 'marblerun' },
   tickets(13, 100),
   { level: 14, kind: 'prize', id: 'igloo', name: 'Igloo', what: 'Badge finish' },
-  { level: 15, kind: 'skin', id: 'barrage-snowbird', name: 'Snowbird', what: 'Barrage ship', game: 'barrage' },
+  { level: 15, kind: 'skin', id: 'pileup-ice-cubes', name: 'Ice cubes', what: 'Pileup blocks', game: 'pileup' },
   { level: 16, kind: 'prize', id: 't-hot-cocoa', name: 'Hot Cocoa', what: 'Title' },
   { level: 17, kind: 'prize', id: 'cd-ski-lodge', name: 'Ski lodge', what: 'Card theme' },
   tickets(18, 100),
@@ -187,18 +189,18 @@ const COLD_SNAP: SeasonReward[] = [
 
 /** Season 2's Pass+ row: as Season 1's, ten skins and fifteen looks on two of every three levels, then five bonus levels. */
 const COLD_SNAP_PLUS: SeasonReward[] = [
-  { level: 1, kind: 'skin', id: 'asteroids-ice-crystal', name: 'Ice crystal', what: 'Asteroids ship', game: 'asteroids', plus: true },
+  { level: 1, kind: 'skin', id: 'swoop-penguin', name: 'Penguin', what: 'Swoop bird', game: 'swoop', plus: true },
   { level: 2, kind: 'prize', id: 't-snow-angel', name: 'Snow Angel', what: 'Title', plus: true },
   { level: 4, kind: 'prize', id: 'nm-hoarfrost', name: 'Hoarfrost', what: 'Name style', plus: true },
   { level: 5, kind: 'prize', id: 'nm-polar', name: 'Polar', what: 'Name style', plus: true },
-  { level: 7, kind: 'skin', id: 'lander-gondola', name: 'Gondola', what: 'Lander ship', game: 'lander', plus: true },
+  { level: 7, kind: 'skin', id: 'marblerun-ice-marble', name: 'Ice marble', what: 'Marble Run marble', game: 'marblerun', plus: true },
   { level: 8, kind: 'prize', id: 'cd-frozen-lake', name: 'Frozen lake', what: 'Card theme', plus: true },
   { level: 10, kind: 'prize', id: 'cd-ice-cave', name: 'Ice cave', what: 'Card theme', plus: true },
   { level: 11, kind: 'skin', id: 'hotlap-whiteout', name: 'Crystal car', what: 'Hot Lap car', game: 'hotlap', plus: true },
-  { level: 13, kind: 'skin', id: 'barrage-snowy-owl', name: 'Snowy owl', what: 'Barrage ship', game: 'barrage', plus: true },
+  { level: 13, kind: 'skin', id: 'pileup-knitted', name: 'Knitted', what: 'Pileup blocks', game: 'pileup', plus: true },
   { level: 14, kind: 'prize', id: 'cf-icicles', name: 'Icicles', what: 'Confetti', plus: true },
   { level: 16, kind: 'prize', id: 'cf-flurry', name: 'Flurry', what: 'Confetti', plus: true },
-  { level: 17, kind: 'skin', id: 'asteroids-north-star', name: 'North Star', what: 'Asteroids ship', game: 'asteroids', plus: true },
+  { level: 17, kind: 'skin', id: 'marblerun-polar-night', name: 'Polar night', what: 'Marble Run marble', game: 'marblerun', plus: true },
   { level: 19, kind: 'skin', id: 'snake-aurora-tail', name: 'Aurora tail', what: 'Snake skin', game: 'snake', plus: true },
   { level: 20, kind: 'prize', id: 'polar-bear', name: 'Polar bear', what: 'Badge finish', plus: true },
   { level: 22, kind: 'skin', id: 'hotlap-borealis', name: 'Aurora glider', what: 'Hot Lap car', game: 'hotlap', plus: true },
@@ -208,8 +210,8 @@ const COLD_SNAP_PLUS: SeasonReward[] = [
   { level: 29, kind: 'prize', id: 'cd-northern-lights', name: 'Northern lights', what: 'Card theme', plus: true },
   { level: 30, kind: 'prize', id: 'diamond-dust', name: 'Diamond dust', what: 'Badge finish', plus: true },
   // The bonus levels, past the free row's last.
-  { level: 31, kind: 'skin', id: 'barrage-frost-dragon', name: 'Frost dragon', what: 'Barrage ship', game: 'barrage', plus: true },
-  { level: 32, kind: 'skin', id: 'lander-yeti', name: 'Yeti', what: 'Lander ship', game: 'lander', plus: true },
+  { level: 31, kind: 'skin', id: 'swoop-aurora-phoenix', name: 'Aurora phoenix', what: 'Swoop bird', game: 'swoop', plus: true },
+  { level: 32, kind: 'skin', id: 'pileup-northern-lights', name: 'Northern lights', what: 'Pileup blocks', game: 'pileup', plus: true },
   { level: 33, kind: 'prize', id: 'nm-crystal', name: 'Crystal', what: 'Name style', plus: true },
   { level: 34, kind: 'prize', id: 'ice-crown', name: 'Ice crown', what: 'Badge finish', plus: true },
   { level: 35, kind: 'prize', id: 't-cold-legend', name: 'Cold Snap Legend', what: 'Title', plus: true },
@@ -242,7 +244,7 @@ export const SEASONS: readonly SeasonDef[] = [
     lastDay: 20270308,
     levels: 30,
     perLevel: 150,
-    spotlight: ['hotlap', 'snake', 'barrage'],
+    spotlight: ['hotlap', 'swoop', 'marblerun'],
     rewards: COLD_SNAP,
     goals: [
       { id: 'dailies', title: 'Keep the Dailies on 30 days', need: 30, reward: { kind: 'prize', id: 't-snowbound', name: 'The Snowbound title' } },
@@ -423,6 +425,16 @@ const SKINS_DRAWN = new Set([
   'asteroids-orbiter',
   'lander-starhopper',
   // Season 2's, free row and Pass+.
+  'swoop-snow-swift',
+  'marblerun-snowball',
+  'pileup-ice-cubes',
+  'swoop-penguin',
+  'marblerun-ice-marble',
+  'pileup-knitted',
+  'marblerun-polar-night',
+  'swoop-aurora-phoenix',
+  'pileup-northern-lights',
+  // Drawn for Season 2 first, sitting it out now: on no pass, kept for a later season.
   'lander-icebreaker',
   'asteroids-icicle',
   'barrage-snowbird',

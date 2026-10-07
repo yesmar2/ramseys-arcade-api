@@ -2,7 +2,7 @@ import { Router } from 'express'
 import { z } from 'zod'
 import { accountFromRequest } from './auth.js'
 import { paymentsEnabled, returnOrigin } from './payments.js'
-import { confirmPlus, giveMembersLooks, memberNames, membersLooks, PLUS_PRICE, PLUS_YEAR, plusCheckout, plusPortal, plusState, TRIAL_DAYS } from './plus.js'
+import { confirmPlus, giveMembersLooks, looksAhead, memberNames, membersLooks, PLUS_PRICE, PLUS_YEAR, plusCheckout, plusPortal, plusState, TRIAL_DAYS } from './plus.js'
 import { takeToken } from './rateLimit.js'
 
 export const plusRouter = Router()
@@ -29,8 +29,9 @@ plusRouter.get('/', async (req, res) => {
       prices: { month: PLUS_PRICE.amount, year: PLUS_YEAR.amount },
       trialDays: TRIAL_DAYS,
       buyable: paymentsEnabled(),
-      // This month's members' looks, which every member has.
+      // This month's members' looks, which every member has, and the looks to come, a month at a time.
       looks: membersLooks().map(({ id, name, what }) => ({ id, name, what })),
+      ahead: looksAhead().map(({ month, id, name, what }) => ({ month, id, name, what })),
       you: account ? await plusState(account.id) : null,
     })
   } catch (err) {

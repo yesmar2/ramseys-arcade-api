@@ -63,6 +63,22 @@ export function membersLooks(now = Date.now()) {
   return MEMBERS_LOOKS.filter((l) => l.month === month && prizeById(l.id) != null)
 }
 
+/**
+ * The looks to come, from this month's on, each the first month it's given (Founding Member once, not every
+ * month it's given again): what the Plus page shows a month at a time.
+ */
+export function looksAhead(now = Date.now(), count = 4) {
+  const month = monthOf(now)
+  const seen = new Set<string>()
+  const out: (typeof MEMBERS_LOOKS)[number][] = []
+  for (const look of MEMBERS_LOOKS) {
+    if (look.month < month || seen.has(look.id) || prizeById(look.id) == null) continue
+    seen.add(look.id)
+    out.push(look)
+  }
+  return out.slice(0, count)
+}
+
 /** Whether a membership is a free week still: Plus opened, nothing kept for good given yet. */
 async function onFreeWeek(accountId: string): Promise<boolean> {
   const [m] = await db().select({ status: memberships.status }).from(memberships).where(eq(memberships.accountId, accountId)).limit(1)

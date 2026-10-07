@@ -26,15 +26,19 @@ export const PLATES = 6
 
 export type DayLabel = 'Easy' | 'Medium' | 'Tricky' | 'Hard' | 'Brutal'
 
-/** Which of the arcade game's plates each of the day's six is dealt as, by weekday (0 = Sunday). */
+/**
+ * Which of the arcade game's plates each of the day's six is dealt as, by weekday (0 = Sunday). Two further
+ * along than at first since Ramsey's "the plates are a little too easy" (2026-10-07): no plain plates now,
+ * and more lopsided ones, Ls and bites from Monday on.
+ */
 export const DAY_LEVELS: Record<number, readonly [levels: readonly number[], label: DayLabel]> = {
-  1: [[1, 2, 3, 4, 5, 6], 'Easy'],
-  2: [[2, 3, 4, 5, 6, 7], 'Easy'],
-  3: [[3, 4, 5, 6, 7, 8], 'Medium'],
-  4: [[3, 5, 6, 7, 8, 9], 'Medium'],
-  5: [[4, 5, 7, 8, 9, 10], 'Tricky'],
-  6: [[5, 6, 8, 9, 10, 12], 'Hard'],
-  0: [[6, 7, 9, 10, 12, 14], 'Brutal'],
+  1: [[3, 4, 5, 6, 7, 8], 'Easy'],
+  2: [[4, 5, 6, 7, 8, 9], 'Easy'],
+  3: [[5, 6, 7, 8, 9, 10], 'Medium'],
+  4: [[6, 7, 8, 9, 10, 12], 'Medium'],
+  5: [[7, 8, 9, 10, 12, 13], 'Tricky'],
+  6: [[8, 9, 10, 12, 13, 15], 'Hard'],
+  0: [[9, 10, 12, 13, 15, 17], 'Brutal'],
 }
 
 export type DayPlan = {
@@ -66,7 +70,8 @@ export function dayPlan(day: string): DayPlan {
     const j = Math.floor(rng() * (i + 1))
     ;[hues[i], hues[j]] = [hues[j]!, hues[i]!]
   }
-  const plates = levels.map((n, i) => settled(makePlate(n, hues[i % hues.length]!, rng)))
+  // None plain: each is lopsided, an L or bitten, so a pin in the middle of its box never does.
+  const plates = levels.map((n, i) => settled(makePlate(n, hues[i % hues.length]!, rng, true)))
   const plan: DayPlan = { day, label, plates }
   if (plans.size > 60) plans.clear()
   plans.set(day, plan)

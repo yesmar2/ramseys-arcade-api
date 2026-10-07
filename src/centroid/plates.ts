@@ -275,19 +275,21 @@ function familyFor(n: number): PlateKind {
  * The nth plate, in `hue`, drawn from `random` (Math.random for a run of the arcade game; a day's seeded
  * stream for the daily, plan.ts, so everyone gets the same plates and the API can build them again).
  */
-export function makePlate(n: number, hue: number = PLATE_HUES[n % PLATE_HUES.length]!, random: () => number = Math.random): Plate {
+export function makePlate(n: number, hue: number = PLATE_HUES[n % PLATE_HUES.length]!, random: () => number = Math.random, tricky = false): Plate {
   const was = rng
   rng = random
   try {
-    return makePlateNow(n, hue)
+    return makePlateNow(n, hue, tricky)
   } finally {
     rng = was
   }
 }
 
-function makePlateNow(n: number, hue: number): Plate {
+/** `tricky`: never a plain plate (the daily's, since 2026-10-07), from the third on. */
+function makePlateNow(n: number, hue: number, tricky: boolean): Plate {
   const margin = marginFor(n)
-  const kind = familyFor(n)
+  let kind = familyFor(n)
+  while (tricky && n > 2 && kind === 'plain') kind = familyFor(n)
   let best: Plate | null = null
   let bestScore = -Infinity
   for (let tries = 0; tries < 50; tries++) {

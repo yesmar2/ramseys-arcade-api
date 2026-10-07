@@ -18,7 +18,6 @@ export const SITE_RECORD_IDS = [
   'games-in-a-day',
   'runs-in-a-day',
   'days-played',
-  'games-played',
   'boards-topped',
 ] as const
 export type SiteRecordId = (typeof SITE_RECORD_IDS)[number]
@@ -56,12 +55,6 @@ export const SITE_RECORD_DEFS: Record<SiteRecordId, SiteRecordDef> = {
     blurb: 'Days with at least one run on them, all time. Turning up counts.',
     unit: 'days',
   },
-  'games-played': {
-    id: 'games-played',
-    label: 'Most games played',
-    blurb: 'Cabinets you have put a score on. The whole arcade is the target.',
-    unit: 'games',
-  },
   'boards-topped': {
     id: 'boards-topped',
     label: 'Boards held',
@@ -82,13 +75,11 @@ export type SiteRecordBoard = SiteRecordDef & { entries: SiteRecordEntry[] }
 /**
  * Everything one player did, folded down as the rows go past.
  *
- * Built in a single pass because the alternative is six queries that have to
+ * Built in a single pass because the alternative is five queries that have to
  * agree with each other about what a day is. The rows come a game at a time,
- * so "which games" is a count and the game last counted, not a set.
+ * so a day's "which games" is a count and the game last counted, not a set.
  */
 type Tally = {
-  games: number
-  lastGame: string
   /** Day key → runs that day, and the games seen in it: every day played. */
   byDay: Map<number, DayTally>
 }
@@ -108,7 +99,7 @@ function above(value: number, name: string, than: SiteRecordEntry) {
 /**
  * A board's top ten, kept as the players go past: most first, and of two
  * equal, the name first in the alphabet. Sorting all twenty thousand players
- * six times over to keep ten of each was most of what building these cost.
+ * five times over to keep ten of each was most of what building these cost.
  */
 class TopTen {
   readonly entries: SiteRecordEntry[] = []
@@ -192,12 +183,8 @@ async function buildSiteRecords(scope?: { names: Set<string> } | null): Promise<
 
       let tally = tallies.get(name)
       if (!tally) {
-        tally = { games: 0, lastGame: '', byDay: new Map() }
+        tally = { byDay: new Map() }
         tallies.set(name, tally)
-      }
-      if (tally.lastGame !== game) {
-        tally.lastGame = game
-        tally.games++
       }
       const day = boardDateKey(at)
       let dayTally = tally.byDay.get(day)
@@ -220,7 +207,6 @@ async function buildSiteRecords(scope?: { names: Set<string> } | null): Promise<
   const gamesInDay = new TopTen()
   const runsInDay = new TopTen()
   const daysPlayed = new TopTen()
-  const gamesPlayed = new TopTen()
   const boardsHeld = new TopTen()
   /** Each day's day before, worked out once: there are only so many days. */
   const dayBefore = new Map<number, number>()
@@ -259,7 +245,6 @@ async function buildSiteRecords(scope?: { names: Set<string> } | null): Promise<
     gamesInDay.offer(name, mostGames?.games ?? 0, mostGamesAt)
     runsInDay.offer(name, mostRuns?.runs ?? 0, mostRunsAt)
     daysPlayed.offer(name, days.length)
-    gamesPlayed.offer(name, tally.games)
     boardsHeld.offer(name, held.get(name) ?? 0)
   }
 
@@ -268,7 +253,6 @@ async function buildSiteRecords(scope?: { names: Set<string> } | null): Promise<
     { ...SITE_RECORD_DEFS['games-in-a-day'], entries: gamesInDay.entries },
     { ...SITE_RECORD_DEFS['runs-in-a-day'], entries: runsInDay.entries },
     { ...SITE_RECORD_DEFS['days-played'], entries: daysPlayed.entries },
-    { ...SITE_RECORD_DEFS['games-played'], entries: gamesPlayed.entries },
     { ...SITE_RECORD_DEFS['boards-topped'], entries: boardsHeld.entries },
   ]
 }

@@ -1384,6 +1384,34 @@ export function placePoints(place: number, fieldSize: number): number {
   return Math.max(1, Math.round((100 * (fieldSize - place + 1)) / fieldSize))
 }
 
+/**
+ * How many of a player's games the standings add up: the ten that pay them most (Ramsey's call,
+ * 2026-10-07). Every game added up, the standings mostly counted how many games someone played, and
+ * each game the arcade added made that worse: halfway down every board outranked 1st on a few. Past
+ * ten, a game counts only by beating one of the ten, so a new game is a chance at a better place,
+ * never a chore. The site's lib/profileMath.ts COUNTED_GAMES says the same.
+ */
+export const STANDINGS_BEST = 10
+
+/** A player's standings points from what each of their games pays (0 for none): the best STANDINGS_BEST added up. */
+export function bestGamesTotal(points: ArrayLike<number>): number {
+  let games = 0
+  let sum = 0
+  for (let i = 0; i < points.length; i++) {
+    const p = points[i]!
+    if (p <= 0) continue
+    games++
+    sum += p
+  }
+  if (games <= STANDINGS_BEST) return sum
+  const most = Array.from(points)
+    .filter((p) => p > 0)
+    .sort((a, b) => b - a)
+  sum = 0
+  for (let i = 0; i < STANDINGS_BEST; i++) sum += most[i]!
+  return sum
+}
+
 export type GlobalGamePlace = {
   place: number
   points: number
@@ -1442,7 +1470,7 @@ async function aggregateGlobalRanks(
 ): Promise<GlobalRankEntry[]> {
   const byName = new Map<
     string,
-    { score: number; games: number; byGame: Partial<Record<GameSlug, GlobalGamePlace>> }
+    { points: number[]; games: number; byGame: Partial<Record<GameSlug, GlobalGamePlace>> }
   >()
 
   for (const game of games) {
@@ -1451,8 +1479,8 @@ async function aggregateGlobalRanks(
     for (const { name, place } of placements) {
       const points = placePoints(place, fieldSize)
       if (points <= 0) continue
-      const row = byName.get(name) ?? { score: 0, games: 0, byGame: {} }
-      row.score += points
+      const row = byName.get(name) ?? { points: [], games: 0, byGame: {} }
+      row.points.push(points)
       row.games += 1
       row.byGame[game] = { place, points, total: fieldSize }
       byName.set(name, row)
@@ -1460,7 +1488,7 @@ async function aggregateGlobalRanks(
   }
 
   const ranked = [...byName.entries()]
-    .map(([name, row]) => ({ name, ...row }))
+    .map(([name, row]) => ({ name, score: bestGamesTotal(row.points), games: row.games, byGame: row.byGame }))
     .sort((a, b) => {
       if (b.score !== a.score) return b.score - a.score
       if (b.games !== a.games) return b.games - a.games
@@ -1488,18 +1516,29 @@ async function aggregateGlobalRanks(
  * for anyone browsing, and never behind for the player who just saved (see
  * STANDINGS_SETTLE_MS).
  *
- * Only each player's total is kept. Where they placed on each game is read
- * off that game's board when a line is asked for, a handful at a time; kept
- * for everyone, it was most of the API's memory.
+ * Each player's total is kept, and what each game pays them, a byte a game:
+ * the total is their best ten (STANDINGS_BEST), so a game's points can't just
+ * be added on, since which ten count can change with them. Where they placed
+ * on each game is read off that game's board when a line is asked for, a
+ * handful at a time; kept for everyone, it was most of the API's memory.
  */
-/** A player's line in the standings: their total, and where it puts them. */
-type StandingRow = { name: string; score: number; games: number; pos: number }
+/** A player's line in the standings: what each game pays them, their total, and where it puts them. */
+type StandingRow = {
+  name: string
+  score: number
+  games: number
+  pos: number
+  /** What each of the period's games pays them, in standingsGames order; 0 on a game they're not on. */
+  pays: Uint8Array
+}
 
 type StandingsView = {
   epoch: number
   window: string
   /** When the boards it was counted from were read. */
   asOf: number
+  /** How many games the period's standings count: how long each row's pays is. */
+  slots: number
   /** The board each game's places were counted from. */
   counted: Map<GameSlug, PoolView>
   /** Each player's line, by name: the same rows as in order. */
@@ -1519,29 +1558,52 @@ function standingOrder(a: StandingRow, b: StandingRow) {
   return nameOrder.compare(a.name, b.name)
 }
 
-/** Count one game's places into the tallies, or (sign -1) take them back out. */
-function countPlaces(view: StandingsView, pool: PoolView, sign: 1 | -1) {
+/** A player new to the standings, on no game yet: settleRows gives them their total. */
+function newRow(view: StandingsView, name: string): StandingRow {
+  const row: StandingRow = { name, score: 0, games: 0, pos: -1, pays: new Uint8Array(view.slots) }
+  view.tallies.set(name, row)
+  return row
+}
+
+/**
+ * Count one game's places into the tallies, or (sign -1) take them back out. `slot` is the game's
+ * place in standingsGames; the players it touches go in `moved`, for settleRows.
+ */
+function countPlaces(view: StandingsView, pool: PoolView, slot: number, sign: 1 | -1, moved: Set<StandingRow>) {
   for (let i = 0; i < pool.entries.length; i++) {
     const place = pool.placeAt[i]
     if (!place) continue
     const name = pool.entries[i].name
     const points = placePoints(place, pool.players)
     if (points <= 0) continue
-    const row = view.tallies.get(name)
+    let row = view.tallies.get(name)
     if (sign > 0) {
-      if (row) {
-        row.score += points
-        row.games += 1
-      } else {
-        view.tallies.set(name, { name, score: points, games: 1, pos: -1 })
-      }
+      row ??= newRow(view, name)
+      row.pays[slot] = points
     } else if (row) {
-      row.score -= points
-      row.games -= 1
-      if (row.games <= 0) view.tallies.delete(name)
+      row.pays[slot] = 0
+    } else {
+      continue
     }
+    moved.add(row)
   }
   view.unsorted = true
+}
+
+/**
+ * The totals of the players whose games' points moved, from what each game pays them now: their best
+ * ten added up (bestGamesTotal). A player no game pays any more leaves the standings.
+ */
+function settleRows(view: StandingsView, moved: Set<StandingRow>) {
+  for (const row of moved) {
+    let games = 0
+    for (let i = 0; i < row.pays.length; i++) if (row.pays[i]! > 0) games++
+    row.games = games
+    row.score = bestGamesTotal(row.pays)
+    if (games > 0) continue
+    view.tallies.delete(row.name)
+    view.unsorted = true
+  }
 }
 
 /*
@@ -1557,8 +1619,8 @@ function countPlaces(view: StandingsView, pool: PoolView, sign: 1 | -1) {
  * history is read again (and then the standings start over anyway): the
  * difference can't be counted then, so the caller counts the game out and in.
  */
-function recountPlaces(view: StandingsView, had: PoolView, pool: PoolView, moved: Set<StandingRow>): boolean {
-  const changes: { name: string; points: number; was: number }[] = []
+function recountPlaces(view: StandingsView, had: PoolView, pool: PoolView, slot: number, moved: Set<StandingRow>): boolean {
+  const changes: { name: string; points: number }[] = []
   let kept = 0
   for (let i = 0; i < pool.entries.length; i++) {
     const place = pool.placeAt[i]
@@ -1571,17 +1633,12 @@ function recountPlaces(view: StandingsView, had: PoolView, pool: PoolView, moved
       kept++
       was = placePoints(had.placeAt[hadAt], had.players)
     }
-    if (points !== was) changes.push({ name: entry.name, points, was })
+    if (points !== was) changes.push({ name: entry.name, points })
   }
   if (kept !== had.players) return false
-  for (const { name, points, was } of changes) {
-    let row = view.tallies.get(name)
-    if (!row) {
-      row = { name, score: 0, games: 0, pos: -1 }
-      view.tallies.set(name, row)
-    }
-    row.score += points - was
-    if (was <= 0) row.games += 1
+  for (const { name, points } of changes) {
+    const row = view.tallies.get(name) ?? newRow(view, name)
+    row.pays[slot] = points
     // Marked to come out of order and go back in where its new total puts it.
     row.pos = -1
     moved.add(row)
@@ -1675,20 +1732,21 @@ async function refreshStandings(period: Period, now: number): Promise<StandingsV
   const window = periodWindow(period, now)
   let view = standingsViews.get(period)
   if (!view || view.epoch !== epoch || view.window !== window) {
-    view = { epoch, window, asOf, counted: new Map(), tallies: new Map(), order: [], unsorted: true }
+    view = { epoch, window, asOf, slots: games.length, counted: new Map(), tallies: new Map(), order: [], unsorted: true }
     standingsViews.set(period, view)
   }
   const moved = new Set<StandingRow>()
-  games.forEach((game, i) => {
-    const pool = pools[i]
+  games.forEach((game, slot) => {
+    const pool = pools[slot]
     const had = view.counted.get(game)
     if (had === pool) return
-    if (!had || !recountPlaces(view, had, pool, moved)) {
-      if (had) countPlaces(view, had, -1)
-      countPlaces(view, pool, 1)
+    if (!had || !recountPlaces(view, had, pool, slot, moved)) {
+      if (had) countPlaces(view, had, slot, -1, moved)
+      countPlaces(view, pool, slot, 1, moved)
     }
     view.counted.set(game, pool)
   })
+  settleRows(view, moved)
   if (view.unsorted) sortStandings(view)
   else if (moved.size) reorderStandings(view, moved)
   view.asOf = asOf

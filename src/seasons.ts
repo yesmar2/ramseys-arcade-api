@@ -718,7 +718,7 @@ const STANDINGS_FRESH_MS = 5 * 60_000
 const standingsKept = new Map<number, { at: number; rows: GlobalRankEntry[] }>()
 const standingsAsked = new Map<number, Promise<GlobalRankEntry[]>>()
 
-/** The season's standings (points across all games over its days), counted at most every five minutes. */
+/** The season's standings (points from each player's ten best games over its days), counted at most every five minutes. */
 export async function seasonStandingRows(season: SeasonNow, now = Date.now()): Promise<GlobalRankEntry[]> {
   const id = season.def.id
   const kept = standingsKept.get(id)

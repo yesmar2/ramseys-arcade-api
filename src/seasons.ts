@@ -4,7 +4,7 @@ import { accounts, appMeta, memberships, prizesOwned, seasonPlus, seasonProgress
 import { getClaim, namesOwnedByAccount, resolveAvatarId } from './names.js'
 import { notify } from './notifications.js'
 import { prizeById } from './prizes.js'
-import { boardDateKey, dayStartMs, globalRanksForWindow, type GlobalRankEntry } from './store.js'
+import { boardDateKey, dayStartMs, globalRanks, globalRanksForWindow, setSeasonSpan } from './store.js'
 import { awardTickets } from './tickets.js'
 import { keptDaysFor } from './today.js'
 import { ordinal } from './words.js'
@@ -339,7 +339,23 @@ export async function setSeasonPreview(on: boolean, now = Date.now(), season: nu
 
 /** The live season, else the next to come, else the last one over; null when there are none. */
 export async function seasonNow(now = Date.now()): Promise<SeasonNow | null> {
-  const preview = await seasonPreview(now)
+  return seasonAt(await seasonPreview(now), now)
+}
+
+/**
+ * The boards' `season` period (store.ts setSeasonSpan): the live season's days, or the last one's once it's
+ * over, none before the first. It goes by the preview as last read, and asks again when that's stale.
+ */
+setSeasonSpan((now) => {
+  // Asked again when stale, without waiting: till it's back, the last read stands. The API reads it as it
+  // starts (index.ts), so the first boards go by it.
+  if (!previewKnown || now - previewKnown.at >= FRESH_MS) void seasonPreview(now).catch(() => undefined)
+  const season = seasonAt(previewKnown?.preview ?? null, now)
+  return season && season.status !== 'upcoming' ? [season.startsAt, season.endsAt] : null
+})
+
+/** seasonNow, given the early preview. */
+function seasonAt(preview: SeasonPreview | null, now: number): SeasonNow | null {
   const previewFrom = preview?.from ?? null
   // A season an admin picked to preview is live from the preview's day, over any other, until it ends.
   const picked = preview?.season != null ? SEASONS.find((s) => s.id === preview.season) : undefined
@@ -723,38 +739,6 @@ export async function standingsSeason(now = Date.now()): Promise<SeasonNow | nul
   return season && season.status !== 'upcoming' ? season : null
 }
 
-const STANDINGS_FRESH_MS = 5 * 60_000
-/** Kept by season, and by group inside one (`id|NAME,NAME`): a group's standings are counted among its players. */
-const standingsKept = new Map<string, { at: number; rows: GlobalRankEntry[] }>()
-const standingsAsked = new Map<string, Promise<GlobalRankEntry[]>>()
-/** Groups' standings kept at once; past it, the oldest go. */
-const SCOPES_KEPT = 200
-
-/**
- * The season's standings (points from each player's ten best games over its days), counted at most every
- * five minutes; inside a group (`scope`, its players), among them.
- */
-export async function seasonStandingRows(season: SeasonNow, now = Date.now(), scope?: ReadonlySet<string> | null): Promise<GlobalRankEntry[]> {
-  const key = scope ? `${season.def.id}|${[...scope].sort().join(',')}` : String(season.def.id)
-  const kept = standingsKept.get(key)
-  if (kept && (season.status === 'over' || now - kept.at < STANDINGS_FRESH_MS)) return kept.rows
-  let asking = standingsAsked.get(key)
-  if (!asking) {
-    asking = globalRanksForWindow(season.startsAt, Math.min(season.endsAt, now + 1), scope)
-      .then((rows) => {
-        if (scope && !standingsKept.has(key) && standingsKept.size >= SCOPES_KEPT) {
-          const oldest = [...standingsKept.keys()].find((k) => k.includes('|'))
-          if (oldest) standingsKept.delete(oldest)
-        }
-        standingsKept.set(key, { at: Date.now(), rows })
-        return rows
-      })
-      .finally(() => standingsAsked.delete(key))
-    standingsAsked.set(key, asking)
-  }
-  return asking
-}
-
 export type SeasonStandingsView = {
   total: number
   /** The top five, by place and name; the points between them stay on the full Standings. */
@@ -764,8 +748,12 @@ export type SeasonStandingsView = {
   trophyPlaces: number
 }
 
-export async function seasonStandingsView(season: SeasonNow, accountId: string | null, now = Date.now()): Promise<SeasonStandingsView> {
-  const rows = await seasonStandingRows(season, now)
+/**
+ * The Season page's old card (sites from before the full list): the top five and you, from the `season`
+ * period's standings (store.ts), as the Standings page's Season tab counts them.
+ */
+export async function seasonStandingsView(_season: SeasonNow, accountId: string | null, now = Date.now()): Promise<SeasonStandingsView> {
+  const rows = await globalRanks('season', now)
   const top = await Promise.all(rows.slice(0, 5).map(async (row) => ({ rank: row.rank, name: row.name, avatarId: await resolveAvatarId(row.name) })))
   let you: SeasonStandingsView['you'] = null
   if (accountId) {

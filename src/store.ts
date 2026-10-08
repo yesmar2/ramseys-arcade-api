@@ -52,7 +52,13 @@ export function legacyGameSlugs(canonical: GameSlug): string[] {
     .map(([alias]) => alias)
 }
 
-export const PERIODS = ['daily', 'weekly', 'monthly', 'all'] as const
+/**
+ * The boards' stretches. `season` is the live season's days, or the last one's once it's over (seasons.ts
+ * gives its span, setSeasonSpan): its boards and standings count as a week's or a month's do, a daily's
+ * in day points, for the site's Season tabs (Ramsey, 2026-10-08: "we need to add the season tab on game
+ * boards and how your rank works page"). Before the first season, it has no days and no runs.
+ */
+export const PERIODS = ['daily', 'weekly', 'monthly', 'all', 'season'] as const
 export type Period = (typeof PERIODS)[number]
 
 /** Calendar periods evaluated in this timezone. */
@@ -359,6 +365,10 @@ function filterByNames<T extends { name: string }>(entries: T[], scope?: NameSco
  */
 export function inPeriod(at: number, period: Period, now = Date.now()): boolean {
   if (period === 'all') return true
+  if (period === 'season') {
+    const span = seasonSpan(now)
+    return span != null && at >= span[0] && at < span[1]
+  }
   if (period === 'daily') return keyOf(at) === keyOf(now)
   if (period === 'monthly') {
     const here = ymdInTz(now)
@@ -399,8 +409,21 @@ export function boardDayStart(ms: number): number {
   return dayStartMs(keyOf(ms))
 }
 
+/**
+ * The season's span, from its first moment up to the first after its last day, or null when there's none to
+ * show (seasons.ts sets it: the live season, else the last one over, with the early preview's start).
+ */
+let seasonSpan: (now: number) => [number, number] | null = () => null
+
+/** Where the `season` period's span comes from (seasons.ts, which reads the store, so can't be read from it). */
+export function setSeasonSpan(span: (now: number) => [number, number] | null) {
+  seasonSpan = span
+}
+
 /** A period's span as timestamps, from its first moment up to (not including) the first after it. */
 function periodSpan(period: Exclude<Period, 'all'>, now: number): [number, number] {
+  // No season: a span nothing falls in.
+  if (period === 'season') return seasonSpan(now) ?? [0, 0]
   const today = keyOf(now)
   const tomorrow = dayStartMs(addDaysToDateKey(today, 1))
   if (period === 'daily') return [dayStartMs(today), tomorrow]
@@ -928,6 +951,11 @@ const poolViews = new Map<string, PoolView>()
 /** What a period's board covers from now: a new day moves the daily and weekly ones, a new month the monthly. */
 export function periodWindow(period: Period, now: number): string {
   if (period === 'all') return 'all'
+  // A new season, or the preview turned on or off, is a new board.
+  if (period === 'season') {
+    const span = seasonSpan(now)
+    return span ? `season:${span[0]}:${span[1]}` : 'season:none'
+  }
   if (period === 'monthly') return String(monthKey(now))
   return String(keyOf(now))
 }
@@ -1859,19 +1887,18 @@ export async function globalRanksForClosedPeriod(
 }
 
 /**
- * The standings over a stretch that isn't a week or a month: a season's (seasons.ts). Each game's runs in
- * it make its board, as a closed week's do (a daily's, its day points), and the places add up as they do
- * for any period. Inside a group (`scope`), each board is placed again among its players, as a period's
- * are (a daily's day points stay the whole field's). Seconds of work on a big history, so its caller keeps
- * the answer a while.
+ * The standings over a stretch that isn't a week or a month: a season's as it ends (seasons.ts settleSeasons;
+ * the live ones are the `season` period's). Each game's runs in it make its board, as a closed week's do (a
+ * daily's, its day points), and the places add up as they do for any period. Seconds of work on a big
+ * history, so it's asked rarely.
  */
-export async function globalRanksForWindow(startMs: number, endMs: number, scope?: NameScope): Promise<GlobalRankEntry[]> {
+export async function globalRanksForWindow(startMs: number, endMs: number): Promise<GlobalRankEntry[]> {
   return aggregateGlobalRanks(async (game) => {
     await new Promise((resolve) => setImmediate(resolve))
     // The history is in board order, so its runs in any stretch already are.
     const runs = (await historyFor(game)).filter((e) => e.at >= startMs && e.at < endMs)
     const pool = !DAILY_GAMES.has(game) ? runs : isRankedGame(game) ? dayPointsBoard(game, runs) : []
-    return placementsFromPool(filterByNames(pool, scope))
+    return placementsFromPool(pool)
   })
 }
 

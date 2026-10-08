@@ -44,6 +44,7 @@ import { runMigrations } from './db/migrate.js'
 import { migrateStrideToCrosswalk } from './migrateStrideToCrosswalk.js'
 import { lastSweptAt, startSweeping } from './sweep.js'
 import { MULTI_INSTANCE, startFeed, waitFor, withLease } from './feed.js'
+import { seasonPreview } from './seasons.js'
 
 /** Load .env into process.env when present (does not override existing vars). */
 function loadDotEnv() {
@@ -90,6 +91,8 @@ async function main() {
   await startFeed()
   // One server at a time through the checks at boot: two would do each twice.
   await withLease('boot', () => migrateStrideToCrosswalk(), { ttlMs: 5 * 60_000, waitMs: 5 * 60_000 })
+  // The season's boards go by the early preview (store.ts setSeasonSpan): known before the first is asked for.
+  await seasonPreview().catch(() => null)
 
   const app = express()
 

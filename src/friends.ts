@@ -94,6 +94,31 @@ async function displayNameFor(accountId: string): Promise<string> {
   return owned[0]?.name ?? 'PLAYER'
 }
 
+/*
+ * Whom each account is friends with, for the boards' friends scope (groups.ts friendsBoardScope). A page
+ * asks several boards at once, each with `group=friends`, so the answer is kept a few seconds; making or
+ * ending a friendship here drops both accounts' copies.
+ */
+const FRIEND_IDS_TTL_MS = 10_000
+const friendIdsHeld = new Map<string, { at: number; ids: string[] }>()
+
+export async function friendAccountIds(accountId: string, now = Date.now()): Promise<string[]> {
+  const held = friendIdsHeld.get(accountId)
+  if (held && now - held.at < FRIEND_IDS_TTL_MS) return held.ids
+  const rows = await db()
+    .select({ a: friendships.accountIdA, b: friendships.accountIdB })
+    .from(friendships)
+    .where(or(eq(friendships.accountIdA, accountId), eq(friendships.accountIdB, accountId)))
+  const ids = rows.map((row) => (row.a === accountId ? row.b : row.a))
+  if (friendIdsHeld.size > 5_000) friendIdsHeld.clear()
+  friendIdsHeld.set(accountId, { at: now, ids })
+  return ids
+}
+
+function forgetFriendIds(...accountIds: string[]) {
+  for (const id of accountIds) friendIdsHeld.delete(id)
+}
+
 export async function areFriends(accountIdA: string, accountIdB: string): Promise<boolean> {
   const [a, b] = canonicalPair(accountIdA, accountIdB)
   const rows = await db()
@@ -134,6 +159,7 @@ async function createFriendship(accountIdA: string, accountIdB: string, now: num
     .limit(1)
   if (existing.length > 0) return
   await db().insert(friendships).values({ id: uid(), accountIdA: a, accountIdB: b, createdAt: now })
+  forgetFriendIds(a, b)
 }
 
 async function setRequestStatus(id: string, status: FriendRequestStatus) {
@@ -323,4 +349,5 @@ export async function removeFriend(accountId: string, otherAccountId: string) {
   await db()
     .delete(friendships)
     .where(and(eq(friendships.accountIdA, a), eq(friendships.accountIdB, b)))
+  forgetFriendIds(a, b)
 }

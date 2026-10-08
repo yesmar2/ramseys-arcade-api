@@ -6,6 +6,7 @@ import { assertAllowedName } from './nameFilter.js'
 import { cleanPlayerName, getClaim, namesOwnedByAccount, withAvatarIds } from './names.js'
 import { planDenied, planLimits, type AccountPlan } from './plans.js'
 import { announceRewrite, onRewrite } from './feed.js'
+import { friendAccountIds } from './friends.js'
 
 /** A group's size follows whoever owns it, not whoever is joining. */
 async function ownerPlan(accountId: string): Promise<AccountPlan> {
@@ -163,13 +164,31 @@ export function rosterNameSet(group: Group): Set<string> {
   return new Set(group.members.map((m) => m.name).filter(Boolean))
 }
 
-/** `group=everyone` or omitted → null. Unknown/non-member → throw. */
+/** `group=friends`: the boards among a player's own tags and their friends' (friends.ts). No group's id is it. */
+export const FRIENDS_SCOPE = 'friends'
+
+/**
+ * A signed-in player's friends as a board scope: their own tags and every tag their friends' accounts hold.
+ * Nobody signed in has friends to show, so they're turned back as from a group they aren't in, and the
+ * site goes back to everyone's boards (its withGroupFallback).
+ */
+async function friendsBoardScope(accountId?: string): Promise<{ groupId: string; names: Set<string> }> {
+  if (!accountId) fail('Sign in to see your friends on the boards', 403, 'GROUP_FORBIDDEN')
+  const names = new Set(await accountNames(accountId))
+  for (const friend of await friendAccountIds(accountId)) {
+    for (const name of await accountNames(friend)) names.add(name)
+  }
+  return { groupId: FRIENDS_SCOPE, names }
+}
+
+/** `group=everyone` or omitted → null; `group=friends` → you and your friends. Unknown/non-member → throw. */
 export async function resolveBoardScope(
   groupId: string | undefined,
   opts: GroupAccessOpts = {},
 ): Promise<{ groupId: string; names: Set<string> } | null> {
   const id = groupId?.trim()
   if (!id || id === 'everyone') return null
+  if (id === FRIENDS_SCOPE) return friendsBoardScope(opts.accountId)
   const group = await assertGroupBoardAccess(id, opts)
   return { groupId: group.id, names: rosterNameSet(group) }
 }

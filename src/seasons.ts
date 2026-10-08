@@ -714,24 +714,43 @@ export const TROPHY_PLACES = 10
 export const CUP_FIELD = 5
 export const TROPHY_FIELD = 15
 
-const STANDINGS_FRESH_MS = 5 * 60_000
-const standingsKept = new Map<number, { at: number; rows: GlobalRankEntry[] }>()
-const standingsAsked = new Map<number, Promise<GlobalRankEntry[]>>()
+/** What a season's places win and the field each needs, for the lines the site draws on its standings. */
+export const SEASON_PRIZES = { cupPlaces: CUP_PLACES, trophyPlaces: TROPHY_PLACES, cupField: CUP_FIELD, trophyField: TROPHY_FIELD }
 
-/** The season's standings (points from each player's ten best games over its days), counted at most every five minutes. */
-export async function seasonStandingRows(season: SeasonNow, now = Date.now()): Promise<GlobalRankEntry[]> {
-  const id = season.def.id
-  const kept = standingsKept.get(id)
+/** The season whose standings the site shows: the live one, else the last one over; null before the first. */
+export async function standingsSeason(now = Date.now()): Promise<SeasonNow | null> {
+  const season = await seasonNow(now)
+  return season && season.status !== 'upcoming' ? season : null
+}
+
+const STANDINGS_FRESH_MS = 5 * 60_000
+/** Kept by season, and by group inside one (`id|NAME,NAME`): a group's standings are counted among its players. */
+const standingsKept = new Map<string, { at: number; rows: GlobalRankEntry[] }>()
+const standingsAsked = new Map<string, Promise<GlobalRankEntry[]>>()
+/** Groups' standings kept at once; past it, the oldest go. */
+const SCOPES_KEPT = 200
+
+/**
+ * The season's standings (points from each player's ten best games over its days), counted at most every
+ * five minutes; inside a group (`scope`, its players), among them.
+ */
+export async function seasonStandingRows(season: SeasonNow, now = Date.now(), scope?: ReadonlySet<string> | null): Promise<GlobalRankEntry[]> {
+  const key = scope ? `${season.def.id}|${[...scope].sort().join(',')}` : String(season.def.id)
+  const kept = standingsKept.get(key)
   if (kept && (season.status === 'over' || now - kept.at < STANDINGS_FRESH_MS)) return kept.rows
-  let asking = standingsAsked.get(id)
+  let asking = standingsAsked.get(key)
   if (!asking) {
-    asking = globalRanksForWindow(season.startsAt, Math.min(season.endsAt, now + 1))
+    asking = globalRanksForWindow(season.startsAt, Math.min(season.endsAt, now + 1), scope)
       .then((rows) => {
-        standingsKept.set(id, { at: Date.now(), rows })
+        if (scope && !standingsKept.has(key) && standingsKept.size >= SCOPES_KEPT) {
+          const oldest = [...standingsKept.keys()].find((k) => k.includes('|'))
+          if (oldest) standingsKept.delete(oldest)
+        }
+        standingsKept.set(key, { at: Date.now(), rows })
         return rows
       })
-      .finally(() => standingsAsked.delete(id))
-    standingsAsked.set(id, asking)
+      .finally(() => standingsAsked.delete(key))
+    standingsAsked.set(key, asking)
   }
   return asking
 }

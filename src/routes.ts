@@ -22,7 +22,7 @@ import { dailyFirstDay, dailyRecords, dayResultKeep, standingOn, type DailyTally
 import { beforeLaunch } from './earlyAccess.js'
 import { recordChallengeRun } from './challenges.js'
 import { payRun, plausiblePickups, type RunTickets } from './tickets.js'
-import { seasonAfterRun } from './seasons.js'
+import { SEASON_PRIZES, seasonAfterRun, seasonStandingRows, standingsSeason } from './seasons.js'
 import { runSkin } from './skins.js'
 import { landerPlannedPace, marblerunPlannedPace, swoopPlannedPace } from './ticketLadders.js'
 import {
@@ -87,8 +87,65 @@ leaderboardsRouter.get('/bests', async (req, res) => {
   })
 })
 
+/**
+ * The season's standings, for the site's Season tab and Season page: a page of them, a player's line with the
+ * two either side of them, or a find, as the period's standings below answer (seasons.ts seasonStandingRows,
+ * counted at most every five minutes). A page says which season, and what its places win.
+ */
+async function seasonRank(req: import('express').Request, res: import('express').Response) {
+  let scope
+  try {
+    scope = (await boardAccess(req))?.names
+  } catch (err) {
+    scopeError(err, res)
+    return
+  }
+  const now = Date.now()
+  const season = await standingsSeason(now)
+  const rows = season ? await seasonStandingRows(season, now, scope) : []
+  const name = typeof req.query.name === 'string' ? req.query.name.trim().slice(0, 12).toUpperCase() : ''
+  if (name) {
+    const at = rows.findIndex((row) => row.name === name)
+    const me = at >= 0 ? rows[at]! : null
+    const [mine, nearby] = await Promise.all([
+      withAvatarId({ name }),
+      withAvatarIds(me ? rows.slice(Math.max(0, at - 2), at + 3) : []),
+    ])
+    res.json({
+      period: 'season',
+      rank: me?.rank ?? null,
+      score: me?.score ?? 0,
+      totalPlayers: rows.length,
+      byGame: me?.byGame ?? {},
+      nearby,
+      avatarId: mine.avatarId,
+    })
+    return
+  }
+  const find = typeof req.query.find === 'string' ? req.query.find.trim().slice(0, 12).toUpperCase() : ''
+  if (find) {
+    res.json({ period: 'season', found: await withAvatarIds(rows.filter((row) => row.name.includes(find)).slice(0, 10)) })
+    return
+  }
+  const { limit, offset } = pageParams(req.query, 50)
+  res.json({
+    period: 'season',
+    offset,
+    totalPlayers: rows.length,
+    entries: await withAvatarIds(rows.slice(offset, offset + limit)),
+    season: season
+      ? { id: season.def.id, slug: season.def.slug, name: season.def.name, status: season.status, startsAt: season.startsAt, endsAt: season.endsAt }
+      : null,
+    prizes: SEASON_PRIZES,
+  })
+}
+
 leaderboardsRouter.get('/rank', async (req, res) => {
   const periodParam = req.query.period
+  if (periodParam === 'season') {
+    await seasonRank(req, res)
+    return
+  }
   if (periodParam != null && periodParam !== '' && !isPeriod(periodParam)) {
     res.status(400).json({ error: 'Invalid period' })
     return

@@ -173,9 +173,12 @@ const TYPICAL_PACE_MS = 53_000
  * (platinum 30%), as he picked ("blue needs to be a little bit harder ... the medals for swoop need to be
  * harder too"). On the longer hills his best runs then landed 35 to 38% under the bird, platinum every time,
  * so Swoop's steps went to 12% (platinum 36%) when he found its medals still needed to be "a little more
- * difficult" (2026-10-07). A run slower than the blue pays the base 3.
+ * difficult" (2026-10-07). Marble Run's went to 12% too (platinum 36%) when he asked for its medals to be
+ * harder (2026-10-08), right after its marble got easier to turn and slow down (the site's marblerun sim.ts
+ * PLAYER_TILT_MAX, PLAYER_BRAKE): his runs had landed 27 to 32% under the blue ball, and the easier marble
+ * takes about 4% more off a quick player's time. A run slower than the blue pays the base 3.
  */
-export const RACE_MEDAL_STEP = { hotlap: 0.06, marblerun: 0.09, lander: 0.08, swoop: 0.12 } as const
+export const RACE_MEDAL_STEP = { hotlap: 0.06, marblerun: 0.12, lander: 0.08, swoop: 0.12 } as const
 
 /**
  * A racing daily's steps on a day whose blue goes in `pace` ms, `score` turning a time into a board score.
@@ -228,13 +231,13 @@ export function marblerunPlannedPace(now = Date.now()): number | null {
   return paceOnDay(MARBLERUN_FIRST_DAY, MARBLERUN_PACE_MS, now)
 }
 
-/** Where a blue ball can roll: the plan's courses pace 42–63 s. */
+/** Where a blue ball can roll: the plan's courses pace 44–77 s. */
 const BALL_MIN_MS = 30_000
 const BALL_MAX_MS = 90_000
 
 /**
- * Marble Run, on a day whose blue ball rolls down in `paceMs`: slower than it 3, beating it 5, by 9% 8, by
- * 18% 11, by 27% 15, as Hot Lap pays against its blue car. Without a blue ball, a run pays the 3 alone.
+ * Marble Run, on a day whose blue ball rolls down in `paceMs`: slower than it 3, beating it 5, by 12% 8, by
+ * 24% 11, by 36% 15, as Hot Lap pays against its blue car. Without a blue ball, a run pays the 3 alone.
  */
 export function marblerunLadder(paceMs: number | null | undefined): Ladder {
   const base = { base: 3, baseLabel: 'a run today' }
@@ -276,8 +279,8 @@ const BIRD_MIN_MS = 50_000
 const BIRD_MAX_MS = 140_000
 
 /**
- * Swoop, on a day whose blue bird crosses the line in `paceMs`: slower than it 3, beating it 5, by 10% 8, by
- * 20% 11, by 30% 15, as the other racing dailies pay against their blues. Without a blue bird, a run pays the
+ * Swoop, on a day whose blue bird crosses the line in `paceMs`: slower than it 3, beating it 5, by 12% 8, by
+ * 24% 11, by 36% 15, as the other racing dailies pay against their blues. Without a blue bird, a run pays the
  * 3 alone.
  */
 export function swoopLadder(paceMs: number | null | undefined): Ladder {

@@ -553,7 +553,8 @@ function dayPointsBoard(game: GameSlug, runs: readonly LeaderboardEntry[]): Lead
       const points = placePoints(i + 1, best.length)
       const had = totals.get(run.name)
       if (!had) {
-        totals.set(run.name, { id: `days:${game}:${run.name}`, name: run.name, score: points, at: run.at, device: run.device, days: 1 })
+        // In the skin of their latest day's best run, as the board shows a run's (the site's SkinMark).
+        totals.set(run.name, { id: `days:${game}:${run.name}`, name: run.name, score: points, at: run.at, device: run.device, ...(run.skin ? { skin: run.skin } : {}), days: 1 })
         return
       }
       had.score += points
@@ -561,6 +562,8 @@ function dayPointsBoard(game: GameSlug, runs: readonly LeaderboardEntry[]): Lead
       if (run.at > had.at) {
         had.at = run.at
         had.device = run.device
+        if (run.skin) had.skin = run.skin
+        else delete had.skin
       }
     })
   }

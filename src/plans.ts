@@ -26,8 +26,8 @@ export type PlanLimits = {
   /** A different game per bracket round. */
   multiGameRounds: boolean
   /**
-   * An event on any past course of a racing daily. Without it, today's course or one from the last week (the
-   * past days open to everyone, archive.ts); with it, any course since the game began.
+   * An event on a past course of a racing daily. Without it, today's course alone; with it, any course since
+   * the game began. (The last week's courses stay everyone's to play, archive.ts: only hosting on them is Plus.)
    */
   anyCourse: boolean
 }

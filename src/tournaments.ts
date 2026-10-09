@@ -4,10 +4,9 @@ import { db } from './db/client.js'
 import { tournamentPlayers, tournamentScores, tournaments as tournamentsTable } from './db/schema.js'
 import { MULTI_INSTANCE, noteFeedId, onChange, onRewrite, pollNow, publish, withLease } from './feed.js'
 import { fileMatchAlerts } from './matchAlerts.js'
-import { inArchive } from './archive.js'
 import { planDenied, planLimits, type AccountPlan } from './plans.js'
 import { TIME_SCORE_BASE } from './scoreLimits.js'
-import { fastestBelievable, TRACK_GAMES, trackDayIso, trackState } from './trackLaps.js'
+import { fastestBelievable, TRACK_GAMES, trackState } from './trackLaps.js'
 import {
   armMatchClocks,
   bracketDrawSize,
@@ -2420,8 +2419,8 @@ const MAX_PRIVATE_GAMES = 5
 
 /**
  * The course a racing daily's event is raced on, checked: an event with one is that game alone (a bracket's
- * every round too), on a course that has been raced (today's, or a past one). A course from the last week is anyone's,
- * as those past days are; an older one is a Plus host's (PlanLimits.anyCourse). The event is the host's and
+ * every round too), on a course that has been raced (today's, or a past one). Today's is anyone's to host on;
+ * a past one, the last week's included, is a Plus host's (PlanLimits.anyCourse). The event is the host's and
  * their guests', and joining stays free; no public board takes a run from it.
  */
 function eventCourse(games: GameSlug[], course: number | undefined, plan: AccountPlan, now: number) {
@@ -2437,8 +2436,10 @@ function eventCourse(games: GameSlug[], course: number | undefined, plan: Accoun
   if (state !== 'today' && state !== 'past') {
     throw Object.assign(new Error('Pick a course that has been raced'), { status: 400, code: 'COURSE_UNKNOWN' })
   }
-  if (state === 'past' && inArchive(trackDayIso(n, game), now) && !planLimits(plan).anyCourse) {
-    throw planDenied('anyCourse', plan, 'Events on a course more than a week old are a Plus feature')
+  // Today's course is anyone's to host on; a past one, Plus's (Ramsey, 2026-10-09: "ok let's do it", to hosting
+  // on every past course needing Plus, while the last week's stay free to play).
+  if (state === 'past' && !planLimits(plan).anyCourse) {
+    throw planDenied('anyCourse', plan, 'Events on a past course are a Plus feature')
   }
   return n
 }

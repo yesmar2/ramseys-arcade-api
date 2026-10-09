@@ -654,7 +654,7 @@ leaderboardsRouter.post('/:game', async (req, res) => {
     res.status(400).json({ error: 'That score is not possible in the time the run took', code: 'SCORE_IMPLAUSIBLE' })
     return
   }
-  // Nor a day's Wobble Run much faster than the day's blue bean (wobblerunPace.ts): under 40% of its raced time
+  // Nor a day's Wobble Run much faster than the day's blue blip (wobblerunPace.ts): under 40% of its raced time
   // (trackLaps.ts WOBBLERUN_FLOOR, which past gauntlets' boards share, and which says how it's held under the
   // plan's fastest search).
   if (game === 'wobblerun' && TIME_SCORE_BASE - score < WOBBLERUN_FLOOR * (wobblerunPlannedPace() ?? 80_000)) {

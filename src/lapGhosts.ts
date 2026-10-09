@@ -25,10 +25,10 @@ import { trackBoard, trackState } from './trackLaps.js'
  * times a second from the go, x, y and whether it was diving (1) or not (0), with the line's moment last. A
  * bird is never put back anywhere, so it never jumps.
  *
- * Wobble Run's gauntlets have theirs the same way: a gauntlet's #1 on its board. Its path is where the bean was
+ * Wobble Run's gauntlets have theirs the same way: a gauntlet's #1 on its board. Its path is where Blip was
  * ten times a second from the go, x, y (height), z (along the course) and how it was (0 on its feet, 1 in the
- * air or diving, 2 respawning, 3 stunned), with the crown's moment last, splats and all: a splat puts it back
- * at a checkpoint.
+ * air or diving, 2 respawning, 3 stunned), with the moment it touched the Blip star (the engine's crown trigger)
+ * last, falls and all: a fall into the soda sea puts it back at a checkpoint.
  */
 
 /**
@@ -65,9 +65,9 @@ const SHIP_STEP = 8
 const MOST_CRASHES = 200
 /** Metres a bird can go between two samples: a tenth of a second at far more than it ever flies (about 100 m/s at best, on a streak). */
 const BIRD_STEP = 15
-/** Metres a bean can go between two samples: a tenth of a second at far more than it ever moves, launch pads and flings included. */
+/** Metres Blip can go between two samples: a tenth of a second at far more than it ever moves, launch pads and flings included. */
 const BEAN_STEP = 8
-/** Farther than that is a respawn at a checkpoint, after a splat: a run with more than this many isn't one. */
+/** Farther than that is a respawn at a checkpoint, after a fall: a run with more than this many isn't one. */
 const MOST_RESPAWNS = 100
 /** Where a gauntlet can be, in metres: across it (x), up and down (y) and along it from the start pad (z). */
 const GAUNTLET_X = 60
@@ -212,8 +212,8 @@ function swoopProblem(timeMs: number, splits: unknown, path: unknown): string | 
 
 /**
  * Why a Wobble Run's splits and path can't be a run of `timeMs`, or null if they can. Its splits are the moment
- * it crossed each checkpoint's flag line and touched the crown, in order; its path is ten samples a second from
- * the go of x, y, z and how the bean was (0 to 3), and the crown's moment last.
+ * it crossed each checkpoint's flag line and touched the Blip star (the engine's crown trigger), in order; its
+ * path is ten samples a second from the go of x, y, z and how Blip was (0 to 3), and the star's moment last.
  */
 function wobblerunProblem(timeMs: number, splits: unknown, path: unknown): string | null {
   const time = timeMs / 1000

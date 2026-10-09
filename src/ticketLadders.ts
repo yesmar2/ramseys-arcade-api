@@ -26,7 +26,7 @@ import { ALLOWED_GAMES, boardDateKey, runScores, type GameSlug } from './store.j
  * hotlapPace.ts, so the site can't say a slower one; Marble Run by the day's
  * blue ball (its pace ball), from marblerunPace.ts, Lander by the day's
  * blue ship, from landerPace.ts, Swoop by the day's blue bird, from
- * swoopPace.ts, and Wobble Run by the day's blue bean, from wobblerunPace.ts. A daily pays its best
+ * swoopPace.ts, and Wobble Run by the day's blue blip, from wobblerunPace.ts. A daily pays its best
  * step of the day once, as it's reached (tickets.ts).
  */
 
@@ -178,7 +178,7 @@ const TYPICAL_PACE_MS = 53_000
  * harder (2026-10-08), right after its marble got easier to turn and slow down (the site's marblerun sim.ts
  * PLAYER_TILT_MAX, PLAYER_BRAKE): his runs had landed 27 to 32% under the blue ball, and the easier marble
  * takes about 4% more off a quick player's time. Wobble Run came at 12% (platinum 36%) as well: the plan's
- * search runs its gauntlets 40 to 52% under the blue bean, so platinum asks for most of the gold lines in one
+ * search runs its gauntlets 40 to 52% under the blue blip, so platinum asks for most of the gold lines in one
  * run. A run slower than the blue pays the base 3.
  */
 export const RACE_MEDAL_STEP = { hotlap: 0.06, marblerun: 0.12, lander: 0.08, swoop: 0.12, wobblerun: 0.12 } as const
@@ -294,18 +294,18 @@ export function swoopLadder(paceMs: number | null | undefined): Ladder {
   return { ...base, steps: raceSteps(pace, RACE_MEDAL_STEP.swoop, 'blue bird', run) }
 }
 
-/** The day's blue bean from Wobble Run's plan. */
+/** The day's blue blip from Wobble Run's plan. */
 export function wobblerunPlannedPace(now = Date.now()): number | null {
   return paceOnDay(WOBBLERUN_FIRST_DAY, WOBBLERUN_PACE_MS, now)
 }
 
-/** Where a blue bean can run: the plan's gauntlets pace 80–95 s, with room either side. */
+/** Where a blue blip can run: the plan's gauntlets pace 80–95 s, with room either side. */
 const BEAN_MIN_MS = 50_000
 const BEAN_MAX_MS = 140_000
 
 /**
- * Wobble Run, on a day whose blue bean takes the crown in `paceMs`: slower than it 3, beating it 5, by 12% 8, by
- * 24% 11, by 36% 15, as the other racing dailies pay against their blues. Without a blue bean, a run pays the
+ * Wobble Run, on a day whose blue blip reaches the star in `paceMs`: slower than it 3, beating it 5, by 12% 8, by
+ * 24% 11, by 36% 15, as the other racing dailies pay against their blues. Without a blue blip, a run pays the
  * 3 alone.
  */
 export function wobblerunLadder(paceMs: number | null | undefined): Ladder {
@@ -313,7 +313,7 @@ export function wobblerunLadder(paceMs: number | null | undefined): Ladder {
   if (!paceMs) return { ...base, steps: [] }
   const pace = Math.min(BEAN_MAX_MS, Math.max(BEAN_MIN_MS, Math.round(paceMs)))
   const run = (ms: number) => TIME_SCORE_BASE - Math.round(ms)
-  return { ...base, steps: raceSteps(pace, RACE_MEDAL_STEP.wobblerun, 'blue bean', run) }
+  return { ...base, steps: raceSteps(pace, RACE_MEDAL_STEP.wobblerun, 'blue blip', run) }
 }
 
 /** A game's ladder today. Hot Lap's goes by the plan's blue car for the day, or else the one the site says. */

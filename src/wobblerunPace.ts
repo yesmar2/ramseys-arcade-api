@@ -1,5 +1,5 @@
 // Written by the site's scripts/wobblerun-daily.mjs from its src/games/wobblerun/dailyPlan.ts: each planned day's
-// blue bean (its run over the day's gauntlet, as it's raced), in milliseconds, from the first day on. Wobble Run's
+// blue blip (its run over the day's gauntlet, as it's raced), in milliseconds, from the first day on. Wobble Run's
 // ticket ladder goes by it (ticketLadders.ts), and so does the fastest run a day's board believes (routes.ts,
 // trackLaps.ts), whatever the site sends. Past the last planned day the days come round again, as the site's
 // dailyGauntlet has them. Don't edit it by hand: the script writes it again whenever the plan changes.

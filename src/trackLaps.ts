@@ -32,8 +32,8 @@ type CoursePlan = { firstDay: string; pace: readonly number[]; repeats: boolean;
 
 /**
  * The fastest Wobble Run a board believes, a gauntlet's own on its day (routes.ts) and after it (PLANS), as a
- * share of the blue bean's raced time. The plan's search, which takes every gold line, launch pad, dive and
- * fling, keeps a day only when it finishes in 48 to 60% of the blue bean's time (the site's wobblerun engine
+ * share of the blue blip's raced time. The plan's search, which takes every gold line, launch pad, dive and
+ * fling, keeps a day only when it finishes in 48 to 60% of the blue blip's time (the site's wobblerun engine
  * plan.ts, FAST_LEAST and FAST_MOST; the lowest planned day is #101, at 0.480), and this stays at most 85% of
  * FAST_LEAST (0.408), so a line the search missed is still believed. Check it again whenever the plan, its
  * pace or FAST_LEAST changes.

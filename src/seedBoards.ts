@@ -75,7 +75,7 @@ export const GAME_BANDS: Record<GameSlug, ScoreProfile> = {
   lander: { min: 920_000, max: 950_000, step: 100 },
   // A run over the day's hills: 110 seconds to 60, about the blue bird's range.
   swoop: { min: 890_000, max: 940_000, step: 100 },
-  // A run of the day's gauntlet: 120 seconds to 55, a first run to beating the blue bean by about 36%.
+  // A run of the day's gauntlet: 120 seconds to 55, a first run to beating the blue blip by about 36%.
   wobblerun: { min: 880_000, max: 945_000, step: 100 },
 }
 

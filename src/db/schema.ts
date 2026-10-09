@@ -835,6 +835,28 @@ export const trackLaps = pgTable(
 )
 
 /**
+ * Each account's best time on each course of a racing daily, kept for that player alone: the medal collection on
+ * the past tracks (Ramsey picked A and C of the "Medal collection" canvas, 2026-10-09). Every finished run counts,
+ * on its day, in the week after, or as a Plus member's practice on an older course, and only the quickest is
+ * kept. Nothing here is a board: no one else sees it, and it feeds no place, rank or ticket (courseBests.ts).
+ */
+export const courseBests = pgTable(
+  'course_bests',
+  {
+    accountId: text('account_id')
+      .notNull()
+      .references(() => accounts.id, { onDelete: 'cascade' }),
+    game: text('game').notNull(),
+    /** The course, numbered as its boards number it (trackLaps.ts). */
+    course: integer('course').notNull(),
+    /** The run's time, in milliseconds. */
+    ms: integer('ms').notNull(),
+    at: bigint('at', { mode: 'number' }).notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.accountId, t.game, t.course] })],
+)
+
+/**
  * Hole records: a result on an Ace Chase hole after its day. On its day a hole is Today's Hole, and its
  * results are daily_hole_results; after that the hole keeps a board of its own for good, its day's results
  * and every one here (holes.ts). As on its day, an account's first result on a hole is its only one: an

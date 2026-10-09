@@ -27,6 +27,7 @@ import { clientErrorsRouter } from './clientErrorsRoutes.js'
 import { feedbackRouter } from './feedbackRoutes.js'
 import { ticketsRouter } from './ticketsRoutes.js'
 import { tracksRouter } from './trackLapsRoutes.js'
+import { courseBestsRouter } from './courseBests.js'
 import { holesRouter } from './holesRoutes.js'
 import { todayRouter } from './todayRoutes.js'
 import { seasonRouter } from './seasonRoutes.js'
@@ -206,6 +207,7 @@ async function main() {
   app.use('/feedback', feedbackRouter)
   app.use('/tickets', ticketsRouter)
   app.use('/tracks', tracksRouter)
+  app.use('/course-bests', courseBestsRouter)
   app.use('/holes', holesRouter)
   app.use('/today', todayRouter)
   app.use('/season', seasonRouter)

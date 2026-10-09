@@ -2419,15 +2419,17 @@ export type CreateTournamentInput = {
 const MAX_PRIVATE_GAMES = 5
 
 /**
- * The course a racing daily's event is raced on, checked: an event with one is that game alone, standings not a
- * bracket, on a course that has been raced (today's, or a past one). A course from the last week is anyone's,
+ * The course a racing daily's event is raced on, checked: an event with one is that game alone (a bracket's
+ * every round too), on a course that has been raced (today's, or a past one). A course from the last week is anyone's,
  * as those past days are; an older one is a Plus host's (PlanLimits.anyCourse). The event is the host's and
  * their guests', and joining stays free; no public board takes a run from it.
  */
-function eventCourse(games: GameSlug[], kind: TournamentKind, course: number | undefined, plan: AccountPlan, now: number) {
+function eventCourse(games: GameSlug[], course: number | undefined, plan: AccountPlan, now: number) {
   const game = games.find((g) => TRACK_GAMES.has(g))
   if (!game) return undefined
-  if (kind === 'bracket' || games.length !== 1) {
+  // A bracket on one too (Ramsey, 2026-10-09: "looks like the dailies aren't available for bracket"): every
+  // match on the same course, the faster time taking it, as the higher of the inverted scores.
+  if (games.length !== 1) {
     throw Object.assign(new Error('A racing daily’s event is that game on its own, on one course'), { status: 400 })
   }
   const n = Math.floor(Number(course))
@@ -2526,7 +2528,7 @@ export async function createTournament(
   } else if (games.length < 1 || games.length > MAX_PRIVATE_GAMES) {
     throw Object.assign(new Error('Pick 1–5 games'), { status: 400 })
   }
-  const course = eventCourse(games, kind, input.course, plan, now)
+  const course = eventCourse(games, input.course, plan, now)
   if (
     !games.every(
       (g) =>
@@ -2616,12 +2618,12 @@ export async function createTournament(
   const blurb =
     input.blurb?.trim().slice(0, 280) ||
     (kind === 'bracket'
-      ? `${elimination === 'double' ? 'Double' : 'Single'}-elim bracket — higher score wins each match. ${
+      ? `${elimination === 'double' ? 'Double' : 'Single'}-elim bracket — ${course != null ? 'faster time' : 'higher score'} wins each match. ${
           new Set(roundPlan.flat()).size > 1
             ? `A different game each round: ${roundPlan
                 .map((round) => round.map(gameLabel).join(' + '))
                 .join(' → ')}.`
-            : `${gameLabel(games[0]!)}.`
+            : `${gameLabel(games[0]!)}${course != null ? ` #${course}` : ''}.`
         }`
       : course != null
         ? `${gameLabel(games[0]!)} #${course}: the fastest time on it wins.`

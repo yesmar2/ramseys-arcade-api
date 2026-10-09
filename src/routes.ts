@@ -24,7 +24,8 @@ import { recordChallengeRun } from './challenges.js'
 import { payRun, plausiblePickups, type RunTickets } from './tickets.js'
 import { SEASON_PRIZES, seasonAfterRun, standingsSeason } from './seasons.js'
 import { runSkin } from './skins.js'
-import { landerPlannedPace, marblerunPlannedPace, swoopPlannedPace } from './ticketLadders.js'
+import { landerPlannedPace, marblerunPlannedPace, swoopPlannedPace, wobblerunPlannedPace } from './ticketLadders.js'
+import { WOBBLERUN_FLOOR } from './trackLaps.js'
 import {
   addScore,
   ALLOWED_GAMES,
@@ -653,6 +654,14 @@ leaderboardsRouter.post('/:game', async (req, res) => {
     res.status(400).json({ error: 'That score is not possible in the time the run took', code: 'SCORE_IMPLAUSIBLE' })
     return
   }
+  // Nor a day's Wobble Run much faster than the day's blue bean (wobblerunPace.ts): under 40% of its raced time
+  // (trackLaps.ts WOBBLERUN_FLOOR, which past gauntlets' boards share, and which says how it's held under the
+  // plan's fastest search).
+  if (game === 'wobblerun' && TIME_SCORE_BASE - score < WOBBLERUN_FLOOR * (wobblerunPlannedPace() ?? 80_000)) {
+    console.warn(`[anticheat] rejected wobblerun ${score} from account ${account.id}: faster than the day's gauntlet allows`)
+    res.status(400).json({ error: 'That score is not possible in the time the run took', code: 'SCORE_IMPLAUSIBLE' })
+    return
+  }
 
   const firstRunOnly = FIRST_RUN_DAILIES.has(game)
   let durationMs: number | null = null
@@ -810,7 +819,7 @@ leaderboardsRouter.post('/:game', async (req, res) => {
         score,
         priorBest,
         pickups: game === 'crosswalk' ? plausiblePickups(score, pickups) : 0,
-        paceMs: game === 'hotlap' || game === 'marblerun' || game === 'lander' || game === 'swoop' ? pace : null,
+        paceMs: game === 'hotlap' || game === 'marblerun' || game === 'lander' || game === 'swoop' || game === 'wobblerun' ? pace : null,
       }).catch((err: unknown) => {
         console.warn(`[tickets] ${game} run ${payRef}:`, err)
         return null
@@ -829,7 +838,7 @@ leaderboardsRouter.post('/:game', async (req, res) => {
   })
 
   // A daily of the Today set (today.ts) may keep the day, or make it a Full ticket, and reach a streak reward.
-  if (game === 'hotlap' || game === 'findbug' || game === 'halffull' || game === 'centroid' || game === 'marblerun' || game === 'lander' || game === 'swoop') {
+  if (game === 'hotlap' || game === 'findbug' || game === 'halffull' || game === 'centroid' || game === 'marblerun' || game === 'lander' || game === 'swoop' || game === 'wobblerun') {
     await settleToday(account.id, result.entry.at).catch((err: unknown) => {
       console.warn(`[today] ${game} run for ${claim.name}:`, err)
     })

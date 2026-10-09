@@ -6,28 +6,39 @@ import { HOTLAP_FIRST_DAY, HOTLAP_PACE_MS } from './hotlapPace.js'
 import { LANDER_FIRST_DAY, LANDER_PACE_MS } from './landerPace.js'
 import { MARBLERUN_FIRST_DAY, MARBLERUN_PACE_MS } from './marblerunPace.js'
 import { SWOOP_FIRST_DAY, SWOOP_PACE_MS } from './swoopPace.js'
+import { WOBBLERUN_FIRST_DAY, WOBBLERUN_PACE_MS } from './wobblerunPace.js'
 import { boardDateKey, dayPlayers, isDeviceType, type DeviceType, type GameSlug } from './store.js'
 
 /*
  * Course records. Every course of a ranked daily keeps a board of its own for good: Hot Lap's tracks, Marble
- * Run's courses, Lander's caves and Swoop's hills (the table and the routes still say "track", from when Hot
- * Lap's were the only ones). On its day a course is the Daily, and its runs are the day's board (store.ts),
- * which closes at midnight with the day's places, points and tickets. After that the course stays open: a run
- * on it comes here, and the course's board, its All time board, is its day's runs and every run since, each
- * player's best.
+ * Run's courses, Lander's caves, Swoop's hills and Wobble Run's gauntlets (the table and the routes still say
+ * "track", from when Hot Lap's were the only ones). On its day a course is the Daily, and its runs are the
+ * day's board (store.ts), which closes at midnight with the day's places, points and tickets. After that the
+ * course stays open: a run on it comes here, and the course's board, its All time board, is its day's runs and
+ * every run since, each player's best.
  * Nothing here feeds the day's board, the standings, events or the day's tickets, and nothing that reads those
  * reads this. A Hot Lap track's record is in Hot Lap's record book too (courseRecords.ts), and taking any
  * course's record after its day pays a few tickets, once (trackLapsRoutes.ts).
  *
  * Hot Lap's tracks are the plan's (the site's dailyPlan.ts; the API has its blue cars in hotlapPace.ts): track
  * n is day n's, and past the plan's end the days go round again, so day d drives track ((d − 1) % tracks) + 1.
- * Marble Run's courses, Lander's caves and Swoop's hills are numbered by their day, 1 on the first, and never
- * come round again: the plan's layouts may, but each day's is a course of its own (the site's daily.ts
- * courseNumber, caveNumber and hillsNumber).
+ * Marble Run's courses, Lander's caves, Swoop's hills and Wobble Run's gauntlets are numbered by their day, 1 on
+ * the first, and never come round again: the plan's layouts may, but each day's is a course of its own (each
+ * game's daily.ts on the site numbers them: courseNumber, caveNumber, hillsNumber and Wobble Run's).
  */
 
 /** How a game numbers its courses, and the fastest run on one it believes, as a share of the blue run's time. */
 type CoursePlan = { firstDay: string; pace: readonly number[]; repeats: boolean; floor: number }
+
+/**
+ * The fastest Wobble Run a board believes, a gauntlet's own on its day (routes.ts) and after it (PLANS), as a
+ * share of the blue bean's raced time. The plan's search, which takes every gold line, launch pad, dive and
+ * fling, keeps a day only when it finishes in 48 to 60% of the blue bean's time (the site's wobblerun engine
+ * plan.ts, FAST_LEAST and FAST_MOST; the lowest planned day is #101, at 0.480), and this stays at most 85% of
+ * FAST_LEAST (0.408), so a line the search missed is still believed. Check it again whenever the plan, its
+ * pace or FAST_LEAST changes.
+ */
+export const WOBBLERUN_FLOOR = 0.4
 
 const PLANS: Partial<Record<GameSlug, CoursePlan>> = {
   // The best lap so far is about 85% of the blue car's.
@@ -36,6 +47,7 @@ const PLANS: Partial<Record<GameSlug, CoursePlan>> = {
   marblerun: { firstDay: MARBLERUN_FIRST_DAY, pace: MARBLERUN_PACE_MS, repeats: false, floor: 0.6 },
   lander: { firstDay: LANDER_FIRST_DAY, pace: LANDER_PACE_MS, repeats: false, floor: 0.45 },
   swoop: { firstDay: SWOOP_FIRST_DAY, pace: SWOOP_PACE_MS, repeats: false, floor: 0.3 },
+  wobblerun: { firstDay: WOBBLERUN_FIRST_DAY, pace: WOBBLERUN_PACE_MS, repeats: false, floor: WOBBLERUN_FLOOR },
 }
 
 /** The games whose courses keep boards of their own. */

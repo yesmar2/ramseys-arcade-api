@@ -24,10 +24,18 @@ import { trackBoard, trackState } from './trackLaps.js'
  * Swoop's courses have theirs the same way: a course's #1 on its board. Its path is where the bird was ten
  * times a second from the go, x, y and whether it was diving (1) or not (0), with the line's moment last. A
  * bird is never put back anywhere, so it never jumps.
+ *
+ * Wobble Run's gauntlets have theirs the same way: a gauntlet's #1 on its board. Its path is where the bean was
+ * ten times a second from the go, x, y (height), z (along the course) and how it was (0 on its feet, 1 in the
+ * air or diving, 2 respawning, 3 stunned), with the crown's moment last, splats and all: a splat puts it back
+ * at a checkpoint.
  */
 
-/** The games whose #1 races as a ghost: Hot Lap's tracks, Marble Run's courses, Lander's caves and Swoop's hills. */
-export const GHOST_GAMES: ReadonlySet<GameSlug> = new Set<GameSlug>(['hotlap', 'marblerun', 'lander', 'swoop'])
+/**
+ * The games whose #1 races as a ghost: Hot Lap's tracks, Marble Run's courses, Lander's caves, Swoop's hills and
+ * Wobble Run's gauntlets.
+ */
+export const GHOST_GAMES: ReadonlySet<GameSlug> = new Set<GameSlug>(['hotlap', 'marblerun', 'lander', 'swoop', 'wobblerun'])
 
 /** Where a game's track, course or cave stands today (trackLaps.ts trackState). */
 export function ghostState(game: GameSlug, n: number, now = Date.now()): 'past' | 'today' | 'ahead' | 'none' {
@@ -57,6 +65,16 @@ const SHIP_STEP = 8
 const MOST_CRASHES = 200
 /** Metres a bird can go between two samples: a tenth of a second at far more than it ever flies (about 100 m/s at best, on a streak). */
 const BIRD_STEP = 15
+/** Metres a bean can go between two samples: a tenth of a second at far more than it ever moves, launch pads and flings included. */
+const BEAN_STEP = 8
+/** Farther than that is a respawn at a checkpoint, after a splat: a run with more than this many isn't one. */
+const MOST_RESPAWNS = 100
+/** Where a gauntlet can be, in metres: across it (x), up and down (y) and along it from the start pad (z). */
+const GAUNTLET_X = 60
+const GAUNTLET_Y_MIN = -40
+const GAUNTLET_Y_MAX = 80
+const GAUNTLET_Z_MIN = -20
+const GAUNTLET_Z_MAX = 900
 
 export type LapGhost = { name: string; timeMs: number; splits: number[]; path: number[]; at: number; skin?: string }
 
@@ -65,6 +83,7 @@ export function ghostProblem(game: GameSlug, timeMs: number, splits: unknown, pa
   if (game === 'marblerun') return runProblem(timeMs, splits, path)
   if (game === 'lander') return flightProblem(timeMs, splits, path)
   if (game === 'swoop') return swoopProblem(timeMs, splits, path)
+  if (game === 'wobblerun') return wobblerunProblem(timeMs, splits, path)
   const time = timeMs / 1000
   if (!Array.isArray(splits) || splits.length !== 3 || !splits.every((s) => typeof s === 'number' && Number.isFinite(s))) {
     return 'splits'
@@ -189,6 +208,49 @@ function swoopProblem(timeMs: number, splits: unknown, path: unknown): string | 
     if (k > 0 && Math.hypot(p[k * 3]! - p[k * 3 - 3]!, p[k * 3 + 1]! - p[k * 3 - 2]!) > BIRD_STEP) return 'step'
   }
   return null
+}
+
+/**
+ * Why a Wobble Run's splits and path can't be a run of `timeMs`, or null if they can. Its splits are the moment
+ * it crossed each checkpoint's flag line and touched the crown, in order; its path is ten samples a second from
+ * the go of x, y, z and how the bean was (0 to 3), and the crown's moment last.
+ */
+function wobblerunProblem(timeMs: number, splits: unknown, path: unknown): string | null {
+  const time = timeMs / 1000
+  if (
+    !Array.isArray(splits) ||
+    splits.length < 1 ||
+    splits.length > MOST_LINES ||
+    !splits.every((s) => typeof s === 'number' && Number.isFinite(s))
+  ) {
+    return 'splits'
+  }
+  const at = splits as number[]
+  if (!(at[0]! > 0) || at.some((s, k) => k > 0 && s < at[k - 1]!) || Math.abs(at.at(-1)! - time) > 0.05) return 'splits'
+  if (!Array.isArray(path) || path.length % 4 !== 0 || !path.every((v) => typeof v === 'number' && Number.isFinite(v))) {
+    return 'path'
+  }
+  const samples = path.length / 4
+  if (samples > MOST_SAMPLES || samples < Math.floor(time * GHOST_RATE) || samples > Math.ceil(time * GHOST_RATE) + 2) {
+    return 'length'
+  }
+  const p = path as number[]
+  let respawns = 0
+  for (let k = 0; k < samples; k++) {
+    const [x, y, z, state] = [p[k * 4]!, p[k * 4 + 1]!, p[k * 4 + 2]!, p[k * 4 + 3]!]
+    if (
+      Math.abs(x) > GAUNTLET_X ||
+      y < GAUNTLET_Y_MIN ||
+      y > GAUNTLET_Y_MAX ||
+      z < GAUNTLET_Z_MIN ||
+      z > GAUNTLET_Z_MAX ||
+      (state !== 0 && state !== 1 && state !== 2 && state !== 3)
+    ) {
+      return 'range'
+    }
+    if (k > 0 && Math.hypot(x - p[k * 4 - 4]!, y - p[k * 4 - 3]!, z - p[k * 4 - 2]!) > BEAN_STEP) respawns += 1
+  }
+  return respawns > MOST_RESPAWNS ? 'step' : null
 }
 
 /** The track's (or course's) #1, and their lap's path if it came with one. Null while nobody has a lap on it. */

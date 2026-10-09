@@ -1,7 +1,8 @@
-// Written by the site's scripts/course-names.mjs from its plans (src/games/hotlap/dailyPlan.ts and
-// src/games/acechase/dailyPlan.ts): each planned Hot Lap track's name and each planned Ace Chase hole's, by
-// day from each game's first, for the record books (records.ts), where each track's and each hole's record
-// is named after it. The plan scripts write it again whenever they write a plan. Don't edit it by hand.
+// Written by the site's scripts/course-names.mjs from its plans (src/games/hotlap/dailyPlan.ts,
+// src/games/acechase/dailyPlan.ts and src/games/wobblerun/dailyPlan.ts): each planned Hot Lap track's name, each
+// planned Ace Chase hole's and each planned Wobble Run gauntlet's, by day from each game's first, for the record
+// books (records.ts), where each track's and each hole's record is named after it. The plan scripts write it
+// again whenever they write a plan. Don't edit it by hand.
 
 /** Hot Lap's tracks, the first day's (hotlapPace.ts HOTLAP_FIRST_DAY) first. */
 export const HOTLAP_TRACK_NAMES: readonly string[] = [
@@ -73,4 +74,41 @@ export const ACECHASE_HOLE_NAMES: readonly string[] = [
   'Tranquility Pond', 'Hailstone Mesa', 'Orchard Hillocks', 'Bramble Flipper', 'Foxglove Humps', 'Meadow Dogleg',
   'Primrose Gaps', 'Apollo Terrace', 'Willow Dunes', 'Primrose Lagoon', 'Foxglove Knolls', 'Foxglove Dunes',
   'Frost Steps', 'Hollyhock Plateau', 'Willow Neck', 'Frost Portcullis', 'Meadow Bend', 'Clover Flipper',
+]
+
+/** Today's Gauntlet #1 was this day's (wobblerunPace.ts WOBBLERUN_FIRST_DAY). */
+export const WOBBLERUN_FIRST_DAY = '2026-10-09'
+
+/** Wobble Run's gauntlets, the first day's first. */
+export const WOBBLERUN_GAUNTLET_NAMES: readonly string[] = [
+  'Candy Scramble', 'Fizzy Canyon', 'Candy Rush', 'Wobbly Shuffle', 'Taffy Speedway', 'Sherbet Gauntlet',
+  'Marshmallow Skedaddle', 'Marshmallow Gauntlet', 'Noodle Speedway', 'Sherbet Canyon', 'Fizzy Speedway', 'Puffball Dash',
+  'Noodle Run', 'Gummy Dash', 'Jelly Getaway', 'Candy Skedaddle', 'Bouncy Shuffle', 'Taffy Dash',
+  'Jelly Canyon', 'Wobbly Dash', 'Candy Shuffle', 'Sherbet Scramble', 'Bouncy Getaway', 'Bubble Run',
+  'Sprinkle Express', 'Jelly Causeway', 'Bubble Dash', 'Noodle Shuffle', 'Sprinkle Canyon', 'Gummy Gauntlet',
+  'Puffball Gauntlet', 'Wobbly Scramble', 'Marshmallow Speedway', 'Lollipop Canyon', 'Wobbly Causeway', 'Gummy Express',
+  'Lollipop Getaway', 'Lollipop Scramble', 'Sprinkle Shuffle', 'Sherbet Shuffle', 'Fizzy Shuffle', 'Fizzy Gauntlet',
+  'Gummy Shuffle', 'Fizzy Dash', 'Puffball Run', 'Gummy Causeway', 'Puffball Express', 'Taffy Canyon',
+  'Gummy Rush', 'Taffy Gauntlet', 'Marshmallow Rush', 'Bouncy Rush', 'Candy Canyon', 'Puffball Getaway',
+  'Noodle Gauntlet', 'Lollipop Rush', 'Taffy Express', 'Jelly Shuffle', 'Sprinkle Scramble', 'Sprinkle Run',
+  'Bubble Causeway', 'Puffball Scramble', 'Lollipop Speedway', 'Puffball Canyon', 'Lollipop Gauntlet', 'Jelly Rush',
+  'Sherbet Speedway', 'Bouncy Run', 'Jelly Gauntlet', 'Candy Getaway', 'Sprinkle Rush', 'Bouncy Speedway',
+  'Gummy Run', 'Jelly Scramble', 'Fizzy Skedaddle', 'Taffy Getaway', 'Gummy Getaway', 'Marshmallow Express',
+  'Marshmallow Getaway', 'Sherbet Express', 'Gummy Scramble', 'Wobbly Canyon', 'Bubble Skedaddle', 'Puffball Rush',
+  'Lollipop Dash', 'Bubble Shuffle', 'Noodle Rush', 'Bubble Getaway', 'Marshmallow Run', 'Wobbly Speedway',
+  'Fizzy Rush', 'Bouncy Causeway', 'Wobbly Getaway', 'Lollipop Shuffle', 'Jelly Dash', 'Taffy Skedaddle',
+  'Fizzy Scramble', 'Wobbly Rush', 'Sherbet Run', 'Gummy Speedway', 'Bouncy Skedaddle', 'Noodle Skedaddle',
+  'Taffy Run', 'Gummy Canyon', 'Bubble Express', 'Puffball Shuffle', 'Taffy Scramble', 'Fizzy Getaway',
+  'Lollipop Run', 'Jelly Run', 'Gummy Skedaddle', 'Lollipop Express', 'Noodle Dash', 'Bouncy Scramble',
+  'Wobbly Gauntlet', 'Bubble Gauntlet', 'Wobbly Skedaddle', 'Fizzy Causeway', 'Marshmallow Dash', 'Puffball Causeway',
+  'Sprinkle Speedway', 'Noodle Canyon', 'Puffball Skedaddle', 'Marshmallow Scramble', 'Sherbet Dash', 'Candy Causeway',
+  'Noodle Causeway', 'Lollipop Skedaddle', 'Bubble Canyon', 'Wobbly Express', 'Candy Scramble', 'Wobbly Run',
+  'Candy Dash', 'Bouncy Dash', 'Taffy Speedway', 'Sherbet Gauntlet', 'Noodle Getaway', 'Taffy Rush',
+  'Sherbet Canyon', 'Sherbet Rush', 'Marshmallow Canyon', 'Sherbet Causeway', 'Fizzy Run', 'Fizzy Express',
+  'Jelly Skedaddle', 'Marshmallow Shuffle', 'Sprinkle Causeway', 'Jelly Speedway', 'Puffball Speedway', 'Noodle Express',
+  'Candy Run', 'Candy Speedway', 'Noodle Scramble', 'Noodle Run', 'Taffy Causeway', 'Wobbly Causeway',
+  'Sherbet Getaway', 'Gummy Dash', 'Sprinkle Express', 'Puffball Dash', 'Candy Gauntlet', 'Bubble Rush',
+  'Bubble Scramble', 'Bouncy Shuffle', 'Bubble Run', 'Jelly Canyon', 'Sprinkle Shuffle', 'Lollipop Getaway',
+  'Sprinkle Gauntlet', 'Sherbet Skedaddle', 'Marshmallow Skedaddle', 'Candy Express', 'Taffy Shuffle', 'Fizzy Dash',
+  'Wobbly Dash', 'Taffy Gauntlet', 'Jelly Express', 'Jelly Causeway', 'Sprinkle Canyon', 'Bouncy Rush',
 ]

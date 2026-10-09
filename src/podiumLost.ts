@@ -17,15 +17,16 @@ import { scoreFigure } from './words.js'
  * Once a day for each daily, however often the place is lost: a day of trading third isn't a stream of alerts.
  */
 
-export type RacingDaily = 'hotlap' | 'marblerun' | 'lander' | 'swoop'
+export type RacingDaily = 'hotlap' | 'marblerun' | 'lander' | 'swoop' | 'wobblerun'
 
-export const RACING_DAILIES: ReadonlySet<string> = new Set<RacingDaily>(['hotlap', 'marblerun', 'lander', 'swoop'])
+export const RACING_DAILIES: ReadonlySet<string> = new Set<RacingDaily>(['hotlap', 'marblerun', 'lander', 'swoop', 'wobblerun'])
 
 const WHAT: Record<RacingDaily, { daily: string; run: string }> = {
   hotlap: { daily: 'Today’s Track', run: 'lap' },
   marblerun: { daily: 'Today’s Course', run: 'run' },
   lander: { daily: 'Today’s Cave', run: 'run' },
   swoop: { daily: 'Today’s Hills', run: 'run' },
+  wobblerun: { daily: 'Today’s Gauntlet', run: 'run' },
 }
 
 const PODIUM = DAY_TOP_TICKETS.length

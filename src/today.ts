@@ -15,13 +15,15 @@ import { awardTickets } from './tickets.js'
  * board), Find the Bug's Today's Wanted (the day's first run, on its board) and, from the days they join,
  * Half Full's Today's Pour (the day's first run, on its board; halffull/launch.ts HALFFULL_TODAY_FROM),
  * Marble Run's Today's Course (a run on the day's board; MARBLERUN_TODAY_FROM below), Lander's Today's
- * Cave (a run on the day's board; LANDER_TODAY_FROM below) and Swoop's Today's Hills (a run on the day's
- * board; SWOOP_TODAY_FROM below). Until 2026-10-05 a day was kept once any three of that day's dailies were
- * done (TODAY_KEEP), so every day from before the pour joined still needs all three it had. Since 2026-10-06
- * the card is the four races alone, and any two of them keep the day (RACES_KEEP): the hole, the Wanted and
- * the pour came off it (PUZZLES_UNTIL), just for fun, under it on the site as "Also today". A day with more
- * on the card than keep it, and every one of them done, is a Full ticket. todayRule says which dailies are on
- * a day's card and how many keep it; nothing else decides a day. A day is the boards' day, New York time.
+ * Cave (a run on the day's board; LANDER_TODAY_FROM below), Swoop's Today's Hills (a run on the day's board;
+ * SWOOP_TODAY_FROM below) and Wobble Run's Today's Gauntlet (a run on the day's board; WOBBLERUN_TODAY_FROM
+ * below). Until 2026-10-05 a day was kept once any three of that day's dailies were done (TODAY_KEEP), so
+ * every day from before the pour joined still needs all three it had. Since 2026-10-06 the card is the races
+ * alone (four, and five from 2026-10-09, when the gauntlet joined), and any two of them keep the day
+ * (RACES_KEEP): the hole, the Wanted and the pour came off it (PUZZLES_UNTIL), just for fun, under it on the
+ * site as "Also today". A day with more on the card than keep it, and every one of them done, is a Full
+ * ticket. todayRule says which dailies are on a day's card and how many keep it; nothing else decides a day.
+ * A day is the boards' day, New York time.
  * Today's event, the One Shot and the bug hunt are the card's bonus punches and don't count.
  *
  * The streak earns looks at milestones, once an account however often it breaks: tickets, the Today pin
@@ -30,7 +32,7 @@ import { awardTickets } from './tickets.js'
  * milestones (its lib/today.ts).
  */
 
-export type TodayKey = 'hole' | 'track' | 'wanted' | 'pour' | 'course' | 'cave' | 'hills' | 'plates'
+export type TodayKey = 'hole' | 'track' | 'wanted' | 'pour' | 'course' | 'cave' | 'hills' | 'gauntlet' | 'plates'
 
 /** How many of a day's dailies kept it, before RACES_ONLY_FROM. A day with this many or fewer on the card needs every one. */
 export const TODAY_KEEP = 3
@@ -72,6 +74,13 @@ export const LANDER_TODAY_FROM: string | null = '2026-10-01'
 export const SWOOP_TODAY_FROM: string | null = '2026-10-06'
 
 /**
+ * The first day Wobble Run's Today's Gauntlet is on the card: the day the game comes, as Swoop's was (the site's
+ * games/wobblerun/daily.ts TODAY_FROM says the same). It's the fifth race, and the rule stays: any two keep
+ * the day, and all five are a Full ticket.
+ */
+export const WOBBLERUN_TODAY_FROM: string | null = '2026-10-09'
+
+/**
  * The Today set's dailies, in the card's order, the first board day (YYYYMMDD) each is on the card (0 for
  * from the start, null for not yet) and, for one that came off it, the last. The order is the site's (its
  * lib/today.ts): the races, then the three puzzles, just for fun (Ramsey, 2026-10-04). The hole, the track and
@@ -82,6 +91,7 @@ export const TODAY_DAILIES: readonly { key: TodayKey; game: GameSlug; from: numb
   { key: 'course', game: 'marblerun', from: MARBLERUN_TODAY_FROM ? keyOf(MARBLERUN_TODAY_FROM) : null },
   { key: 'cave', game: 'lander', from: LANDER_TODAY_FROM ? keyOf(LANDER_TODAY_FROM) : null },
   { key: 'hills', game: 'swoop', from: SWOOP_TODAY_FROM ? keyOf(SWOOP_TODAY_FROM) : null },
+  { key: 'gauntlet', game: 'wobblerun', from: WOBBLERUN_TODAY_FROM ? keyOf(WOBBLERUN_TODAY_FROM) : null },
   { key: 'hole', game: 'acechase', from: 0, until: PUZZLES_UNTIL },
   { key: 'wanted', game: 'findbug', from: 0, until: PUZZLES_UNTIL },
   { key: 'pour', game: 'halffull', from: HALFFULL_TODAY_FROM ? keyOf(HALFFULL_TODAY_FROM) : null, until: PUZZLES_UNTIL },
@@ -282,6 +292,7 @@ export type TodayState = {
     course: { score: number } | null
     cave: { score: number } | null
     hills: { score: number } | null
+    gauntlet: { score: number } | null
   }
   /** Today's card (todayRule): its dailies in order, how many of them keep the day, and how many there are. */
   live: TodayKey[]
@@ -310,14 +321,14 @@ async function playedDays(accountId: string, now: number): Promise<Record<TodayK
   const fromMs = now - LOOKBACK_DAYS * 86_400_000
   const fromDay = dayOf(boardDateKey(fromMs))
   const tags = (await namesOwnedByAccount(accountId)).map((t) => t.name)
-  const runs = (game: 'hotlap' | 'findbug' | 'halffull' | 'centroid' | 'marblerun' | 'lander' | 'swoop') =>
+  const runs = (game: 'hotlap' | 'findbug' | 'halffull' | 'centroid' | 'marblerun' | 'lander' | 'swoop' | 'wobblerun') =>
     tags.length
       ? db()
           .select({ score: leaderboardScores.score, at: leaderboardScores.at })
           .from(leaderboardScores)
           .where(and(eq(leaderboardScores.game, game), inArray(leaderboardScores.name, tags), gte(leaderboardScores.at, fromMs)))
       : Promise.resolve([] as { score: number; at: number }[])
-  const [holes, laps, finds, pours, courses, caves, flights, plateDays] = await Promise.all([
+  const [holes, laps, finds, pours, courses, caves, flights, gauntlets, plateDays] = await Promise.all([
     db()
       .select({ day: dailyHoleResults.day, tries: dailyHoleResults.tries })
       .from(dailyHoleResults)
@@ -328,6 +339,7 @@ async function playedDays(accountId: string, now: number): Promise<Record<TodayK
     runs('marblerun'),
     runs('lander'),
     runs('swoop'),
+    runs('wobblerun'),
     runs('centroid'),
   ])
   const played: Record<TodayKey, Map<number, number>> = {
@@ -338,6 +350,7 @@ async function playedDays(accountId: string, now: number): Promise<Record<TodayK
     course: new Map(),
     cave: new Map(),
     hills: new Map(),
+    gauntlet: new Map(),
     plates: new Map(),
   }
   for (const h of holes) played.hole.set(keyOf(h.day), h.tries)
@@ -383,6 +396,12 @@ async function playedDays(accountId: string, now: number): Promise<Record<TodayK
     if (key < (DAILY_SINCE.swoop ?? 0)) continue
     played.hills.set(key, Math.max(played.hills.get(key) ?? 0, run.score))
   }
+  // A run of the day's gauntlet, the same way, from gauntlet #1.
+  for (const run of gauntlets) {
+    const key = boardDateKey(run.at)
+    if (key < (DAILY_SINCE.wobblerun ?? 0)) continue
+    played.gauntlet.set(key, Math.max(played.gauntlet.get(key) ?? 0, run.score))
+  }
   return played
 }
 
@@ -402,6 +421,7 @@ export async function todayState(accountId: string, now = Date.now()): Promise<T
   const course = played.course.get(today)
   const cave = played.cave.get(today)
   const hills = played.hills.get(today)
+  const gauntlet = played.gauntlet.get(today)
   const plates = played.plates.get(today)
   return {
     day: dayOf(today),
@@ -413,6 +433,7 @@ export async function todayState(accountId: string, now = Date.now()): Promise<T
       course: played.course.has(today),
       cave: played.cave.has(today),
       hills: played.hills.has(today),
+      gauntlet: played.gauntlet.has(today),
       plates: played.plates.has(today),
     },
     results: {
@@ -423,6 +444,7 @@ export async function todayState(accountId: string, now = Date.now()): Promise<T
       course: course != null ? { score: course } : null,
       cave: cave != null ? { score: cave } : null,
       hills: hills != null ? { score: hills } : null,
+      gauntlet: gauntlet != null ? { score: gauntlet } : null,
       plates: plates != null ? { score: plates } : null,
     },
     live,

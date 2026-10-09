@@ -25,6 +25,11 @@ export type PlanLimits = {
   doubleElimination: boolean
   /** A different game per bracket round. */
   multiGameRounds: boolean
+  /**
+   * An event on any past course of a racing daily. Without it, today's course or one from the last week (the
+   * past days open to everyone, archive.ts); with it, any course since the game began.
+   */
+  anyCourse: boolean
 }
 
 /**
@@ -43,6 +48,7 @@ export const PLAN_LIMITS: Record<AccountPlan, PlanLimits> = {
     maxDraw: 8,
     doubleElimination: false,
     multiGameRounds: false,
+    anyCourse: false,
   },
   plus: {
     activeEvents: 5,
@@ -51,6 +57,7 @@ export const PLAN_LIMITS: Record<AccountPlan, PlanLimits> = {
     maxDraw: 64,
     doubleElimination: true,
     multiGameRounds: true,
+    anyCourse: true,
   },
 }
 
@@ -70,6 +77,7 @@ export type PlanLimitKind =
   | 'maxDraw'
   | 'doubleElimination'
   | 'multiGameRounds'
+  | 'anyCourse'
 
 export type PlanError = Error & {
   status: number

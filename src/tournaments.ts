@@ -4,7 +4,10 @@ import { db } from './db/client.js'
 import { tournamentPlayers, tournamentScores, tournaments as tournamentsTable } from './db/schema.js'
 import { MULTI_INSTANCE, noteFeedId, onChange, onRewrite, pollNow, publish, withLease } from './feed.js'
 import { fileMatchAlerts } from './matchAlerts.js'
+import { inArchive } from './archive.js'
 import { planDenied, planLimits, type AccountPlan } from './plans.js'
+import { TIME_SCORE_BASE } from './scoreLimits.js'
+import { fastestBelievable, TRACK_GAMES, trackDayIso, trackState } from './trackLaps.js'
 import {
   armMatchClocks,
   bracketDrawSize,
@@ -173,6 +176,13 @@ export type Tournament = {
   inviteCode?: string | null
   /** The host has let everyone holding a seat invite, not only themselves. */
   membersInvite?: boolean
+  /**
+   * A racing daily's event is raced on one course, this one, for its whole length (Ramsey, 2026-10-09: "maybe
+   * for plus users we can allow them to choose from previous tracks and stuff?", then "go with a"): Hot Lap's
+   * track, Marble Run's course, Lander's cave, Swoop's hills or Wobble Run's gauntlet, numbered as its boards
+   * number them (trackLaps.ts). A run counts only on it, so every time in the event is on the same course.
+   */
+  course?: number
   players: TournamentPlayer[]
   scores: TournamentScore[]
   bracket?: TournamentBracket
@@ -1700,6 +1710,7 @@ function publicTournament(
     podium: publicPodium(normalized, now, bracket ? undefined : standings),
     // A live bracket has no standings to show, so the card shows who is on.
     openMatches: bracket ? openMatchPairs(normalized) : [],
+    course: normalized.course ?? null,
   }
 }
 
@@ -2401,9 +2412,34 @@ export type CreateTournamentInput = {
   /** Bracket only: games per winners round, round 1 first. */
   roundGames?: (string | string[])[]
   kind?: TournamentKind
+  /** A racing daily's event: the course it's raced on (Tournament.course). */
+  course?: number
 }
 
 const MAX_PRIVATE_GAMES = 5
+
+/**
+ * The course a racing daily's event is raced on, checked: an event with one is that game alone, standings not a
+ * bracket, on a course that has been raced (today's, or a past one). A course from the last week is anyone's,
+ * as those past days are; an older one is a Plus host's (PlanLimits.anyCourse). The event is the host's and
+ * their guests', and joining stays free; no public board takes a run from it.
+ */
+function eventCourse(games: GameSlug[], kind: TournamentKind, course: number | undefined, plan: AccountPlan, now: number) {
+  const game = games.find((g) => TRACK_GAMES.has(g))
+  if (!game) return undefined
+  if (kind === 'bracket' || games.length !== 1) {
+    throw Object.assign(new Error('A racing daily’s event is that game on its own, on one course'), { status: 400 })
+  }
+  const n = Math.floor(Number(course))
+  const state = trackState(n, now, game)
+  if (state !== 'today' && state !== 'past') {
+    throw Object.assign(new Error('Pick a course that has been raced'), { status: 400, code: 'COURSE_UNKNOWN' })
+  }
+  if (state === 'past' && inArchive(trackDayIso(n, game), now) && !planLimits(plan).anyCourse) {
+    throw planDenied('anyCourse', plan, 'Events on a course more than a week old are a Plus feature')
+  }
+  return n
+}
 
 export async function createTournament(
   input: CreateTournamentInput,
@@ -2490,9 +2526,14 @@ export async function createTournament(
   } else if (games.length < 1 || games.length > MAX_PRIVATE_GAMES) {
     throw Object.assign(new Error('Pick 1–5 games'), { status: 400 })
   }
+  const course = eventCourse(games, kind, input.course, plan, now)
   if (
     !games.every(
-      (g) => isAllowedGame(g) && (EVENT_GAMES as readonly string[]).includes(g) && !RETIRED_GAMES.has(g) && !ON_DECK_GAMES.has(g),
+      (g) =>
+        isAllowedGame(g) &&
+        ((EVENT_GAMES as readonly string[]).includes(g) || (course != null && TRACK_GAMES.has(g))) &&
+        !RETIRED_GAMES.has(g) &&
+        !ON_DECK_GAMES.has(g),
     )
   ) {
     throw Object.assign(new Error('One or more games are not available for events'), { status: 400 })
@@ -2582,9 +2623,11 @@ export async function createTournament(
                 .join(' → ')}.`
             : `${gameLabel(games[0]!)}.`
         }`
-      : games.length > 1
-        ? `Private event: ${games.map(gameLabel).join(', ')}. Every game counts — best all-round wins.`
-        : defaultCommunityBlurb(games, maxAttempts))
+      : course != null
+        ? `${gameLabel(games[0]!)} #${course}: the fastest time on it wins.`
+        : games.length > 1
+          ? `Private event: ${games.map(gameLabel).join(', ')}. Every game counts — best all-round wins.`
+          : defaultCommunityBlurb(games, maxAttempts))
   const rules: TournamentRules = {
     maxAttempts: maxAttempts > 0 ? maxAttempts : 0,
     maxPlayers: maxPlayers > 0 ? maxPlayers : 0,
@@ -2606,6 +2649,7 @@ export async function createTournament(
     format,
     kind,
     rules,
+    ...(course != null ? { course } : {}),
     createdBy: creator,
     visibility: 'private',
     inviteCode,
@@ -2863,8 +2907,10 @@ export async function submitTournamentScore(
   access: TournamentAccessOpts = {},
   /** The try this score's run was opened for, when it was opened as one (startTournamentTry). */
   tryRowId: string | null = null,
+  /** A racing daily's run: the course it was on. */
+  course: number | null = null,
 ) {
-  return withEventLock(id, () => submitTournamentScoreNow(id, name, game, score, now, access, tryRowId))
+  return withEventLock(id, () => submitTournamentScoreNow(id, name, game, score, now, access, tryRowId, course))
 }
 
 async function submitTournamentScoreNow(
@@ -2875,6 +2921,7 @@ async function submitTournamentScoreNow(
   now: number,
   access: TournamentAccessOpts,
   tryRowId: string | null,
+  course: number | null = null,
 ): Promise<{
   tournament: Awaited<ReturnType<typeof getTournamentDetail>>
   accepted: boolean
@@ -2901,6 +2948,15 @@ async function submitTournamentScoreNow(
   }
   if (!Number.isFinite(score) || score <= 0) {
     throw Object.assign(new Error('Invalid score'), { status: 400 })
+  }
+  // A racing daily's event takes runs on its course alone, and no time quicker than that course allows.
+  if (t.course != null) {
+    if (course !== t.course) {
+      throw Object.assign(new Error('That run was on another course'), { status: 409, code: 'WRONG_COURSE' })
+    }
+    if (score >= TIME_SCORE_BASE || TIME_SCORE_BASE - score < fastestBelievable(t.course, gameSlug)) {
+      throw Object.assign(new Error('That time is quicker than the course allows'), { status: 400, code: 'SCORE_IMPLAUSIBLE' })
+    }
   }
 
   const cleaned = name.trim().slice(0, 12).toUpperCase() || 'PLAYER'

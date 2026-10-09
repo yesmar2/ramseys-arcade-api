@@ -46,6 +46,8 @@ const scoreSchema = z.object({
   invite: z.string().min(4).max(16).optional(),
   /** Optional until REQUIRE_RUN_TOKEN — older clients do not send one. */
   runId: z.string().min(1).max(64).optional(),
+  /** A racing daily's run: the course it was on, for an event raced on one. */
+  course: z.number().int().positive().optional(),
 })
 
 const trySchema = z.object({
@@ -97,6 +99,8 @@ const createSchema = z.object({
     .min(1)
     .max(6)
     .optional(),
+  /** A racing daily's event: the course it's raced on. */
+  course: z.number().int().positive().optional(),
 })
 
 function claimError(err: unknown, res: import('express').Response) {
@@ -153,6 +157,7 @@ tournamentsRouter.post('/', async (req, res) => {
       elimination: parsed.data.elimination,
       roundGames: parsed.data.roundGames,
       kind: parsed.data.kind,
+      course: parsed.data.course,
     }
     const tournament = await createTournament(input, {
       accountId: account.id,
@@ -421,6 +426,7 @@ tournamentsRouter.post('/:id/scores', async (req, res) => {
       Date.now(),
       { inviteCode: parsed.data.invite, accountId: account.id },
       tryRowId,
+      parsed.data.course ?? null,
     )
     // A run in the day's Daily pays its tickets once a day.
     const tickets = req.params.id.startsWith('daily-')

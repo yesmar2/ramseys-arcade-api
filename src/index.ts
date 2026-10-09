@@ -14,7 +14,7 @@ import { adminEmails } from './admin.js'
 import { recordsRouter } from './recordsRoutes.js'
 import { seedLeaderboards } from './seedBoards.js'
 import { seedRecords } from './seedRecords.js'
-import { ALLOWED_GAMES } from './store.js'
+import { ALLOWED_GAMES, ON_DECK_GAMES } from './store.js'
 import { applySeedRevision } from './seedRevision.js'
 import { friendsRouter } from './friendsRoutes.js'
 import { groupsRouter } from './groupsRoutes.js'
@@ -177,6 +177,8 @@ async function main() {
       signIn: { google: Boolean(getGoogleClientId()), discord: discordEnabled(), email: emailCodesEnabled() },
       // The commit running (Render's RENDER_GIT_COMMIT), to tell a finished deploy from one still going.
       commit: process.env.RENDER_GIT_COMMIT?.slice(0, 7) ?? null,
+      // The games held back here (store.ts ON_DECK_GAMES): the live API holds back more than staging.
+      onDeck: [...ON_DECK_GAMES],
       // When match alerts, results and held pushes were last seen to; null until the first sweep.
       sweptAt: lastSweptAt(),
       ...(dbHealth.error ? { error: dbHealth.error } : {}),

@@ -523,12 +523,31 @@ export const isRankedGame = (game: GameSlug) => !UNRANKED_GAMES.has(game)
 export const RETIRED_GAMES: ReadonlySet<GameSlug> = new Set<GameSlug>(['simon', 'spotter'])
 
 /**
+ * Games held back on the live site only, while staging keeps them to try (the web's lib/liveSite.ts): on deck
+ * on the live API, and off its Dailies (today.ts todayRule). Wobble Run (Ramsey, 2026-10-09: "i want to hide
+ * wobble run on production for now").
+ */
+const LIVE_ON_DECK_GAMES: readonly GameSlug[] = ['wobblerun']
+
+/**
  * Games the site is holding back to release after launch, one at a time (the web's onDeck flag): listed
  * nowhere, though their own pages still play. Like a retired game, no new event picks one, and they count
  * toward nobody's standings. Take a game off this list the day the site releases it.
  */
 // Ace Chase is held back (Ramsey, 2026-10-06: "let's hide it for now").
-export const ON_DECK_GAMES: ReadonlySet<GameSlug> = new Set<GameSlug>(['acechase'])
+export const ON_DECK_GAMES: ReadonlySet<GameSlug> = new Set<GameSlug>([
+  'acechase',
+  ...(isLiveApi() ? LIVE_ON_DECK_GAMES : []),
+])
+
+/**
+ * Whether this is the live API, Render's `ramseys-arcade-api`, rather than staging (`ramseys-arcade-api-staging`)
+ * or a laptop. Render names the service in RENDER_SERVICE_NAME. env.ts's dbTarget().isProduction can't tell
+ * them apart, as staging leaves NEON_BRANCH unset.
+ */
+export function isLiveApi(): boolean {
+  return process.env.RENDER_SERVICE_NAME === 'ramseys-arcade-api'
+}
 
 /** Whether a visitor can find a game on the site: neither retired nor on deck (the web's isListedGame). */
 export const isListedGame = (game: GameSlug) => !RETIRED_GAMES.has(game) && !ON_DECK_GAMES.has(game)

@@ -5,7 +5,7 @@ import { HALFFULL_TODAY_FROM } from './halffull/launch.js'
 import { CENTROID_TODAY_FROM } from './centroid/launch.js'
 import { namesOwnedByAccount } from './names.js'
 import { notify, withdrawNotification } from './notifications.js'
-import { DAILY_SINCE, boardDateKey, previousBoardDateKey, type GameSlug } from './store.js'
+import { DAILY_SINCE, boardDateKey, isListedGame, previousBoardDateKey, type GameSlug } from './store.js'
 import { awardTickets } from './tickets.js'
 
 /*
@@ -99,9 +99,15 @@ export const TODAY_DAILIES: readonly { key: TodayKey; game: GameSlug; from: numb
   { key: 'plates', game: 'centroid', from: CENTROID_TODAY_FROM ? keyOf(CENTROID_TODAY_FROM) : null, until: PUZZLES_UNTIL },
 ]
 
-/** A day's card: the dailies on it (live), in order, and how many of them keep the day. */
+/**
+ * A day's card: the dailies on it (live), in order, and how many of them keep the day. A game on deck isn't on
+ * it (store.ts ON_DECK_GAMES; the site's ticket leaves it off the same way), so on the live API Wobble Run's
+ * day neither counts toward keeping a day nor is needed for a Full ticket.
+ */
 export function todayRule(dayKey: number): { live: TodayKey[]; need: number } {
-  const live = TODAY_DAILIES.filter((d) => d.from != null && d.from <= dayKey && (d.until == null || dayKey <= d.until)).map((d) => d.key)
+  const live = TODAY_DAILIES.filter(
+    (d) => d.from != null && d.from <= dayKey && (d.until == null || dayKey <= d.until) && isListedGame(d.game),
+  ).map((d) => d.key)
   return { live, need: Math.min(keepOn(dayKey), live.length) }
 }
 

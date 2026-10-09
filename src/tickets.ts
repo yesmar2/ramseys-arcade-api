@@ -74,6 +74,8 @@ export type TicketReason =
   | 'today'
   /** A season pass level's tickets (seasons.ts). They don't count toward the pass themselves. */
   | 'season'
+  /** Answering Blip's question of the day (poll.ts): one a day, its pick in the detail. */
+  | 'poll'
 
 export type TicketLine = { reason: TicketReason; amount: number }
 
@@ -305,11 +307,12 @@ export async function awardTickets(
   amount: number,
   game: string | null = null,
   now = Date.now(),
+  detail: TicketDetail | null = null,
 ): Promise<{ earned: number; balance: number }> {
   return db().transaction(async (tx) => {
     const added = await tx
       .insert(ticketLedger)
-      .values({ id: ledgerId(now), accountId, amount, reason, ref, game, at: now })
+      .values({ id: ledgerId(now), accountId, amount, reason, ref, game, at: now, detail })
       .onConflictDoNothing()
       .returning({ amount: ticketLedger.amount })
     const earned = added.reduce((sum, row) => sum + row.amount, 0)

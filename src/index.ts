@@ -26,6 +26,7 @@ import { bugHuntRouter } from './bugHuntRoutes.js'
 import { clientErrorsRouter } from './clientErrorsRoutes.js'
 import { feedbackRouter } from './feedbackRoutes.js'
 import { ticketsRouter } from './ticketsRoutes.js'
+import { pollRouter } from './pollRoutes.js'
 import { tracksRouter } from './trackLapsRoutes.js'
 import { courseBestsRouter } from './courseBests.js'
 import { holesRouter } from './holesRoutes.js'
@@ -206,6 +207,7 @@ async function main() {
   app.use('/client-errors', clientErrorsRouter)
   app.use('/feedback', feedbackRouter)
   app.use('/tickets', ticketsRouter)
+  app.use('/poll', pollRouter)
   app.use('/tracks', tracksRouter)
   app.use('/course-bests', courseBestsRouter)
   app.use('/holes', holesRouter)

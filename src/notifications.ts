@@ -65,6 +65,8 @@ export type NotificationMeta = {
   /** An event finished below first: where, and out of how many. */
   place?: number
   field?: number
+  /** A bracket's lobby closed a week on without filling: there's no board to see, only the event. */
+  unfilled?: boolean
 }
 
 /** What a list hands the app on top of what is stored: the actor's avatar, a live request to answer. */

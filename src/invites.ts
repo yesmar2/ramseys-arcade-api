@@ -13,6 +13,7 @@ import {
   getTournament,
   isTournamentRosterFull,
   joinTournament,
+  tournamentStatus,
 } from './tournaments.js'
 
 const INVITE_TTL_MS = 14 * 24 * 60 * 60 * 1000
@@ -352,7 +353,8 @@ export async function listPendingInvites(opts: {
     if (await alreadyOnTarget(row.kind, row.targetId, row.toName)) continue
     if (row.kind === 'tournament') {
       const t = await getTournament(row.targetId)
-      if (!t || isTournamentRosterFull(t)) {
+      // Full, or over (a bracket's lobby closes unfilled a week on): there's nothing left to accept.
+      if (!t || isTournamentRosterFull(t) || tournamentStatus(t, now) === 'ended') {
         await revokePendingTournamentInvites(row.targetId)
         continue
       }

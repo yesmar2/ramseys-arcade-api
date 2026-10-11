@@ -223,11 +223,11 @@ export const FORMAT_LABELS: Record<TournamentFormat, string> = {
 const MAX_COMMUNITY_DURATION_HOURS = 168
 const MIN_COMMUNITY_DURATION_HOURS = 1
 /*
- * An event that runs until everyone finishes still ends this long after it starts, the longest a timed one
- * runs: one open seat, or one guest who never plays, would otherwise keep it, and its host's event slot,
- * going for ever.
+ * An event that waits on its players still stops this long after it starts, the longest a timed one runs:
+ * one that runs until everyone finishes, and a bracket's lobby that never fills (lobbyClosesAt). One open
+ * seat, or one guest who never plays, would otherwise keep it, and its host's event slot, going for ever.
  */
-const UNTIL_DONE_MAX_MS = MAX_COMMUNITY_DURATION_HOURS * 3_600_000
+const WAITING_MAX_MS = MAX_COMMUNITY_DURATION_HOURS * 3_600_000
 
 /**
  * Place points for one game inside an event.
@@ -434,13 +434,23 @@ function normalizeTournamentUncached(t: Tournament): Tournament {
 }
 
 /**
- * The end of an event that runs until everyone finishes: UNTIL_DONE_MAX_MS after it starts, or when everyone
+ * The end of an event that runs until everyone finishes: WAITING_MAX_MS after it starts, or when everyone
  * finished if that came first (maybeEndWhenAllFinished). Those made before the cap kept their start as their
  * end, so theirs is worked out here. Any other event's end is the one it has.
  */
 function untilDoneEndsAt(t: Tournament): number {
   if (!t.rules?.unlimitedDuration || resolveKind(t) === 'bracket' || t.endsAt > t.startsAt) return t.endsAt
-  return t.startsAt + UNTIL_DONE_MAX_MS
+  return t.startsAt + WAITING_MAX_MS
+}
+
+/**
+ * When a bracket's lobby closes if its seats aren't all taken: a week after it was made (its start, until the
+ * draw moves it). It closes with no draw and no winner, and its host's event slot is free again. Null once
+ * the bracket is drawn, and for any other event.
+ */
+export function lobbyClosesAt(t: Tournament): number | null {
+  if (resolveKind(t) !== 'bracket' || t.bracket?.lockedAt) return null
+  return t.startsAt + WAITING_MAX_MS
 }
 
 function publicFormatLabel(t: Tournament): string {
@@ -1601,8 +1611,10 @@ function syncBracketClock(t: Tournament, now: number): boolean {
 export function tournamentStatus(t: Tournament, now = Date.now()): TournamentStatus {
   const normalized = normalizeTournament(t)
   if (resolveKind(normalized) === 'bracket') {
-    // Lobby stays open until the roster fills — no overall tournament timer.
-    if (!normalized.bracket?.lockedAt) return 'upcoming'
+    // The lobby stays open until the roster fills, or for a week (lobbyClosesAt). A drawn bracket has no
+    // overall timer, only its rounds'.
+    const closesAt = lobbyClosesAt(normalized)
+    if (closesAt != null) return now > closesAt ? 'ended' : 'upcoming'
     if (bracketHasChampion(normalized)) return 'ended'
     return 'active'
   }
@@ -1703,13 +1715,16 @@ function publicTournament(
   const bracket = resolveKind(normalized) === 'bracket'
   const standings = bracket ? [] : standingsOf(normalized)
   const nextDeadlineAt = bracket ? earliestOpenMatchDeadline(normalized) : null
+  const status = tournamentStatus(normalized, now)
+  const closesAt = lobbyClosesAt(normalized)
   return {
     id: normalized.id,
     title: normalized.title,
     blurb: normalized.blurb,
     games: normalized.games,
     startsAt: normalized.startsAt,
-    endsAt: normalized.endsAt,
+    // A lobby that closed unfilled ended as it closed, for the lists' dates and order.
+    endsAt: status === 'ended' && closesAt != null ? closesAt : normalized.endsAt,
     official: normalized.official,
     cadence: normalized.cadence ?? null,
     format: normalized.format!,
@@ -1719,9 +1734,11 @@ function publicTournament(
     private: isPrivate,
     createdBy: normalized.createdBy ? { accountId: normalized.createdBy.accountId } : null,
     visibility: normalized.visibility ?? 'public',
-    status: tournamentStatus(normalized, now),
+    status,
     playerCount: normalized.players.length,
     nextDeadlineAt,
+    // A bracket still filling closes then; past it, with the status ended, it closed with no draw.
+    lobbyClosesAt: closesAt,
     winner: tournamentWinner(normalized, now, bracket ? undefined : standings),
     podium: publicPodium(normalized, now, bracket ? undefined : standings),
     // A live bracket has no standings to show, so the card shows who is on.
@@ -1760,6 +1777,17 @@ async function awardEndedEventTrophies(store: Store, now: number, only?: string)
     if (awardedEvents.has(raw.id)) continue
     const t = normalizeTournament(raw)
     if (tournamentStatus(t, now) !== 'ended') continue
+    const closedAt = lobbyClosesAt(t)
+    if (closedAt != null) {
+      // A lobby that closed unfilled has no result, only news for the ones who were waiting on it.
+      awardedEvents.add(t.id)
+      if (now - closedAt < RESULT_NEWS_MS) {
+        void tellLobbyClosed(t, now).catch((err: unknown) => {
+          console.warn(`[events] lobby closing for ${t.id} failed:`, err)
+        })
+      }
+      continue
+    }
     const standings = computeStandings(t)
     const winner = tournamentWinner(t, now, resolveKind(t) === 'bracket' ? undefined : standings)
     if (!winner) continue
@@ -1794,6 +1822,31 @@ async function seatAccount(t: Tournament, playerId: string): Promise<string | nu
   if (!seat) return null
   if (seat.accountId) return seat.accountId
   return (await getClaim(seat.name))?.accountId ?? null
+}
+
+/** Tell the host, and everyone who took a seat, that a bracket's lobby closed a week on without filling. */
+async function tellLobbyClosed(t: Tournament, now: number) {
+  const accounts = new Set<string>()
+  if (t.createdBy?.accountId) accounts.add(t.createdBy.accountId)
+  for (const seat of t.players) {
+    const accountId = await seatAccount(t, seat.id)
+    if (accountId) accounts.add(accountId)
+  }
+  const cap = getMaxPlayers(t)
+  const joined = cap == null ? `${t.players.length}` : `${t.players.length} of ${cap}`
+  for (const accountId of accounts) {
+    await notify({
+      accountId,
+      kind: 'event-result',
+      title: `${t.title} didn't fill`,
+      body: `${joined} joined in its week, so it closed with no draw.`,
+      href: `/tournaments/${t.id}`,
+      meta: { eventId: t.id, unfilled: true },
+      digestKey: `event-result:${t.id}`,
+      once: true,
+      now,
+    })
+  }
 }
 
 /**
@@ -2639,9 +2692,10 @@ export async function createTournament(
 
   const inviteCode = generateInviteCode()
   const unlimitedDuration = kind === 'bracket' || durationHours <= 0
-  // A bracket has no clock of its own; until everyone finishes still stops a week on (UNTIL_DONE_MAX_MS).
+  // A bracket has no clock of its own, bar its lobby's week (lobbyClosesAt); until everyone finishes still stops
+  // a week on (WAITING_MAX_MS).
   const endsAt =
-    kind === 'bracket' ? now : unlimitedDuration ? now + UNTIL_DONE_MAX_MS : now + durationHours * 3_600_000
+    kind === 'bracket' ? now : unlimitedDuration ? now + WAITING_MAX_MS : now + durationHours * 3_600_000
   const blurb =
     input.blurb?.trim().slice(0, 280) ||
     (kind === 'bracket'

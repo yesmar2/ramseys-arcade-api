@@ -181,7 +181,19 @@ const TYPICAL_PACE_MS = 53_000
  * search runs its gauntlets 40 to 52% under the blue blip, so platinum asks for most of the gold lines in one
  * run. A run slower than the blue pays the base 3.
  */
-export const RACE_MEDAL_STEP = { hotlap: 0.06, marblerun: 0.12, lander: 0.08, swoop: 0.12, wobblerun: 0.12 } as const
+/*
+ * Lander's step went to 10% and Swoop's to 13% on 2026-10-11, when Ramsey found their platinum "a little too
+ * easy": his best Lander days landed 27 to 28% under the blue ship, his best Swoop days 36 to 38% under the bird.
+ */
+export const RACE_MEDAL_STEP = { hotlap: 0.06, marblerun: 0.12, lander: 0.1, swoop: 0.13, wobblerun: 0.12 } as const
+
+/**
+ * How many steps faster than the blue each medal is, bronze to platinum. Platinum stays three; the others sit
+ * closer under it, so beating the blue alone is no longer bronze (Ramsey, 2026-10-11: "the medals on the
+ * dailies should be closer together in times, bronze is too easy"). The site's raceMedals.ts MEDAL_RUNGS is
+ * the same. A run that beats the blue short of bronze pays the base 3, as a slower one does.
+ */
+export const RACE_MEDAL_RUNGS = [1.2, 1.8, 2.4, 3] as const
 
 /**
  * A racing daily's steps on a day whose blue goes in `pace` ms, `score` turning a time into a board score.
@@ -189,18 +201,20 @@ export const RACE_MEDAL_STEP = { hotlap: 0.06, marblerun: 0.12, lander: 0.08, sw
  * (Ramsey, 2026-10-05: "People won't know what 'it' is"). The same sums as the site's medalTimes.
  */
 function raceSteps(pace: number, step: number, blue: string, score: (ms: number) => number): LadderStep[] {
+  const [bronze, silver, gold, platinum] = RACE_MEDAL_RUNGS
   const pct = (k: number) => Math.round(k * step * 100)
+  const at = (k: number) => score(Math.round(pace * (1 - k * step)))
   return [
-    { at: score(pace) + 1, tickets: 5, label: `beating the ${blue}` },
-    { at: score(pace * (1 - step)), tickets: 8, label: `beating the ${blue} by ${pct(1)}%` },
-    { at: score(pace * (1 - 2 * step)), tickets: 11, label: `beating the ${blue} by ${pct(2)}%` },
-    { at: score(pace * (1 - 3 * step)), tickets: 15, label: `beating the ${blue} by ${pct(3)}%` },
+    { at: at(bronze), tickets: 5, label: `beating the ${blue} by ${pct(bronze)}%` },
+    { at: at(silver), tickets: 8, label: `beating the ${blue} by ${pct(silver)}%` },
+    { at: at(gold), tickets: 11, label: `beating the ${blue} by ${pct(gold)}%` },
+    { at: at(platinum), tickets: 15, label: `beating the ${blue} by ${pct(platinum)}%` },
   ]
 }
 
 /**
- * Hot Lap, on a day whose blue car laps in `paceMs`: slower than it 3, beating it 5, by 6% 8, by 12% 11, by
- * 18% 15. Without a blue car, a lap pays the 3 alone.
+ * Hot Lap, on a day whose blue car laps in `paceMs`: under 7% faster than it 3, by 7% 5, by 11% 8, by 14%
+ * 11, by 18% 15. Without a blue car, a lap pays the 3 alone.
  */
 export function hotlapLadder(paceMs: number | null | undefined): Ladder {
   const base = { base: 3, baseLabel: 'a lap today' }
@@ -239,8 +253,8 @@ const BALL_MIN_MS = 30_000
 const BALL_MAX_MS = 90_000
 
 /**
- * Marble Run, on a day whose blue ball rolls down in `paceMs`: slower than it 3, beating it 5, by 12% 8, by
- * 24% 11, by 36% 15, as Hot Lap pays against its blue car. Without a blue ball, a run pays the 3 alone.
+ * Marble Run, on a day whose blue ball rolls down in `paceMs`: under 14% faster than it 3, by 14% 5, by
+ * 22% 8, by 29% 11, by 36% 15, as Hot Lap pays against its blue car. Without a blue ball, a run pays the 3 alone.
  */
 export function marblerunLadder(paceMs: number | null | undefined): Ladder {
   const base = { base: 3, baseLabel: 'a run today' }
@@ -260,8 +274,8 @@ const SHIP_MIN_MS = 35_000
 const SHIP_MAX_MS = 100_000
 
 /**
- * Lander, on a day whose blue ship lands in `paceMs`: slower than it 3, beating it 5, by 8% 8, by 16% 11, by
- * 24% 15, as Hot Lap pays against its blue car and Marble Run against its blue ball. Without a blue ship, a
+ * Lander, on a day whose blue ship lands in `paceMs`: under 12% faster than it 3, by 12% 5, by 18% 8, by 24%
+ * 11, by 30% 15, as Hot Lap pays against its blue car and Marble Run against its blue ball. Without a blue ship, a
  * run pays the 3 alone.
  */
 export function landerLadder(paceMs: number | null | undefined): Ladder {
@@ -282,8 +296,8 @@ const BIRD_MIN_MS = 50_000
 const BIRD_MAX_MS = 140_000
 
 /**
- * Swoop, on a day whose blue bird crosses the line in `paceMs`: slower than it 3, beating it 5, by 12% 8, by
- * 24% 11, by 36% 15, as the other racing dailies pay against their blues. Without a blue bird, a run pays the
+ * Swoop, on a day whose blue bird crosses the line in `paceMs`: under 16% faster than it 3, by 16% 5,
+ * by 23% 8, by 31% 11, by 39% 15, as the other racing dailies pay against their blues. Without a blue bird, a run pays the
  * 3 alone.
  */
 export function swoopLadder(paceMs: number | null | undefined): Ladder {
@@ -304,8 +318,8 @@ const BEAN_MIN_MS = 50_000
 const BEAN_MAX_MS = 140_000
 
 /**
- * Wobble Run, on a day whose blue blip reaches the star in `paceMs`: slower than it 3, beating it 5, by 12% 8, by
- * 24% 11, by 36% 15, as the other racing dailies pay against their blues. Without a blue blip, a run pays the
+ * Wobble Run, on a day whose blue blip reaches the star in `paceMs`: under 14% faster than it 3, by 14% 5,
+ * by 22% 8, by 29% 11, by 36% 15, as the other racing dailies pay against their blues. Without a blue blip, a run pays the
  * 3 alone.
  */
 export function wobblerunLadder(paceMs: number | null | undefined): Ladder {

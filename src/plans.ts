@@ -30,6 +30,8 @@ export type PlanLimits = {
    * the game began. (The last week's courses stay everyone's to play, archive.ts: only hosting on them is Plus.)
    */
   anyCourse: boolean
+  /** Racing any player's ghost on a racing daily's course, not only the #1's and the next place up's. */
+  anyGhost: boolean
 }
 
 /**
@@ -49,6 +51,7 @@ export const PLAN_LIMITS: Record<AccountPlan, PlanLimits> = {
     doubleElimination: false,
     multiGameRounds: false,
     anyCourse: false,
+    anyGhost: false,
   },
   plus: {
     activeEvents: 5,
@@ -58,6 +61,7 @@ export const PLAN_LIMITS: Record<AccountPlan, PlanLimits> = {
     doubleElimination: true,
     multiGameRounds: true,
     anyCourse: true,
+    anyGhost: true,
   },
 }
 
@@ -78,6 +82,7 @@ export type PlanLimitKind =
   | 'doubleElimination'
   | 'multiGameRounds'
   | 'anyCourse'
+  | 'anyGhost'
 
 export type PlanError = Error & {
   status: number

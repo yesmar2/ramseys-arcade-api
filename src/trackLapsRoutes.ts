@@ -4,9 +4,10 @@ import { z } from 'zod'
 import { ARCHIVED, inArchive } from './archive.js'
 import { accountFromRequest } from './auth.js'
 import { isBanned } from './bans.js'
-import { GHOST_GAMES, GHOST_RATE, ghostFor, ghostProblem, ghostState, keepDayGhost, keepGhost, nextGhostFor } from './lapGhosts.js'
+import { GHOST_GAMES, GHOST_RATE, ghostFor, ghostProblem, ghostState, keepDayGhost, keepGhost, nextGhostFor, playerGhostFor } from './lapGhosts.js'
 import { assertCanUseName, namesOwnedByAccount, withAvatarIds } from './names.js'
 import { pageParams } from './paging.js'
+import { planLimits } from './plans.js'
 import { takeToken } from './rateLimit.js'
 import { noteCourseRecord } from './courseRecords.js'
 import { claimRun, peekRun } from './runs.js'
@@ -266,6 +267,39 @@ tracksRouter.get('/:game/:n/ghost', async (req, res) => {
     res.status(404).json({ error: 'No such track' })
     return
   }
+  /*
+   * Any player's ghost: a Plus member's (Ramsey picked "race any ghost", 2026-10-11), or anyone's for the
+   * course's #1, whose ghost is everyone's already. Only for racing: nobody's time or place moves.
+   */
+  const of = cleanName(req.query.of)
+  if (of) {
+    const found = await playerGhostFor(game, n, of)
+    if (!found) {
+      res.status(404).json({ error: 'That tag has no run on this course', code: 'NO_GHOST' })
+      return
+    }
+    if (found.place !== 1) {
+      const account = await accountFromRequest(req)
+      const plan = account?.plan === 'plus' ? 'plus' : 'free'
+      if (!planLimits(plan).anyGhost) {
+        res.status(402).json({ error: 'Racing anyone’s ghost is a Plus feature', code: 'PLAN_LIMIT', limit: 'anyGhost', plan, allowed: false })
+        return
+      }
+    }
+    const [player] = await withAvatarIds([{ name: found.name }])
+    res.setHeader('Cache-Control', 'private, max-age=15')
+    res.json({
+      game,
+      track: n,
+      name: found.name,
+      avatarId: player?.avatarId,
+      time: found.timeMs,
+      place: found.place,
+      ...(found.ghost?.skin ? { skin: found.ghost.skin } : {}),
+      ...(found.ghost ? { splits: found.ghost.splits, rate: GHOST_RATE, path: found.ghost.path } : { path: null }),
+    })
+    return
+  }
   // Next place up: on today's track, the player one place above a tag, to race for their place.
   const above = cleanName(req.query.above)
   if (above) {
@@ -354,7 +388,8 @@ tracksRouter.post('/:game/:n/ghost', async (req, res) => {
     skin: await runSkin(account.id, game, skin),
   }
   const kept = await keepGhost(lap)
-  // On today's track every player's best is kept as well, for whoever is one place below them to race.
-  const day = state === 'today' ? await keepDayGhost(lap) : false
+  // Every player's best is kept as well, on today's course and past ones: for whoever is one place below them
+  // to race, and for anyone racing any ghost.
+  const day = await keepDayGhost(lap)
   res.json({ kept, day })
 })

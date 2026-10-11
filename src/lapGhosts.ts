@@ -348,10 +348,14 @@ export async function keepGhost(input: {
  * for most. Kept the way the #1's is: the tag's best on today's board, to the millisecond.
  */
 
-/** Courses back a day's ghosts are kept: about a week, well past their day. */
-const DAY_GHOSTS_KEPT = 8
+/**
+ * How long a player's ghost on a course is kept: since any player's run on any board can be raced (Ramsey picked
+ * "race any ghost", 2026-10-11), every player's best is kept on past courses too, not only today's. A run older
+ * than this goes; the course's #1 stays as its own ghost (lap_ghosts) for good.
+ */
+const PLAYER_GHOST_DAYS = 90
 
-/** Keep a lap on today's course as its player's ghost, when it's their tag's best on the board. Answers whether it was kept. */
+/** Keep a lap on a course as its player's ghost, when it's their tag's best on the board. Answers whether it was kept. */
 export async function keepDayGhost(input: {
   game: GameSlug
   track: number
@@ -382,11 +386,39 @@ export async function keepDayGhost(input: {
     // A faster lap of theirs takes its place; the same or slower leaves the one they have.
     .onConflictDoUpdate({ target: [dayGhosts.game, dayGhosts.track, dayGhosts.name], set: row, setWhere: sql`${dayGhosts.timeMs} > excluded.time_ms` })
     .returning({ name: dayGhosts.name })
-  // Courses long gone: let them go.
+  // Ghosts long gone by: let them go.
   await db()
     .delete(dayGhosts)
-    .where(and(eq(dayGhosts.game, input.game), lt(dayGhosts.track, input.track - DAY_GHOSTS_KEPT)))
+    .where(and(eq(dayGhosts.game, input.game), lt(dayGhosts.at, now - PLAYER_GHOST_DAYS * 86_400_000)))
   return kept.length > 0
+}
+
+/**
+ * Any player's ghost on a course: their best on its board, with their lap's path when it's kept (race any ghost).
+ * Null when `name` isn't on the board. Without a kept path the site drives the blue's line at their time.
+ */
+export async function playerGhostFor(
+  game: GameSlug,
+  track: number,
+  name: string,
+): Promise<{ name: string; timeMs: number; place: number; ghost: LapGhost | null } | null> {
+  const board = await ghostBoard(game, track)
+  const at = board.findIndex((e) => e.name === name)
+  if (at < 0) return null
+  const entry = board[at]!
+  const timeMs = TIME_SCORE_BASE - entry.score
+  const [row] = await db()
+    .select()
+    .from(dayGhosts)
+    .where(and(eq(dayGhosts.game, game), eq(dayGhosts.track, track), eq(dayGhosts.name, name)))
+    .limit(1)
+  let ghost: LapGhost | null =
+    row && row.timeMs === timeMs
+      ? { name: row.name, timeMs: row.timeMs, splits: row.splits as number[], path: row.path as number[], at: row.at, ...(row.skin ? { skin: row.skin } : {}) }
+      : null
+  // The #1's may be kept only as the course's own ghost.
+  if (!ghost && at === 0) ghost = (await ghostFor(game, track))?.ghost ?? null
+  return { name, timeMs, place: at + 1, ghost }
 }
 
 /**

@@ -1,10 +1,19 @@
-import { and, eq, gt, gte, inArray, like, or, sql } from 'drizzle-orm'
+import { and, asc, eq, gt, gte, inArray, like, or, sql } from 'drizzle-orm'
 import { db } from './db/client.js'
-import { appMeta, leaderboardScores, notifications, tournaments } from './db/schema.js'
+import { appMeta, leaderboardScores, notifications, recordScores, tournaments } from './db/schema.js'
 import type { NotificationMeta } from './notifications.js'
-import { courseOfPastId, courseOfRecord, coursePastHref, courseRecordId, courseWinBackHref } from './records.js'
+import {
+  courseOfPastId,
+  courseOfRecord,
+  coursePastHref,
+  courseRecordId,
+  courseWinBackHref,
+  invalidateRecordHistoryCache,
+  SCORE_STREAK_THRESHOLDS,
+  THRESHOLD_STREAK_ID,
+} from './records.js'
 import { seedScoreCap, TIME_SCORE_BASE, TIME_SCORED_GAMES } from './scoreLimits.js'
-import { resolveGameSlug } from './store.js'
+import { filterByPeriod, isDeviceType, resolveGameSlug, type LeaderboardEntry, type Period } from './store.js'
 import { ordinal } from './words.js'
 
 /**
@@ -134,6 +143,56 @@ const REPAIRS: Repair[] = [
         moved++
       }
       return `sent ${moved} of ${rows.length} record notes to their course`
+    },
+  },
+  {
+    // Frenzy's "Scores over … in a row" line went from 3,000 to 10,000 (records.ts SCORE_STREAK_THRESHOLDS), and
+    // the book's streaks were counted at the old one. They're counted again from the runs, as the API counts
+    // them after each run (updateCrossRunStreakRecords): two or more in a row at the line, kept where the
+    // streak beat the player's own best for the day, the week, the month or all time when it was run.
+    id: '2026-10-11-frenzy-streak-10000',
+    run: async () => {
+      const line = SCORE_STREAK_THRESHOLDS.frenzy
+      const runs = await db()
+        .select({
+          name: leaderboardScores.name,
+          score: leaderboardScores.score,
+          at: leaderboardScores.at,
+          device: leaderboardScores.device,
+        })
+        .from(leaderboardScores)
+        .where(eq(leaderboardScores.game, 'frenzy'))
+        .orderBy(asc(leaderboardScores.at))
+      const periods: Period[] = ['all', 'daily', 'weekly', 'monthly']
+      const players = new Map<string, { streak: number; kept: LeaderboardEntry[] }>()
+      const rows: (typeof recordScores.$inferInsert)[] = []
+      for (const run of runs) {
+        const p = players.get(run.name) ?? { streak: 0, kept: [] }
+        players.set(run.name, p)
+        p.streak = run.score >= line ? p.streak + 1 : 0
+        if (p.streak < 2) continue
+        const beats = (period: Period) => filterByPeriod(p.kept, period, run.at).every((e) => p.streak > e.score)
+        if (!periods.some(beats)) continue
+        const entry: LeaderboardEntry = {
+          id: `${run.at}-${Math.random().toString(36).slice(2, 8)}`,
+          name: run.name,
+          score: p.streak,
+          at: run.at,
+          device: isDeviceType(run.device) ? run.device : 'desktop',
+        }
+        p.kept.push(entry)
+        rows.push({ ...entry, game: 'frenzy', recordId: THRESHOLD_STREAK_ID })
+      }
+      const gone = await db().transaction(async (tx) => {
+        const old = await tx
+          .delete(recordScores)
+          .where(and(eq(recordScores.game, 'frenzy'), eq(recordScores.recordId, THRESHOLD_STREAK_ID)))
+          .returning({ id: recordScores.id })
+        for (let i = 0; i < rows.length; i += 250) await tx.insert(recordScores).values(rows.slice(i, i + 250))
+        return old.length
+      })
+      invalidateRecordHistoryCache()
+      return `counted Frenzy's streaks again at ${line.toLocaleString()}: ${gone} rows out, ${rows.length} in`
     },
   },
 ]

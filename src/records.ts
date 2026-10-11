@@ -326,7 +326,9 @@ const MIN_CROSS_RUN_STREAK = 2
  */
 export const SCORE_STREAK_THRESHOLDS: Record<GameSlug, number> = {
   barrage: 4000,
-  frenzy: 3000,
+  // Ramsey, 2026-10-11: "scores over 10,000 in a row". At 3,000 most runs counted; the book was counted again at
+  // this line (repairs.ts).
+  frenzy: 10_000,
   asteroids: 1000,
   patriot: 1000,
   snake: 500,

@@ -235,6 +235,13 @@ recordsRouter.post('/:game/:recordId', async (req, res) => {
     return
   }
 
+  // A time quicker than the game can be played (a book's `fastest`) is no time at all, run or no run.
+  if (def.unit === 'ms' && def.fastest != null && score < def.fastest) {
+    console.warn(`[anticheat] rejected ${game}/${recordId} of ${score}ms from account ${account.id}: quicker than ${def.fastest}ms`)
+    res.status(400).json({ error: 'That time is quicker than the game can be played', code: 'RECORD_IMPLAUSIBLE' })
+    return
+  }
+
   /*
    * The run is read but never claimed. One run fills several books — a combo,
    * a wave time, a streak — so spending it on the first would refuse the rest

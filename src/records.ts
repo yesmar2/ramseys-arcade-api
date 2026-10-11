@@ -53,6 +53,11 @@ export type RecordDef = {
    * (recordsRoutes.ts recordFits).
    */
   cap?: { floor: number; perSecond: number }
+  /**
+   * For a time: the quickest a run can make it, in ms, measured with the game's own engine; a time under it is
+   * refused, with a run or without (recordsRoutes.ts).
+   */
+  fastest?: number
 }
 
 export type RecordEntry = LeaderboardEntry
@@ -264,6 +269,51 @@ const PILEUP_SHAKE: RecordDef = {
   cap: { floor: 20, perSecond: 0 },
 }
 
+/*
+ * Frenzy's books (Ramsey, 2026-10-11: "can we add records for frenzy now"), each capped by what a run that long
+ * can hold. Measured with the game's own autopilot (the site's frenzy/preview.ts), sixty runs: it eats at most
+ * 2.3 fish a second in a burst and chains 31 bites at most, and never reached the top size, so the last two go
+ * by the game's rules. A frenzy lasts 8 s and the bar can't fill during one, so there's one in 8 s at most; and
+ * growing from Fry to Leviathan takes 125 bars' worth of bites, at most about two a second the way fish come, so
+ * nobody gets there in a minute, let alone 40 s.
+ */
+const FRENZY_FISH: RecordDef = {
+  id: 'fish-eaten',
+  game: 'frenzy',
+  label: 'Fish eaten in a run',
+  direction: 'higher',
+  unit: 'count',
+  cap: { floor: 40, perSecond: 4 },
+}
+
+/** The same book id as Crosswalk's chain: the bites in a row, each within 1.4 s of the last. */
+const FRENZY_CHAIN: RecordDef = {
+  id: 'longest-chain',
+  game: 'frenzy',
+  label: 'Longest chain',
+  direction: 'higher',
+  unit: 'count',
+  cap: { floor: 30, perSecond: 4 },
+}
+
+const FRENZY_FRENZIES: RecordDef = {
+  id: 'frenzies',
+  game: 'frenzy',
+  label: 'Frenzies in a run',
+  direction: 'higher',
+  unit: 'count',
+  cap: { floor: 1, perSecond: 1 / 8 },
+}
+
+const FRENZY_LEVIATHAN: RecordDef = {
+  id: 'fastest-leviathan',
+  game: 'frenzy',
+  label: 'Fastest to Leviathan',
+  direction: 'lower',
+  unit: 'ms',
+  fastest: 40_000,
+}
+
 export const PLAY_DAYS_STREAK_ID = 'play-days-streak'
 export const THRESHOLD_STREAK_ID = 'threshold-streak'
 
@@ -354,6 +404,10 @@ const RECORD_DEFS: RecordDef[] = [
   PILEUP_ROWS,
   PILEUP_COMBO,
   PILEUP_SHAKE,
+  FRENZY_FISH,
+  FRENZY_CHAIN,
+  FRENZY_FRENZIES,
+  FRENZY_LEVIATHAN,
   ...buildAsteroidsWaveRecords(),
   ...buildSnakeFastestLengthRecords(),
   ...buildCrosswalkFastestRowRecords(),

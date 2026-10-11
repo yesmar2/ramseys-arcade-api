@@ -3102,6 +3102,8 @@ async function submitTournamentScoreNow(
     if (openMatch.playEndsAt != null && now > openMatch.playEndsAt) {
       resolveTimedOutMatches(t, maxAttempts, now)
       armMatchClocks(t, now)
+      // A final that timed out settles the bracket here, as the clock's own sweep would.
+      maybeEndWhenBracketFinished(t, now)
       putTournament(store, t)
       await writeStore(store, [t])
       throw Object.assign(new Error('Round time is up'), {

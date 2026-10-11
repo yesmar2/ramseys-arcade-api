@@ -736,10 +736,21 @@ export function resolveReadyMatches(t: Tournament, maxAttempts: number, force = 
   return changed
 }
 
+/**
+ * A bracket is over once its final is decided, and that is when it ends: its end is stamped the first time it's
+ * found finished. It used to keep the end it was made with, so once a bracket took more than the 36 hours its
+ * results are news for (tournaments.ts RESULT_NEWS_MS), nobody but the winner heard how it came out.
+ * True when it changed anything.
+ */
 export function maybeEndWhenBracketFinished(t: Tournament, now: number): boolean {
   if (!bracketHasChampion(t)) return false
-  if (t.endsAt > now) t.endsAt = now
-  if (t.rules?.unlimitedDuration) t.rules.unlimitedDuration = false
+  if (t.rules?.unlimitedDuration) {
+    t.rules.unlimitedDuration = false
+    t.endsAt = now
+    return true
+  }
+  if (t.endsAt <= now) return false
+  t.endsAt = now
   return true
 }
 

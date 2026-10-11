@@ -122,7 +122,7 @@ seasonRouter.post('/plus/checkout', async (req, res) => {
   try {
     const account = await accountFromRequest(req)
     if (!account) {
-      res.status(401).json({ error: 'Sign in to get Pass+', code: 'AUTH_REQUIRED' })
+      res.status(401).json({ error: 'Sign in to get the Gold Pass', code: 'AUTH_REQUIRED' })
       return
     }
     const gate = takeToken(`checkout:${account.id}`, CHECKOUT_LIMIT)
@@ -132,11 +132,11 @@ seasonRouter.post('/plus/checkout', async (req, res) => {
     }
     const season = await seasonNow()
     if (!season || season.status !== 'live' || !season.def.plus) {
-      res.status(409).json({ error: 'There’s no season to buy Pass+ for right now', code: 'NO_SEASON' })
+      res.status(409).json({ error: 'There’s no season to buy the Gold Pass for right now', code: 'NO_SEASON' })
       return
     }
     if (await hasPlus(account.id, season.def.id)) {
-      res.status(409).json({ error: 'You have Pass+ for this season already', code: 'ALREADY_PLUS' })
+      res.status(409).json({ error: 'You have the Gold Pass for this season already', code: 'ALREADY_PLUS' })
       return
     }
     const url = await plusCheckout(season.def, account.id, returnOrigin(req), account.email)

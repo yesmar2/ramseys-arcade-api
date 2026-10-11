@@ -146,7 +146,7 @@ adminRouter.post('/season-plus', async (req, res) => {
     }
     const season = await seasonNow()
     if (!season?.def.plus) {
-      res.status(409).json({ error: 'No season with a Pass+ right now', code: 'NO_PLUS' })
+      res.status(409).json({ error: 'No season with a Gold Pass right now', code: 'NO_PLUS' })
       return
     }
     if (parsed.data.on) await grantPlus(claim.accountId, season.def.id, { source: 'grant' })

@@ -596,7 +596,7 @@ export async function grantPlus(
   now = Date.now(),
 ): Promise<boolean> {
   const def = SEASONS.find((s) => s.id === seasonId)
-  if (!def?.plus) throw Object.assign(new Error('That season has no Pass+'), { status: 404, code: 'NO_PLUS' })
+  if (!def?.plus) throw Object.assign(new Error('That season has no Gold Pass'), { status: 404, code: 'NO_PLUS' })
   const added = await db()
     .insert(seasonPlus)
     .values({ accountId, season: seasonId, source: how.source, ref: how.ref ?? null, amount: how.amount ?? null, currency: how.currency ?? null, at: now })

@@ -73,13 +73,13 @@ export type CheckoutSession = {
 
 /** A Stripe Checkout for a season's Pass+, for one account. Its page's address. */
 export async function plusCheckout(def: SeasonDef, accountId: string, origin: string, email?: string | null): Promise<string> {
-  if (!def.plus) throw refusal('That season has no Pass+', 404, 'NO_PLUS')
+  if (!def.plus) throw refusal('That season has no Gold Pass', 404, 'NO_PLUS')
   const session = await stripe<CheckoutSession>('POST', '/checkout/sessions', {
     mode: 'payment',
     client_reference_id: accountId,
     customer_email: email || undefined,
     metadata: { accountId, season: def.id },
-    payment_intent_data: { metadata: { accountId, season: def.id }, description: `Season ${def.id} Pass+ (${def.name})` },
+    payment_intent_data: { metadata: { accountId, season: def.id }, description: `Season ${def.id} Gold Pass (${def.name})` },
     line_items: {
       0: {
         quantity: 1,
@@ -87,8 +87,8 @@ export async function plusCheckout(def: SeasonDef, accountId: string, origin: st
           currency: def.plus.currency,
           unit_amount: def.plus.price,
           product_data: {
-            name: `Season ${def.id} Pass+ · ${def.name}`,
-            description: 'The Pass+ row of the season pass: skins and looks, yours to keep. Looks only, never score.',
+            name: `Season ${def.id} Gold Pass · ${def.name}`,
+            description: 'The Gold row of the season pass: skins and looks, yours to keep. Looks only, never score.',
           },
         },
       },

@@ -222,6 +222,12 @@ export const FORMAT_LABELS: Record<TournamentFormat, string> = {
 
 const MAX_COMMUNITY_DURATION_HOURS = 168
 const MIN_COMMUNITY_DURATION_HOURS = 1
+/*
+ * An event that runs until everyone finishes still ends this long after it starts, the longest a timed one
+ * runs: one open seat, or one guest who never plays, would otherwise keep it, and its host's event slot,
+ * going for ever.
+ */
+const UNTIL_DONE_MAX_MS = MAX_COMMUNITY_DURATION_HOURS * 3_600_000
 
 /**
  * Place points for one game inside an event.
@@ -423,7 +429,18 @@ function normalizeTournamentUncached(t: Tournament): Tournament {
     visibility,
     createdBy: t.createdBy ?? null,
     inviteCode: t.inviteCode ?? null,
+    endsAt: untilDoneEndsAt(t),
   }
+}
+
+/**
+ * The end of an event that runs until everyone finishes: UNTIL_DONE_MAX_MS after it starts, or when everyone
+ * finished if that came first (maybeEndWhenAllFinished). Those made before the cap kept their start as their
+ * end, so theirs is worked out here. Any other event's end is the one it has.
+ */
+function untilDoneEndsAt(t: Tournament): number {
+  if (!t.rules?.unlimitedDuration || resolveKind(t) === 'bracket' || t.endsAt > t.startsAt) return t.endsAt
+  return t.startsAt + UNTIL_DONE_MAX_MS
 }
 
 function publicFormatLabel(t: Tournament): string {
@@ -1591,7 +1608,7 @@ export function tournamentStatus(t: Tournament, now = Date.now()): TournamentSta
   }
   if (now < normalized.startsAt) return 'upcoming'
   if (allPlayersFinishedAttempts(normalized, now)) return 'ended'
-  if (normalized.rules?.unlimitedDuration) return 'active'
+  // Until everyone finishes included: it has an end, a week on (untilDoneEndsAt).
   if (now > normalized.endsAt) return 'ended'
   return 'active'
 }
@@ -2449,7 +2466,6 @@ export async function createTournament(
   creator: TournamentCreator,
   now = Date.now(),
 ) {
-  const store = await ensureStore(now)
   const plan: AccountPlan = creator.plan === 'plus' ? 'plus' : 'free'
   const limits = planLimits(plan)
   const title = input.title.trim().slice(0, 60)
@@ -2592,11 +2608,19 @@ export async function createTournament(
   } else if (maxPlayers > 0 && maxPlayers < 2) {
     throw Object.assign(new Error('Player limit must be at least 2, or unlimited'), { status: 400 })
   }
+  // Unlimited tries are never all used, so an event waiting for everyone to use theirs would never end early.
+  if (kind !== 'bracket' && durationHours <= 0 && maxAttempts === 0) {
+    throw Object.assign(new Error('An event that runs until everyone finishes needs a number of tries'), {
+      status: 400,
+    })
+  }
   const format =
     games.length > 1 && kind !== 'bracket'
       ? 'place-points'
       : deriveCommunityFormat(maxAttempts)
 
+  // Read only now: a refusal above needs none of the events.
+  const store = await ensureStore(now)
   const activeCommunity = store.tournaments.filter(
     (t) =>
       !t.official &&
@@ -2615,7 +2639,9 @@ export async function createTournament(
 
   const inviteCode = generateInviteCode()
   const unlimitedDuration = kind === 'bracket' || durationHours <= 0
-  const endsAt = unlimitedDuration ? now : now + durationHours * 3_600_000
+  // A bracket has no clock of its own; until everyone finishes still stops a week on (UNTIL_DONE_MAX_MS).
+  const endsAt =
+    kind === 'bracket' ? now : unlimitedDuration ? now + UNTIL_DONE_MAX_MS : now + durationHours * 3_600_000
   const blurb =
     input.blurb?.trim().slice(0, 280) ||
     (kind === 'bracket'

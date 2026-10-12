@@ -19,6 +19,11 @@ import { ordinal } from './words.js'
  * grants don't count. Nothing here touches a score: the rewards are looks and tickets, and level 1 comes
  * with the first ticket of the season, so everyone who plays gets the season's patch.
  *
+ * The levels never stop (Ramsey, 2026-10-11: "just build it", after asking whether to let players keep levelling
+ * past 30 and 35). Past the free row's last, a level still comes every `perLevel`, and each pays tickets
+ * (EXTRA_LEVEL_TICKETS, more at every tenth): a player who plays every day finishes the rows in about three weeks
+ * of a nine-week season, and their pass goes on moving. The Gold Pass keeps its looks past the free row's last.
+ *
  * Where a player has got to lives in the ledger; season_progress only remembers what the last look saw, so
  * a run can say what it added and when it reached a new level, and each level's rewards are given once.
  * A reward the code can't give yet (a skin, the patch, a look still being drawn) is given by the first
@@ -40,6 +45,8 @@ export type SeasonReward = {
   game?: string
   /** On the Pass+ row: given only to a player who has the season's Pass+. */
   plus?: boolean
+  /** A level past the free row's last: tickets, for everyone (extraReward). */
+  extra?: boolean
 }
 
 export type SeasonDef = {
@@ -64,7 +71,7 @@ export type SeasonDef = {
     price: number
     currency: string
     rewards: SeasonReward[]
-    /** Levels past the last that only Pass+ climbs, each another `perLevel` tickets. */
+    /** How many of its rewards are past the free row's last level, one a level (every player climbs those levels). */
     bonus: number
   } | null
 }
@@ -79,6 +86,15 @@ export type SeasonGoal = {
 
 function tickets(level: number, amount: number): SeasonReward {
   return { level, kind: 'tickets', id: `tickets-${level}`, name: `${amount} tickets`, what: 'Tickets', amount }
+}
+
+/** What each level past the free row's last pays, for everyone; every tenth (40, 50, 60) pays EXTRA_TENTH_TICKETS. */
+export const EXTRA_LEVEL_TICKETS = 25
+export const EXTRA_TENTH_TICKETS = 100
+
+/** A level past the free row's last: its tickets. */
+export function extraReward(level: number): SeasonReward {
+  return { ...tickets(level, level % 10 === 0 ? EXTRA_TENTH_TICKETS : EXTRA_LEVEL_TICKETS), extra: true }
 }
 
 const SPACE_RACE: SeasonReward[] = [
@@ -402,20 +418,20 @@ export async function seasonEarned(accountId: string, startsAt: number, endsAt: 
   return Number(row?.total ?? 0)
 }
 
-/** The highest level a player's pass reaches: the last, and with Pass+ its bonus levels too. */
+/** The last level with a look on a player's rows: the free row's last, and with Pass+ the last of its row's. */
 export function topLevel(def: SeasonDef, plus = false): number {
   return def.levels + (plus && def.plus ? def.plus.bonus : 0)
 }
 
-/** Level 0 before the season's first ticket, then one more every `perLevel`, to the last (or the bonus levels' last with Pass+). */
-export function levelFor(def: SeasonDef, earned: number, plus = false): number {
+/** Level 0 before the season's first ticket, then one more every `perLevel`, with no last. */
+export function levelFor(def: SeasonDef, earned: number): number {
   if (earned <= 0) return 0
-  return Math.min(topLevel(def, plus), 1 + Math.floor(earned / def.perLevel))
+  return 1 + Math.floor(earned / def.perLevel)
 }
 
-/** Season tickets the next level needs, all told, or null at the last. */
-export function nextLevelAt(def: SeasonDef, level: number, plus = false): number | null {
-  return level >= topLevel(def, plus) ? null : Math.max(0, level) * def.perLevel
+/** Season tickets the next level needs, all told. */
+export function nextLevelAt(def: SeasonDef, level: number): number {
+  return Math.max(0, level) * def.perLevel
 }
 
 /**
@@ -517,6 +533,17 @@ function laneOf(def: SeasonDef, plus: boolean): SeasonReward[] {
   return plus && def.plus ? [...def.rewards, ...def.plus.rewards] : def.rewards
 }
 
+/**
+ * The rewards of the levels `from` to `to` on a player's pass, a level's in the order its rows show them: the
+ * free row's, the Pass+ row's with Pass+, then the tickets of a level past the free row's last.
+ */
+function rewardsIn(def: SeasonDef, plus: boolean, from: number, to: number): SeasonReward[] {
+  const out = laneOf(def, plus).filter((r) => r.level >= from && r.level <= to)
+  for (let level = Math.max(from, def.levels + 1); level <= to; level++) out.push(extraReward(level))
+  // A stable sort: within a level, the order above.
+  return out.sort((a, b) => a.level - b.level)
+}
+
 async function giveRewards(accountId: string, def: SeasonDef, rewards: SeasonReward[], from: number, to: number, now: number) {
   for (const reward of rewards) {
     if (reward.level < from || reward.level > to || !rewardReady(reward)) continue
@@ -559,7 +586,7 @@ export async function syncSeason(
   const { def } = season
   const earned = await seasonEarned(accountId, season.startsAt, season.endsAt)
   const plus = def.plus ? await hasPlus(accountId, def.id) : false
-  const level = levelFor(def, earned, plus)
+  const level = levelFor(def, earned)
   const [last] = await db()
     .select({ earned: seasonProgress.earned, level: seasonProgress.level })
     .from(seasonProgress)
@@ -567,9 +594,10 @@ export async function syncSeason(
     .limit(1)
   const before = last?.earned ?? 0
   const lastLevel = last?.level ?? 0
-  const lane = laneOf(def, plus)
   if (level > lastLevel || (catchUp && level > 0)) {
-    await giveRewards(accountId, def, lane, catchUp ? 1 : lastLevel + 1, level, now)
+    // A catch-up is for looks a later release brought: a level's tickets past the free row were given as it came.
+    const given = catchUp ? [...laneOf(def, plus), ...rewardsIn(def, plus, lastLevel + 1, level).filter((r) => r.extra)] : rewardsIn(def, plus, lastLevel + 1, level)
+    await giveRewards(accountId, def, given, catchUp ? 1 : lastLevel + 1, level, now)
   }
   const keptLevel = announce ? Math.max(level, lastLevel) : lastLevel
   if (!last || last.earned !== earned || last.level !== keptLevel) {
@@ -581,7 +609,7 @@ export async function syncSeason(
         set: announce ? { earned, level: sql`greatest(${seasonProgress.level}, ${level})`, updatedAt: now } : { earned, updatedAt: now },
       })
   }
-  const reached = lane.filter((r) => r.level > lastLevel && r.level <= level)
+  const reached = rewardsIn(def, plus, lastLevel + 1, level)
   return { season, earned, before, level, reached, plus, announced: keptLevel }
 }
 
@@ -608,7 +636,7 @@ export async function grantPlus(
   const season = await seasonNow(now)
   const window = season && season.def.id === seasonId ? season : { startsAt, endsAt }
   // Bought before the season's first ticket: level 1's Pass+ reward comes with it all the same.
-  const level = Math.max(1, levelFor(def, await seasonEarned(accountId, window.startsAt, window.endsAt), true))
+  const level = Math.max(1, levelFor(def, await seasonEarned(accountId, window.startsAt, window.endsAt)))
   await giveRewards(accountId, def, def.plus.rewards, 1, level, now)
   return true
 }
@@ -638,6 +666,8 @@ export type SeasonInfo = {
   daysLeft: number
   levels: number
   perLevel: number
+  /** What a level past `levels` pays, and every tenth. */
+  extra: { tickets: number; tenth: number }
   spotlight: string[]
 }
 
@@ -664,6 +694,7 @@ export type SeasonRun = {
   earned: number
   added: number
   level: number
+  /** The last level with a look on the player's rows (topLevel); the levels go on past it. */
   levels: number
   nextAt: number | null
   /** The next level's first reward, to say what the run is heading for. */
@@ -690,6 +721,7 @@ export function seasonInfo(season: SeasonNow, now = Date.now()): SeasonInfo {
     daysLeft,
     levels: def.levels,
     perLevel: def.perLevel,
+    extra: { tickets: EXTRA_LEVEL_TICKETS, tenth: EXTRA_TENTH_TICKETS },
     spotlight: def.spotlight,
   }
 }
@@ -703,8 +735,8 @@ export async function seasonAfterRun(accountId: string, now = Date.now()): Promi
   const sync = await syncSeason(accountId, now)
   if (!sync) return null
   const { def } = sync.season
-  const nextAt = nextLevelAt(def, sync.level, sync.plus)
-  const next = laneOf(def, sync.plus).find((r) => r.level === sync.level + 1)
+  const nextAt = nextLevelAt(def, sync.level)
+  const next = rewardsIn(def, sync.plus, sync.level + 1, sync.level + 1)[0]
   return {
     id: def.id,
     name: def.name,

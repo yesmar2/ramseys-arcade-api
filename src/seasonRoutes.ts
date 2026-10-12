@@ -47,7 +47,7 @@ seasonRouter.get('/', async (req, res) => {
         you = {
           earned: sync.earned,
           level: sync.level,
-          nextAt: nextLevelAt(season.def, sync.level, sync.plus),
+          nextAt: nextLevelAt(season.def, sync.level),
           announced: sync.announced,
           pending: sync.level > sync.announced ? sync.reached.map(rewardView) : [],
         }

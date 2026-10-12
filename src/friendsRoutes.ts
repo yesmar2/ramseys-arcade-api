@@ -10,6 +10,7 @@ import {
   removeFriend,
   sendFriendRequest,
 } from './friends.js'
+import { friendsWeek } from './friendsWeek.js'
 
 export const friendsRouter = Router()
 
@@ -45,6 +46,22 @@ friendsRouter.get('/', async (req, res) => {
       listFriendRequests(account.id),
     ])
     res.json({ friends, requests })
+  } catch (err) {
+    claimError(err, res)
+  }
+})
+
+/**
+ * Last week's standings among the signed-in player and their friends (friendsWeek.ts): where they finished
+ * and out of how many, the top three and their games. The site's "you won the week among your friends"
+ * asks once a week.
+ */
+friendsRouter.get('/week', async (req, res) => {
+  const account = await requireAccount(req, res)
+  if (!account) return
+  try {
+    res.setHeader('Cache-Control', 'no-store')
+    res.json(await friendsWeek(account.id))
   } catch (err) {
     claimError(err, res)
   }

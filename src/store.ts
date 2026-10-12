@@ -1910,6 +1910,58 @@ export async function globalRanksForClosedPeriod(
   })
 }
 
+/*
+ * A closed week's or month's standings among some players only: a player and their friends, for the site's
+ * "you won the week among your friends" (friendsWeek.ts). Each game's board for the period is everyone's and
+ * the same for any scope, so it's worked out once and kept an hour (a run kept signed out and saved late can
+ * still land in it); then it's cut to the names and placed among them, as the live standings' friends scope places them
+ * (periodPlacements with a scope).
+ */
+const CLOSED_BOARDS_TTL_MS = 60 * 60_000
+const closedBoardsKept = new Map<string, { epoch: number; at: number; boards: Promise<Map<GameSlug, LeaderboardEntry[]>> }>()
+
+async function closedBoards(period: ClosedPeriod, periodKey: number): Promise<Map<GameSlug, LeaderboardEntry[]>> {
+  const copy = await loadCopy()
+  const key = `${period}:${periodKey}`
+  const hit = closedBoardsKept.get(key)
+  if (hit && hit.epoch === copy.epoch && Date.now() - hit.at < CLOSED_BOARDS_TTL_MS) return hit.boards
+  const boards = (async () => {
+    const out = new Map<GameSlug, LeaderboardEntry[]>()
+    for (const game of standingsGames(period)) {
+      // A game at a time, letting requests through in between, as globalRanksForClosedPeriod does.
+      await new Promise((resolve) => setImmediate(resolve))
+      // In board order, so each player's first run is their best: the one row of theirs kept.
+      const seen = new Set<string>()
+      const rows: LeaderboardEntry[] = []
+      for (const run of closedRuns(game, await historyFor(game), period, periodKey)) {
+        if (seen.has(run.name)) continue
+        seen.add(run.name)
+        rows.push(run)
+      }
+      out.set(game, rows)
+    }
+    return out
+  })()
+  closedBoardsKept.delete(key)
+  closedBoardsKept.set(key, { epoch: copy.epoch, at: Date.now(), boards })
+  // The two newest kept: last week's, and last month's.
+  for (const old of closedBoardsKept.keys()) if (closedBoardsKept.size > 2 && old !== key) closedBoardsKept.delete(old)
+  boards.catch(() => {
+    if (closedBoardsKept.get(key)?.boards === boards) closedBoardsKept.delete(key)
+  })
+  return boards
+}
+
+/** A closed week's or month's standings among `names` only: each game's places among them, added up as for everyone. */
+export async function closedRanksAmong(
+  period: ClosedPeriod,
+  periodKey: number,
+  names: ReadonlySet<string>,
+): Promise<GlobalRankEntry[]> {
+  const boards = await closedBoards(period, periodKey)
+  return aggregateGlobalRanks(async (game) => placementsFromPool(filterByNames(boards.get(game) ?? [], names)), standingsGames(period))
+}
+
 /**
  * The standings over a stretch that isn't a week or a month: a season's as it ends (seasons.ts settleSeasons;
  * the live ones are the `season` period's). Each game's runs in it make its board, as a closed week's do (a

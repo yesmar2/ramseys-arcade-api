@@ -519,29 +519,39 @@ export function keptToday(state: Pick<TodayState, 'live' | 'done' | 'need'>): bo
   return state.live.filter((key) => state.done[key]).length >= state.need
 }
 
+/** A streak milestone paid: its day, and when it was paid (its ledger row's time). */
+export type TodayReached = { day: number; at: number }
+
 /**
  * Pay whatever an account's best streak has reached and not been paid, once each, and say so in its
  * inbox. A milestone is marked paid in the ticket ledger (reason 'today', ref `streak-<day>`), with the
- * tickets it pays or none. Returns the day's state.
+ * tickets it pays or none. Returns the day's state, with the milestones paid and when: the site's
+ * whole-screen moment for one is shown while it's fresh (the web's MilestoneMoment.tsx).
  *
  * A kept day also takes back its streak reminder, if one went out: there's nothing left at risk.
  */
-export async function settleToday(accountId: string, now = Date.now()): Promise<TodayState> {
+export async function settleToday(accountId: string, now = Date.now()): Promise<TodayState & { reached: TodayReached[] }> {
   const state = await todayState(accountId, now)
   if (keptToday(state)) await withdrawNotification(accountId, streakRiskKey(state.day)).catch(() => undefined)
   const due = TODAY_MILESTONES.filter((m) => state.streak.best >= m.day)
-  if (!due.length) return state
-  const paid = new Set(
+  if (!due.length) return { ...state, reached: [] }
+  const paid = new Map(
     (
       await db()
-        .select({ ref: ticketLedger.ref })
+        .select({ ref: ticketLedger.ref, at: ticketLedger.at })
         .from(ticketLedger)
         .where(and(eq(ticketLedger.accountId, accountId), eq(ticketLedger.reason, 'today')))
-    ).map((row) => row.ref),
+    ).map((row) => [row.ref, row.at]),
   )
+  const reached: TodayReached[] = []
   for (const m of due) {
     const ref = `streak-${m.day}`
-    if (paid.has(ref)) continue
+    const paidAt = paid.get(ref)
+    if (paidAt != null) {
+      reached.push({ day: m.day, at: paidAt })
+      continue
+    }
+    reached.push({ day: m.day, at: now })
     if (m.kind === 'prize') {
       await db().insert(prizesOwned).values({ accountId, prizeId: m.id, price: 0, at: now }).onConflictDoNothing()
     }
@@ -561,5 +571,5 @@ export async function settleToday(accountId: string, now = Date.now()): Promise<
       }).catch(() => undefined)
     }
   }
-  return state
+  return { ...state, reached }
 }

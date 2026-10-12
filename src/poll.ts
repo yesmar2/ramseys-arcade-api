@@ -1,7 +1,8 @@
 import { and, eq, inArray, sql } from 'drizzle-orm'
 import { db } from './db/client.js'
-import { appMeta, ticketLedger, type TicketDetail } from './db/schema.js'
+import { appMeta, prizesOwned, ticketLedger, type TicketDetail } from './db/schema.js'
 import { POLL_FIRST_DAY, POLLS, type PlannedPoll } from './pollPlan.js'
+import { BLIP_SKIN_EVERY, BLIP_SKINS } from './skins.js'
 import { boardDateKey } from './store.js'
 import { awardTickets } from './tickets.js'
 
@@ -12,6 +13,7 @@ import { awardTickets } from './tickets.js'
  * non-signed in players can vote, doesn't that mean they could just keep voting?"), once a day, for a few
  * tickets: the answer is that ticket row (reason 'poll', ref `poll:<n>`, its pick in the detail), so the
  * ledger's one-row-per-reason-and-ref keeps it to one each, and the counts are its rows. Off the streak.
+ * Every BLIP_SKIN_EVERY answers, ever, win the next skin of Blip's set (skins.ts BLIP_SKINS), owned like a prize.
  */
 
 /** What answering Blip's question pays. */
@@ -134,13 +136,40 @@ export type PollView = {
   /** Tomorrow's question, as a tease. */
   tomorrow: string | null
   tickets: number
+  /** How many of his questions the player has answered, ever, toward Blip's set; null for a visitor. */
+  answers: number | null
+}
+
+/** How many of Blip's questions an account has answered, ever: its poll rows. */
+async function answersOf(accountId: string): Promise<number> {
+  const [row] = await db()
+    .select({ answers: sql<number>`count(*)::int` })
+    .from(ticketLedger)
+    .where(and(eq(ticketLedger.accountId, accountId), eq(ticketLedger.reason, 'poll')))
+  return Number(row?.answers ?? 0)
+}
+
+/**
+ * Blip's set: the skins an account's answers have won (one every BLIP_SKIN_EVERY, in BLIP_SKINS's order), given
+ * if it doesn't have them yet. Says which were new.
+ */
+async function giveBlipSkins(accountId: string, answers: number, now: number): Promise<string[]> {
+  const won = BLIP_SKINS.slice(0, Math.floor(answers / BLIP_SKIN_EVERY)).map(([id]) => id)
+  if (!won.length) return []
+  const added = await db()
+    .insert(prizesOwned)
+    .values(won.map((prizeId) => ({ accountId, prizeId, price: 0, at: now })))
+    .onConflictDoNothing()
+    .returning({ prizeId: prizesOwned.prizeId })
+  return added.map((row) => row.prizeId)
 }
 
 /** Blip's question for a player (or a visitor, `null`): today's, its counts once they've answered, yesterday's result. */
 export async function pollView(accountId: string | null, now = Date.now()): Promise<PollView> {
   const key = boardDateKey(now)
   const n = pollNumber(key)
-  if (n == null) return { today: null, yesterday: null, tomorrow: null, tickets: POLL_TICKETS }
+  const answers = accountId ? await answersOf(accountId) : null
+  if (n == null) return { today: null, yesterday: null, tomorrow: null, tickets: POLL_TICKETS, answers }
   const around = await pollsBetween(Math.max(1, n - 1), n + 1)
   const poll = around.find((p) => p.n === n)!
   const before = around.find((p) => p.n === n - 1) ?? null
@@ -148,11 +177,15 @@ export async function pollView(accountId: string | null, now = Date.now()): Prom
   const pick = accountId ? await pickOf(accountId, n) : null
   const today = pick == null ? { ...poll, pick } : { ...poll, pick, ...(await countsFor(n, poll.options.length, now)) }
   const yesterday = before ? { ...before, ...(await countsFor(before.n, before.options.length, now)) } : null
-  return { today, yesterday, tomorrow: after?.q ?? null, tickets: POLL_TICKETS }
+  return { today, yesterday, tomorrow: after?.q ?? null, tickets: POLL_TICKETS, answers }
 }
 
-/** Answer today's question: once a day, for POLL_TICKETS. */
-export async function answerPoll(accountId: string, pick: number, now = Date.now()): Promise<PollView & { earned: number }> {
+/** Answer today's question: once a day, for POLL_TICKETS, and toward Blip's set: `won` is a skin this answer won. */
+export async function answerPoll(
+  accountId: string,
+  pick: number,
+  now = Date.now(),
+): Promise<PollView & { earned: number; won: string | null }> {
   const n = pollNumber(boardDateKey(now))
   if (n == null) throw Object.assign(new Error('There’s no question today'), { status: 404, code: 'NO_POLL' })
   const poll = await pollAt(n)
@@ -162,5 +195,7 @@ export async function answerPoll(accountId: string, pick: number, now = Date.now
   const detail: TicketDetail = { pick, label: poll.q }
   const { earned } = await awardTickets(accountId, 'poll', ref(n), POLL_TICKETS, null, now, detail)
   counted.delete(n)
-  return { ...(await pollView(accountId, now)), earned }
+  // An answer that counted may win the next skin of Blip's set.
+  const won = earned > 0 ? await giveBlipSkins(accountId, await answersOf(accountId), now) : []
+  return { ...(await pollView(accountId, now)), earned, won: won.at(-1) ?? null }
 }

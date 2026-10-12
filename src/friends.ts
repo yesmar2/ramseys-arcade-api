@@ -290,9 +290,9 @@ function requestKey(fromAccountId: string) {
   return `friend-request:${fromAccountId}`
 }
 
-/** A player's card: where "see who this is" goes. */
+/** A player's card: where "see who this is" goes. The site says `weekly`; it took `week` for all time. */
 function cardHref(name: string) {
-  return `/rank/${encodeURIComponent(name)}/week`
+  return `/rank/${encodeURIComponent(name)}/weekly`
 }
 
 /**

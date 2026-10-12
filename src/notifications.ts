@@ -287,19 +287,26 @@ function readMeta(row: NotificationRow): NotificationMeta {
 }
 
 /**
- * Links filed as `#/…` before the site moved to paths, two that never led anywhere, and today's ticket on
- * the home page, which is the Today page now.
+ * Links filed as `#/…` before the site moved to paths, two that never led anywhere, today's ticket on
+ * the home page, which is the Today page now, and a trophy's or a streak's note's card at all time, which
+ * made all time the whole site's period: it's your card at your own period now.
  */
 function currentHref(row: NotificationRow, meta: NotificationMeta): string | null {
   const href = row.href
   if (!href) return null
   if (href === '#/friends') {
-    return meta.actor ? `/rank/${encodeURIComponent(meta.actor)}/week` : '/rank/week?focus=friends'
+    return meta.actor ? `/rank/${encodeURIComponent(meta.actor)}/weekly` : '/groups/friends'
   }
-  if (href === '#/rank') return '/rank/all?focus=trophies'
+  if (href === '#/rank') return '/rank?focus=trophies'
+  if (href === '/rank/all' || href.startsWith('/rank/all?')) return href.replace('/rank/all', '/rank')
   if (href === '/?focus=today') return '/today'
   if (href.startsWith('#/')) return href.slice(1)
   return href
+}
+
+/** Where a row's link goes now (currentHref): the inbox's, and a push's sent after the row was filed (push.ts). */
+export function rowHref(row: NotificationRow): string | null {
+  return currentHref(row, readMeta(row))
 }
 
 /** Words filed before the site called it a shelf, said the way it says them now. */

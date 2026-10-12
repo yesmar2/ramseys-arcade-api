@@ -179,7 +179,8 @@ async function notifyPlace(
     title: `You finished ${ordinal(award.rank)} in the arcade ${when}`,
     // The place and the prize, not the points behind them: those are on the How your rank works page.
     body: `${prize}${unlock}.`,
-    href: '/rank/all?focus=trophies',
+    // Your card at your own period: the shelf is the same at any, and a period here would be the whole site's.
+    href: '/rank?focus=trophies',
     meta: {
       trophy: { period: award.period, rank: award.rank },
       ...(ring ? { ring } : {}),
@@ -442,7 +443,7 @@ async function notifyEventWin(name: string, eventTitle: string, eventId: string)
       body: first
         ? 'The cup is on your shelf, and the laurel ring is yours to wear.'
         : 'The cup is on your shelf.',
-      href: '/rank/all?focus=trophies',
+      href: '/rank?focus=trophies',
       meta: { trophy: { period: 'event', rank: 1 }, eventId, ...(first ? { ring: 'laurel' } : {}) },
       digestKey: `trophy:${eventId}`,
       once: true,
@@ -500,7 +501,7 @@ export async function awardHuntSet(opts: {
     body: firstSet
       ? 'All ten bugs in the hunt. The set is on your shelf, and the bug net pin is yours to wear.'
       : 'All ten bugs in the hunt. The set is on your shelf.',
-    href: '/rank/all?focus=trophies',
+    href: '/rank?focus=trophies',
     meta: { trophy: { period: 'hunt', rank: 1 }, ...(firstSet ? { pin: 'bugnet' } : {}) },
     digestKey: `trophy:hunt:${opts.periodKey}`,
     once: true,

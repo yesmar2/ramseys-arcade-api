@@ -142,7 +142,7 @@ export async function awardSecret(opts: {
     kind: 'trophy',
     title: `You found a secret: ${secret.name}`,
     body: `${secret.says} It’s on your shelf now.`,
-    href: '/rank/all?focus=trophies',
+    href: '/rank?focus=trophies',
     meta: { trophy: { period: 'secret', rank: 1, n: secret.n } },
     digestKey: `trophy:secret:${secret.n}`,
     once: true,

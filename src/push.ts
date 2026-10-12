@@ -2,7 +2,7 @@ import { and, eq, gt, inArray, isNull, sql } from 'drizzle-orm'
 import webpush from 'web-push'
 import { db } from './db/client.js'
 import { notifications, pushLedger, pushSubscriptions } from './db/schema.js'
-import { MATCH_KINDS, markPushed, type NotificationKind, type NotificationRow } from './notifications.js'
+import { MATCH_KINDS, markPushed, rowHref, type NotificationKind, type NotificationRow } from './notifications.js'
 import { levelsFor, levelsForAccounts, topicOf, type NotificationLevel } from './notificationSettings.js'
 import { timeLeft } from './words.js'
 
@@ -335,7 +335,8 @@ export async function deliver(
   const key = row.digestKey ?? row.id
   const outcome = await sendPush(
     row.accountId,
-    { kind: row.kind, title: pushTitle(row, now), body: row.body, href: row.href, dedupeKey: key, tag: key },
+    // A row filed before the site's links changed and pushed after (held for quiet hours) goes where they go now.
+    { kind: row.kind, title: pushTitle(row, now), body: row.body, href: rowHref(row), dedupeKey: key, tag: key },
     now,
   )
   // A duplicate was pushed before this row remembered it; either way it's out.

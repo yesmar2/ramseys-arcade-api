@@ -3,6 +3,7 @@ import { db } from './db/client.js'
 import { leaderboardScores, recordScores } from './db/schema.js'
 import { courseOfRecord, getRecordDef } from './records.js'
 import {
+  bestForName,
   boardDateKey,
   DAILY_GAMES,
   getBoardPage,
@@ -131,6 +132,9 @@ export async function playerStats(
   }
   if (!name) return empty
 
+  // The record books keep no period and need no run on the boards: the records within reach are the same in a
+  // quiet week, or with no runs at all.
+  const near = await nearRecords(name)
   const all = await db()
     .select({
       game: leaderboardScores.game,
@@ -139,7 +143,7 @@ export async function playerStats(
     })
     .from(leaderboardScores)
     .where(eq(leaderboardScores.name, name))
-  if (all.length === 0) return empty
+  if (all.length === 0) return { ...empty, nearRecords: near }
   // Same window the boards use, so "this week" means one thing in this app.
   const mine = all.filter((row) => inPeriod(row.at, period, now))
   // The streak outlives the window: a quiet Tuesday does not end a habit.
@@ -147,7 +151,7 @@ export async function playerStats(
     all.map((r) => boardDateKey(r.at)),
     now,
   )
-  if (mine.length === 0) return { ...empty, streak: lifetimeStreak }
+  if (mine.length === 0) return { ...empty, streak: lifetimeStreak, nearRecords: near }
 
   const byGame = new Map<string, { score: number; at: number }[]>()
   for (const row of mine) {
@@ -196,19 +200,19 @@ export async function playerStats(
     }
     const names = new Set<string>()
     let beaten = 0
-    const ahead = new Set<string>()
     for (const entry of board.entries) {
       names.add(entry.name)
       if (entry.score < best) beaten += 1
-      if (entry.score > best) ahead.add(entry.name)
     }
+    // The board's own place, a tie going to whoever got there first, as the card and the standings say it.
+    const you = await bestForName(slug as GameSlug, name, period, now)
 
     const boardRuns = board.total || rows.length
     games.push({
       slug,
       runs: rows.length,
       best,
-      rank: ahead.size + 1,
+      rank: you?.place ?? null,
       totalPlayers: names.size || 1,
       percentile: boardRuns > 0 ? Math.round((beaten / boardRuns) * 100) : 0,
       average: Math.round(total / rows.length),
@@ -227,7 +231,7 @@ export async function playerStats(
     },
     streak: lifetimeStreak,
     games,
-    nearRecords: await nearRecords(name),
+    nearRecords: near,
   }
 }
 

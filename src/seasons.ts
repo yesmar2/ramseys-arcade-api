@@ -894,7 +894,7 @@ export async function settleSeasons(now = Date.now()): Promise<number> {
             row.rank <= CUP_PLACES
               ? `${def.name} is over, and its cup is on your shelf.`
               : `${def.name} is over: ${ordinal(row.rank)} of ${field}. The trophy is on your shelf.`,
-          href: '/rank/all?focus=trophies',
+          href: '/rank?focus=trophies',
           meta: { trophy: { period: 'season', rank: row.rank } },
           digestKey: `trophy:season:${def.id}`,
           once: true,

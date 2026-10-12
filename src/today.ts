@@ -102,11 +102,17 @@ export const TODAY_DAILIES: readonly { key: TodayKey; game: GameSlug; from: numb
 /**
  * A day's card: the dailies on it (live), in order, and how many of them keep the day. A game on deck isn't on
  * it (store.ts ON_DECK_GAMES; the site's ticket leaves it off the same way), so on the live API Wobble Run's
- * day neither counts toward keeping a day nor is needed for a Full ticket.
+ * day neither counts toward keeping a day nor is needed for a Full ticket. One that has come off the card stays
+ * on the days it was on, hidden since or not: the hole went on deck after it left (Oct 5), and dropping it
+ * judged those days again without it, breaking streaks it had kept.
  */
 export function todayRule(dayKey: number): { live: TodayKey[]; need: number } {
   const live = TODAY_DAILIES.filter(
-    (d) => d.from != null && d.from <= dayKey && (d.until == null || dayKey <= d.until) && isListedGame(d.game),
+    (d) =>
+      d.from != null &&
+      d.from <= dayKey &&
+      (d.until == null || dayKey <= d.until) &&
+      (d.until != null || isListedGame(d.game)),
   ).map((d) => d.key)
   return { live, need: Math.min(keepOn(dayKey), live.length) }
 }
@@ -503,10 +509,10 @@ export async function keptDaysFor(accountId: string, now = Date.now()): Promise<
 
 const MILESTONE_WORDS: Record<number, { title: string; body: string; href: string }> = {
   3: { title: 'Day 3 of your Dailies streak', body: '10 tickets for the prize counter.', href: '/prizes' },
-  7: { title: 'A week of Dailies', body: 'The Dailies pin is yours to wear on your badge.', href: '/rank/all' },
+  7: { title: 'A week of Dailies', body: 'The Dailies pin is yours to wear on your badge.', href: '/rank' },
   14: { title: 'Day 14 of your Dailies streak', body: '25 tickets for the prize counter.', href: '/prizes' },
-  30: { title: 'Thirty days of Dailies', body: 'The gold badge finish is yours to wear.', href: '/rank/all' },
-  100: { title: 'A hundred days of Dailies', body: 'The “Every Day” title is yours, under your tag.', href: '/rank/all' },
+  30: { title: 'Thirty days of Dailies', body: 'The gold badge finish is yours to wear.', href: '/rank' },
+  100: { title: 'A hundred days of Dailies', body: 'The “Every Day” title is yours, under your tag.', href: '/rank' },
 }
 
 /** The digest key of a day's streak reminder (streakReminders.ts): one a day at most. */

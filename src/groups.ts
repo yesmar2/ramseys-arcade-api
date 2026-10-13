@@ -13,6 +13,15 @@ async function ownerPlan(accountId: string): Promise<AccountPlan> {
   const account = await getAccount(accountId)
   return account?.plan === 'plus' ? 'plus' : 'free'
 }
+
+/**
+ * How many the group holds: its host's plan's (plans.ts groupMembers), Plus's free week as Plus. Joining is
+ * refused past it, and every group sent carries it, so the site says the number this refuses at rather than
+ * guessing it from the Plus mark, which a free week doesn't wear.
+ */
+async function memberLimit(group: Group): Promise<number> {
+  return planLimits(await ownerPlan(group.createdBy.accountId)).groupMembers
+}
 const INVITE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
 
 export type GroupMember = {
@@ -232,6 +241,7 @@ export async function publicGroup(
   inviteCode: string | null
   membersInvite: boolean
   canInvite: boolean
+  memberLimit: number
 }> {
   const owner = isGroupOwner(group, opts.accountId)
   const member = await isGroupMember(group, opts)
@@ -247,6 +257,7 @@ export async function publicGroup(
     inviteCode: canInvite ? group.inviteCode : null,
     membersInvite: group.membersInvite,
     canInvite,
+    memberLimit: await memberLimit(group),
   }
 }
 
@@ -274,6 +285,7 @@ export async function listGroupsFor(opts: GroupAccessOpts = {}) {
       inviteCode: canInvite ? g.inviteCode : null,
       membersInvite: g.membersInvite,
       canInvite,
+      memberLimit: await memberLimit(g),
     })
   }
   return out
@@ -372,8 +384,7 @@ export async function joinGroup(
   if (group.members.some((m) => m.name === name)) {
     return publicGroup(group, { playerName: name })
   }
-  const limits = planLimits(await ownerPlan(group.createdBy.accountId))
-  if (group.members.length >= limits.groupMembers) {
+  if (group.members.length >= (await memberLimit(group))) {
     fail('This group is full', 409, 'GROUP_FULL')
   }
 

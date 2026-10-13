@@ -70,7 +70,17 @@ export type SiteRecordEntry = {
   at: number | null
 }
 
-export type SiteRecordBoard = SiteRecordDef & { entries: SiteRecordEntry[] }
+export type SiteRecordBoard = SiteRecordDef & {
+  entries: SiteRecordEntry[]
+  /** How many share the most, which can be more than the top ten shows. */
+  leaders: number
+}
+
+/**
+ * Where one player stands on a site record: their number, their place (shared with everyone on as many: 1 +
+ * how many have more), and how many others have as many. A place of null, with no number.
+ */
+export type SiteRecordStanding = { value: number; rank: number | null; tied?: number }
 
 /**
  * Everything one player did, folded down as the rows go past.
@@ -84,35 +94,84 @@ type Tally = {
   byDay: Map<number, DayTally>
 }
 
-type DayTally = { runs: number; games: number; lastGame: string }
+type DayTally = {
+  runs: number
+  games: number
+  lastGame: string
+  /** The day's first run and its last: when the day was played, and when its runs reached their count. */
+  first: number
+  last: number
+  /**
+   * When the game counted last was first played that day, and the latest of the games' before it: so when
+   * the day reached its count of games, the moment its last new game began.
+   */
+  gameFirst: number
+  gamesBefore: number
+}
 
 const TOP_N = 10
 
-/** Ties go to the name first in the alphabet; one collator, as localeCompare would sort. */
+/** Of two equal that got there at the same moment, the name first in the alphabet; one collator, as localeCompare would sort. */
 const nameOrder = new Intl.Collator()
 
-/** Whether a row with this value and name goes above one with those. */
-function above(value: number, name: string, than: SiteRecordEntry) {
-  return value > than.value || (value === than.value && nameOrder.compare(name, than.name) < 0)
+type Ranked = SiteRecordEntry & { reached: number }
+
+/**
+ * Whether a row goes above another: the most first, and of two equal, whoever got there first, as every
+ * other record does (the dailies' records, a game's book); then the name first in the alphabet.
+ */
+function above(row: Ranked, than: Ranked) {
+  if (row.value !== than.value) return row.value > than.value
+  if (row.reached !== than.reached) return row.reached < than.reached
+  return nameOrder.compare(row.name, than.name) < 0
 }
 
 /**
- * A board's top ten, kept as the players go past: most first, and of two
- * equal, the name first in the alphabet. Sorting all twenty thousand players
- * five times over to keep ten of each was most of what building these cost.
+ * A board's top ten, kept as the players go past, in that order. Sorting all
+ * twenty thousand players five times over to keep ten of each was most of
+ * what building these cost.
  */
 class TopTen {
-  readonly entries: SiteRecordEntry[] = []
+  readonly rows: Ranked[] = []
 
-  offer(name: string, value: number, at: number | null = null) {
+  offer(name: string, value: number, reached: number, at: number | null = null) {
     if (value <= 0) return
-    const rows = this.entries
-    if (rows.length === TOP_N && !above(value, name, rows[TOP_N - 1])) return
+    const row = { name, value, reached, at }
+    const rows = this.rows
+    if (rows.length === TOP_N && !above(row, rows[TOP_N - 1])) return
     let i = rows.length
-    while (i > 0 && above(value, name, rows[i - 1])) i--
-    rows.splice(i, 0, { name, value, at })
+    while (i > 0 && above(row, rows[i - 1])) i--
+    rows.splice(i, 0, row)
     if (rows.length > TOP_N) rows.pop()
   }
+
+  get entries(): SiteRecordEntry[] {
+    return this.rows.map(({ name, value, at }) => ({ name, value, at }))
+  }
+}
+
+/**
+ * Every player's number on each board, for where one stands past the top ten: theirs by name, and each
+ * board's numbers sorted, least first, to count who has more and who has as many.
+ */
+type Standings = { byName: Map<string, number[]>; sorted: Int32Array[] }
+
+/** The first index in a sorted (least first) list whose number is above `value`. */
+function after(sorted: Int32Array, value: number): number {
+  let lo = 0
+  let hi = sorted.length
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1
+    if (sorted[mid]! <= value) lo = mid + 1
+    else hi = mid
+  }
+  return lo
+}
+
+/** How many players have more than `value` on a board, and how many have just as many. */
+function countAround(sorted: Int32Array, value: number): { more: number; same: number } {
+  const end = after(sorted, value)
+  return { more: sorted.length - end, same: end - after(sorted, value - 1) }
 }
 
 /*
@@ -124,8 +183,9 @@ class TopTen {
 const CACHE_TTL_MS = 60_000
 /** Audiences kept at once; the least recently built goes first. */
 const CACHE_SCOPES = 32
-const cache = new Map<string, { at: number; boards: SiteRecordBoard[] }>()
-const building = new Map<string, Promise<SiteRecordBoard[]>>()
+type Built = { boards: SiteRecordBoard[]; standings: Standings }
+const cache = new Map<string, { at: number; built: Built }>()
+const building = new Map<string, Promise<Built>>()
 /** Counts wholesale changes (a ban's scores voided): a build begun before one isn't kept. */
 let generation = 0
 
@@ -136,23 +196,21 @@ export function invalidateSiteRecords() {
 
 onRewrite('site-records', () => invalidateSiteRecords())
 
-export async function siteRecords(
-  scope?: { names: Set<string> } | null,
-): Promise<SiteRecordBoard[]> {
+function siteRecordsBuilt(scope?: { names: Set<string> } | null): Promise<Built> {
   const key = scope ? [...scope.names].sort().join(',') : 'everyone'
   const hit = cache.get(key)
-  if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.boards
+  if (hit && Date.now() - hit.at < CACHE_TTL_MS) return Promise.resolve(hit.built)
   let pending = building.get(key)
   if (!pending) {
     const startedAt = generation
     pending = buildSiteRecords(scope)
-      .then((boards) => {
+      .then((built) => {
         if (startedAt === generation) {
           cache.delete(key)
-          cache.set(key, { at: Date.now(), boards })
+          cache.set(key, { at: Date.now(), built })
           while (cache.size > CACHE_SCOPES) cache.delete(cache.keys().next().value as string)
         }
-        return boards
+        return built
       })
       .finally(() => building.delete(key))
     building.set(key, pending)
@@ -160,26 +218,33 @@ export async function siteRecords(
   return pending
 }
 
+export async function siteRecords(scope?: { names: Set<string> } | null): Promise<SiteRecordBoard[]> {
+  return (await siteRecordsBuilt(scope)).boards
+}
+
 /**
  * Build every site record in one pass over the scores: the copy the boards
  * are drawn from (allScores), not another read of the table.
  */
-async function buildSiteRecords(scope?: { names: Set<string> } | null): Promise<SiteRecordBoard[]> {
+async function buildSiteRecords(scope?: { names: Set<string> } | null): Promise<Built> {
   const byGame = await allScores()
 
   const tallies = new Map<string, Tally>()
-  /** Name → games whose all-time board has them at #1 (a daily has none), for "boards held". */
-  const held = new Map<string, number>()
+  /**
+   * Name → games whose all-time board has them at #1 (a daily has none), for "boards held", and when the
+   * last of them was set: when they got to as many as they hold.
+   */
+  const held = new Map<string, { boards: number; at: number }>()
 
   for (const [game, entries] of byGame) {
     // A game at a time, letting requests through in between: a few hundred
     // thousand rows in one go held everyone else up for most of a second.
     await new Promise((resolve) => setImmediate(resolve))
     // In board order, so the first row, the earlier of two equal scores, holds the board.
-    let leader: string | null = null
+    let leader: { name: string; at: number } | null = null
     for (const { name, at } of entries) {
       if (scope && !scope.names.has(name)) continue
-      if (leader == null) leader = name
+      if (leader == null) leader = { name, at }
 
       let tally = tallies.get(name)
       if (!tally) {
@@ -189,18 +254,26 @@ async function buildSiteRecords(scope?: { names: Set<string> } | null): Promise<
       const day = boardDateKey(at)
       let dayTally = tally.byDay.get(day)
       if (!dayTally) {
-        dayTally = { runs: 0, games: 0, lastGame: '' }
+        dayTally = { runs: 0, games: 0, lastGame: '', first: at, last: at, gameFirst: at, gamesBefore: 0 }
         tally.byDay.set(day, dayTally)
       }
       dayTally.runs++
+      if (at < dayTally.first) dayTally.first = at
+      if (at > dayTally.last) dayTally.last = at
       if (dayTally.lastGame !== game) {
+        // A game's rows all come together, so the one counted before is done with.
+        if (dayTally.lastGame) dayTally.gamesBefore = Math.max(dayTally.gamesBefore, dayTally.gameFirst)
         dayTally.lastGame = game
+        dayTally.gameFirst = at
         dayTally.games++
-      }
+      } else if (at < dayTally.gameFirst) dayTally.gameFirst = at
     }
     // A daily has no all-time board to hold (store.ts ALL_TIME_GAMES): its best run is only one day's course's #1.
     if (DAILY_GAMES.has(game as GameSlug)) leader = null
-    if (leader != null) held.set(leader, (held.get(leader) ?? 0) + 1)
+    if (leader != null) {
+      const had = held.get(leader.name)
+      held.set(leader.name, { boards: (had?.boards ?? 0) + 1, at: Math.max(had?.at ?? 0, leader.at) })
+    }
   }
 
   const streaks = new TopTen()
@@ -208,6 +281,8 @@ async function buildSiteRecords(scope?: { names: Set<string> } | null): Promise<
   const runsInDay = new TopTen()
   const daysPlayed = new TopTen()
   const boardsHeld = new TopTen()
+  /** Each player's five numbers, in SITE_RECORD_IDS' order. */
+  const byName = new Map<string, number[]>()
   /** Each day's day before, worked out once: there are only so many days. */
   const dayBefore = new Map<number, number>()
 
@@ -215,6 +290,7 @@ async function buildSiteRecords(scope?: { names: Set<string> } | null): Promise<
     // Oldest day first, so of two equal days the first is the one kept.
     const days = [...tally.byDay].sort((a, b) => a[0] - b[0])
     let streak = 0
+    let streakReached = 0
     let run = 0
     let prev: number | null = null
     let mostGames: DayTally | null = null
@@ -229,7 +305,10 @@ async function buildSiteRecords(scope?: { names: Set<string> } | null): Promise<
       }
       // The longest run of consecutive days present, ever: not the one ending today.
       run = prev != null && before === prev ? run + 1 : 1
-      if (run > streak) streak = run
+      if (run > streak) {
+        streak = run
+        streakReached = dayTally.first
+      }
       prev = day
       if (!mostGames || dayTally.games > mostGames.games) {
         mostGames = dayTally
@@ -240,37 +319,50 @@ async function buildSiteRecords(scope?: { names: Set<string> } | null): Promise<
         mostRunsAt = day
       }
     }
+    const lastDay = days[days.length - 1]![1]
+    const boards = held.get(name)
+    const values = [streak, mostGames?.games ?? 0, mostRuns?.runs ?? 0, days.length, boards?.boards ?? 0]
+    byName.set(name, values)
 
-    streaks.offer(name, streak)
-    gamesInDay.offer(name, mostGames?.games ?? 0, mostGamesAt)
-    runsInDay.offer(name, mostRuns?.runs ?? 0, mostRunsAt)
-    daysPlayed.offer(name, days.length)
-    boardsHeld.offer(name, held.get(name) ?? 0)
+    // Each at the moment it got there: the day its streak reached its length, its last new game of its day
+    // of most games, its last run of its busiest day, its latest day's first run, the last of its boards taken.
+    streaks.offer(name, values[0]!, streakReached)
+    gamesInDay.offer(name, values[1]!, mostGames ? Math.max(mostGames.gamesBefore, mostGames.gameFirst) : 0, mostGamesAt)
+    runsInDay.offer(name, values[2]!, mostRuns?.last ?? 0, mostRunsAt)
+    daysPlayed.offer(name, values[3]!, lastDay.first)
+    boardsHeld.offer(name, values[4]!, boards?.at ?? 0)
   }
 
-  return [
-    { ...SITE_RECORD_DEFS['day-streak'], entries: streaks.entries },
-    { ...SITE_RECORD_DEFS['games-in-a-day'], entries: gamesInDay.entries },
-    { ...SITE_RECORD_DEFS['runs-in-a-day'], entries: runsInDay.entries },
-    { ...SITE_RECORD_DEFS['days-played'], entries: daysPlayed.entries },
-    { ...SITE_RECORD_DEFS['boards-topped'], entries: boardsHeld.entries },
-  ]
+  const tops = [streaks, gamesInDay, runsInDay, daysPlayed, boardsHeld]
+  const all = [...byName.values()]
+  const sorted = SITE_RECORD_IDS.map((_, i) => Int32Array.from(all.map((v) => v[i]!).filter((v) => v > 0)).sort())
+  return {
+    boards: SITE_RECORD_IDS.map((id, i) => {
+      const entries = tops[i]!.entries
+      const most = entries[0]?.value
+      return { ...SITE_RECORD_DEFS[id], entries, leaders: most ? countAround(sorted[i]!, most).same : 0 }
+    }),
+    standings: { byName, sorted },
+  }
 }
 
-/** Where one player stands on each site record, for their own stats page. */
+/** Where one player stands on each site record, past the top ten too. */
 export async function siteRecordStandingFor(
   rawName: string,
   scope?: { names: Set<string> } | null,
-): Promise<Record<SiteRecordId, { value: number; rank: number | null }>> {
+): Promise<Record<SiteRecordId, SiteRecordStanding>> {
   const name = rawName.trim().slice(0, 12).toUpperCase()
-  const boards = await siteRecords(scope)
-  const out = {} as Record<SiteRecordId, { value: number; rank: number | null }>
-  for (const board of boards) {
-    const index = board.entries.findIndex((entry) => entry.name === name)
-    out[board.id] = {
-      value: index === -1 ? 0 : board.entries[index]!.value,
-      rank: index === -1 ? null : index + 1,
+  const { boards, standings } = await siteRecordsBuilt(scope)
+  const values = standings.byName.get(name)
+  const out = {} as Record<SiteRecordId, SiteRecordStanding>
+  boards.forEach((board, i) => {
+    const value = values?.[i] ?? 0
+    if (value <= 0) {
+      out[board.id] = { value: 0, rank: null }
+      return
     }
-  }
+    const { more, same } = countAround(standings.sorted[i]!, value)
+    out[board.id] = { value, rank: more + 1, tied: same - 1 }
+  })
   return out
 }

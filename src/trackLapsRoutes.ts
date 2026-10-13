@@ -1,5 +1,5 @@
 import { runSkin } from './skins.js'
-import { Router } from 'express'
+import { Router, type Response } from 'express'
 import { z } from 'zod'
 import { ARCHIVED, inArchive } from './archive.js'
 import { accountFromRequest } from './auth.js'
@@ -28,7 +28,8 @@ import { addTrackLap, fastestBelievable, TRACK_GAMES, trackBoard, trackDayIso, t
  *   POST /tracks/:game/:n/laps         a lap on a track after its day, checked as a day's lap is; into the
  *                                      track's record book too, and taking the record pays RECORD_TICKETS once
  *   GET  /tracks/:game/:n/ghost        the track's #1, and their lap's path if it came with one (lapGhosts.ts);
- *                                      with ?above=TAG, on today's track, the player one place above TAG
+ *                                      with ?above=TAG, on today's track, the player one place above TAG;
+ *                                      with ?of=TAG, TAG's own; { ghost: null } when there's nobody
  *   POST /tracks/:game/:n/ghost        a saved lap's path, kept if it's the track's fastest yet, and on
  *                                      today's track as its player's own ghost (next place up)
  *
@@ -260,6 +261,15 @@ function ghostGame(raw: string): GameSlug | null {
   return game && GHOST_GAMES.has(game) ? game : null
 }
 
+/*
+ * Nobody to race is an answer, not a fault: a course nobody has a run on yet, nobody above a tag, a tag with
+ * no run here. Every play page asks on load, so it's a 200, never a 404 in the console. A site from before
+ * this reads a reply without a name as no ghost, as it read the 404.
+ */
+function noGhost(res: Response, game: GameSlug, n: number) {
+  res.json({ game, track: n, ghost: null })
+}
+
 tracksRouter.get('/:game/:n/ghost', async (req, res) => {
   const game = ghostGame(req.params.game)
   const n = Number(req.params.n)
@@ -275,7 +285,7 @@ tracksRouter.get('/:game/:n/ghost', async (req, res) => {
   if (of) {
     const found = await playerGhostFor(game, n, of)
     if (!found) {
-      res.status(404).json({ error: 'That tag has no run on this course', code: 'NO_GHOST' })
+      noGhost(res, game, n)
       return
     }
     if (found.place !== 1) {
@@ -305,7 +315,7 @@ tracksRouter.get('/:game/:n/ghost', async (req, res) => {
   if (above) {
     const next = ghostState(game, n) === 'today' ? await nextGhostFor(game, n, above) : null
     if (!next) {
-      res.status(404).json({ error: 'Nobody to race above that tag', code: 'NO_GHOST' })
+      noGhost(res, game, n)
       return
     }
     const [player] = await withAvatarIds([{ name: next.name }])
@@ -325,7 +335,7 @@ tracksRouter.get('/:game/:n/ghost', async (req, res) => {
   }
   const top = await ghostFor(game, n)
   if (!top) {
-    res.status(404).json({ error: 'Nobody has a lap on this track yet', code: 'NO_GHOST' })
+    noGhost(res, game, n)
     return
   }
   const [holder] = await withAvatarIds([{ name: top.name }])

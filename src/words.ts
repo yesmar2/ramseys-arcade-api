@@ -39,12 +39,14 @@ export function gameLabel(game: string): string {
   return GAME_LABELS[game as GameSlug] ?? game
 }
 
-/** Games whose score counts something with a name of its own. */
+/**
+ * Games whose score counts something with a name of its own. Fireflies' is points, as the site says it: a
+ * note sung back is only one of the ways to them.
+ */
 const UNITS: Partial<Record<GameSlug, [string, string]>> = {
   crosswalk: ['row', 'rows'],
   stacker: ['block', 'blocks'],
   simon: ['round', 'rounds'],
-  fireflies: ['note', 'notes'],
 }
 
 export function isTime(game: GameSlug) {

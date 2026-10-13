@@ -11,7 +11,8 @@ import { dayNumberOf, trackOfDay, trackRecords } from './trackLaps.js'
  *   Days won: the days a player was 1st on the day's board, a tie going to whoever got there first, as
  *   the day's board has it. Only a day that's over counts, from the game's first course, as its past tab
  *   lists them (WON_SINCE: Ace Chase's hole #1; store.ts DAILY_SINCE for the rest), to yesterday: today's
- *   1st is only 1st so far.
+ *   1st is only 1st so far. What they're out of is every one of those days, as the past tab lists them too:
+ *   a day nobody played is a day nobody won.
  *   Course records held, Hot Lap's tracks and Ace Chase's holes: the past courses whose own board a player
  *   tops (trackLaps.ts, holes.ts). Today's course isn't one yet: its #1 is 1st today.
  *
@@ -54,20 +55,27 @@ export function dailyFirstDay(game: GameSlug): number {
   return WON_SINCE[game] ?? DAILY_SINCE[game] ?? 0
 }
 
+/** A board day's (YYYYMMDD) midnight on the UTC calendar, for counting the days between two. */
+function dayUtc(key: number): number {
+  return Date.UTC(Math.floor(key / 10_000), Math.floor((key % 10_000) / 100) - 1, key % 100)
+}
+
 /** Each day that's over and its 1st, into a count a player. */
 async function daysWon(game: GameSlug, now: number): Promise<DailyRecords['daysWon']> {
   const since = dailyFirstDay(game)
   const today = boardDateKey(now)
   const byName = new Map<string, DailyTally>()
-  let closedDays = 0
+  let won = 0
   // Newest first, so a player's first day met is their latest win.
   for (const day of await dailyDays(game, null, dayResultKeep(game))) {
     if (day.day < since || day.day >= today) continue
-    closedDays++
+    won++
     const had = byName.get(day.top.name)
     if (had) had.count++
     else byName.set(day.top.name, { name: day.top.name, count: 1, reached: day.day, courses: [] })
   }
+  // Every day that's over since the first, played or not, as the past tab lists them.
+  const closedDays = since ? Math.max(won, Math.round((dayUtc(today) - dayUtc(since)) / 86_400_000)) : won
   return { closedDays, ranked: ranked(byName.values()) }
 }
 

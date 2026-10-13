@@ -1,4 +1,4 @@
-import { and, eq, gt, gte, inArray, isNotNull, lt, notInArray, sql } from 'drizzle-orm'
+import { and, eq, gt, gte, isNotNull, lt, notInArray, sql } from 'drizzle-orm'
 import { db } from './db/client.js'
 import { accounts, appMeta, memberships, prizesOwned, seasonPlus, seasonProgress, ticketLedger, trophyAwards } from './db/schema.js'
 import { getClaim, namesOwnedByAccount, resolveAvatarId } from './names.js'
@@ -77,7 +77,7 @@ export type SeasonDef = {
 }
 
 export type SeasonGoal = {
-  /** dailies: days the Dailies were kept in the season; games: different games that paid run tickets in it. */
+  /** dailies: days the Dailies were kept in the season; games: different games that paid tickets for the pass in it. */
   id: 'dailies' | 'games'
   title: string
   need: number
@@ -800,8 +800,11 @@ export async function seasonStandingsView(_season: SeasonNow, accountId: string 
 
 export type SeasonGoalView = SeasonGoal & { have: number; done: boolean }
 
-const RUN_REASONS = ['run', 'best', 'pickup']
-
+/**
+ * Where a player is on a goal. The games one counts each game any ticket that moves the pass came from (as
+ * seasonEarned counts them): a run's, a first go's, a day's top three, a record taken, an event's daily.
+ * Tickets that come from no game (a bug caught, Blip's question, a Today milestone) add no game.
+ */
 async function goalCount(goal: SeasonGoal, accountId: string, season: SeasonNow, now: number): Promise<number> {
   if (goal.id === 'dailies') {
     const from = boardDateKey(season.startsAt)
@@ -819,7 +822,7 @@ async function goalCount(goal: SeasonGoal, accountId: string, season: SeasonNow,
         gt(ticketLedger.amount, 0),
         gte(ticketLedger.at, season.startsAt),
         lt(ticketLedger.at, season.endsAt),
-        inArray(ticketLedger.reason, RUN_REASONS),
+        notInArray(ticketLedger.reason, NOT_COUNTED),
         isNotNull(ticketLedger.game),
       ),
     )

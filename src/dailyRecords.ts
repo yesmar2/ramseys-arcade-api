@@ -1,18 +1,25 @@
 import { ACECHASE_FIRST_DAY } from './courseNames.js'
 import { holeRecords, holeToday } from './holes.js'
 import { TRIES_SCORE_BASE, TRIES_SCORED_GAMES } from './scoreLimits.js'
-import { boardDateKey, DAILY_SINCE, dailyDays, type GameSlug } from './store.js'
+import { boardDateKey, DAILY_SINCE, dailyDays, dayBoards, type GameSlug } from './store.js'
+import { ladderFor, RACE_MEDAL_STEP } from './ticketLadders.js'
 import { dayNumberOf, trackOfDay, trackRecords } from './trackLaps.js'
 
 /*
  * A daily's records of its own, for the Records tab of its page on the site: the ones its boards don't
- * already show. "Days played in a row" is in its record book (records.ts); these two come from the boards.
+ * already show. "Days played in a row" is in its record book (records.ts); these come from the boards.
  *
  *   Days won: the days a player was 1st on the day's board, a tie going to whoever got there first, as
  *   the day's board has it. Only a day that's over counts, from the game's first course, as its past tab
  *   lists them (WON_SINCE: Ace Chase's hole #1; store.ts DAILY_SINCE for the rest), to yesterday: today's
  *   1st is only 1st so far. What they're out of is every one of those days, as the past tab lists them too:
  *   a day nobody played is a day nobody won.
+ *   Days on the podium: the same, 1st, 2nd or 3rd. Far more players get there than win a day (Ramsey,
+ *   2026-10-13: "yes, all of it").
+ *   Gold medals in a row: the racing dailies', a gold or platinum on the day's course day after day. A daily's
+ *   scores can't be held to one line, each day's course being its own, but its medals go by each day's blue
+ *   run (ticketLadders.ts), so a run of them means the same whichever days they were. Today adds to a streak
+ *   once it's gold, and only a day that's over ends one.
  *   Course records held, Hot Lap's tracks and Ace Chase's holes: the past courses whose own board a player
  *   tops (trackLaps.ts, holes.ts). Today's course isn't one yet: its #1 is 1st today.
  *
@@ -29,6 +36,9 @@ export type DailyTally = { name: string; count: number; reached: number; courses
 
 export type DailyRecords = {
   daysWon: { closedDays: number; ranked: DailyTally[] }
+  podiumDays: { closedDays: number; ranked: DailyTally[] }
+  /** The racing dailies only: each player's longest run of gold medals, and the day it was reached. */
+  goldStreak: { ranked: DailyTally[] } | null
   /** Hot Lap and Ace Chase only. */
   courseRecords: { pastCourses: number; ranked: DailyTally[] } | null
 }
@@ -74,9 +84,72 @@ async function daysWon(game: GameSlug, now: number): Promise<DailyRecords['daysW
     if (had) had.count++
     else byName.set(day.top.name, { name: day.top.name, count: 1, reached: day.day, courses: [] })
   }
-  // Every day that's over since the first, played or not, as the past tab lists them.
-  const closedDays = since ? Math.max(won, Math.round((dayUtc(today) - dayUtc(since)) / 86_400_000)) : won
-  return { closedDays, ranked: ranked(byName.values()) }
+  return { closedDays: daysOver(since, today, won), ranked: ranked(byName.values()) }
+}
+
+/** Every day that's over since a daily's first, played or not, as the past tab lists them: at least the days met. */
+function daysOver(since: number, today: number, met: number): number {
+  return since ? Math.max(met, Math.round((dayUtc(today) - dayUtc(since)) / 86_400_000)) : met
+}
+
+/** Each day that's over and its top three, into a count a player: the day they last made it is when they got there. */
+async function podiumDays(game: GameSlug, now: number): Promise<DailyRecords['podiumDays']> {
+  const since = dailyFirstDay(game)
+  const today = boardDateKey(now)
+  const byName = new Map<string, DailyTally>()
+  let met = 0
+  for (const [day, players] of await dayBoards(game)) {
+    if (day < since || day >= today || !players.length) continue
+    met++
+    for (const { name } of players.slice(0, 3)) {
+      const had = byName.get(name)
+      if (had) {
+        had.count++
+        had.reached = Math.max(had.reached, day)
+      } else byName.set(name, { name, count: 1, reached: day, courses: [] })
+    }
+  }
+  return { closedDays: daysOver(since, today, met), ranked: ranked(byName.values()) }
+}
+
+/** The day after a board day (YYYYMMDD), on the calendar. */
+function nextDay(key: number): number {
+  const d = new Date(dayUtc(key) + 86_400_000)
+  return d.getUTCFullYear() * 10_000 + (d.getUTCMonth() + 1) * 100 + d.getUTCDate()
+}
+
+/** A gold streak's least: one gold day is a day, not a run of them. */
+const GOLD_STREAK_MIN = 2
+
+/**
+ * Each player's longest run of gold (or platinum) medals on a racing daily's days, one day after another: gold is
+ * the third step of the day's ladder, by its blue run. A day they didn't play, or played short of gold, ends a run,
+ * once the day is over. Null for a daily without medals.
+ */
+async function goldStreaks(game: GameSlug, now: number): Promise<DailyRecords['goldStreak']> {
+  if (!(game in RACE_MEDAL_STEP)) return null
+  const today = boardDateKey(now)
+  const boards = await dayBoards(game)
+  const going = new Map<string, number>()
+  const best = new Map<string, { count: number; reached: number }>()
+  for (let day = dailyFirstDay(game); day > 0 && day <= today; day = nextDay(day)) {
+    // A moment in the day on the boards' clock (America/New_York), for the ladder its plan gives it.
+    const gold = (await ladderFor(game, dayUtc(day) + 16 * 3_600_000)).steps[2]?.at
+    const golds = new Set<string>()
+    if (gold != null) for (const p of boards.get(day) ?? []) if (p.score >= gold) golds.add(p.name)
+    for (const name of golds) {
+      const count = (going.get(name) ?? 0) + 1
+      going.set(name, count)
+      const had = best.get(name)
+      if (!had || count > had.count) best.set(name, { count, reached: day })
+    }
+    // Today's still open: only a day that's over ends a run.
+    if (day === today) continue
+    for (const name of [...going.keys()]) if (!golds.has(name)) going.delete(name)
+  }
+  const tallies: DailyTally[] = []
+  for (const [name, { count, reached }] of best) if (count >= GOLD_STREAK_MIN) tallies.push({ name, count, reached, courses: [] })
+  return { ranked: ranked(tallies) }
 }
 
 /** Each past course's #1, into a count a player, with the courses they hold. */
@@ -120,10 +193,14 @@ const cache = new Map<GameSlug, { at: number; records: Promise<DailyRecords> }>(
 export function dailyRecords(game: GameSlug, now = Date.now()): Promise<DailyRecords> {
   const hit = cache.get(game)
   if (hit && now - hit.at < CACHE_MS) return hit.records
-  const records = Promise.all([daysWon(game, now), courseRecords(game, now)]).then(([days, courses]) => ({
-    daysWon: days,
-    courseRecords: courses,
-  }))
+  const records = Promise.all([daysWon(game, now), podiumDays(game, now), goldStreaks(game, now), courseRecords(game, now)]).then(
+    ([days, podium, gold, courses]) => ({
+      daysWon: days,
+      podiumDays: podium,
+      goldStreak: gold,
+      courseRecords: courses,
+    }),
+  )
   cache.set(game, { at: now, records })
   // A failed read isn't kept: the next ask tries again.
   records.catch(() => {

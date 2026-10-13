@@ -11,12 +11,15 @@ import { onRewrite } from './feed.js'
  *
  * All of them are lifetime. A record that resets every Monday is a leaderboard,
  * and the site already has those.
+ *
+ * "Busiest day", the most scores saved in a day whatever they were, went (Ramsey, 2026-10-13: "yes, all of
+ * it"): a hundred runs thrown away a minute each beat a day of good ones. The streak is "Days played in a row",
+ * as each game's is: the Dailies streak in the header is another thing, two of the day's races a day.
  */
 
 export const SITE_RECORD_IDS = [
   'day-streak',
   'games-in-a-day',
-  'runs-in-a-day',
   'days-played',
   'boards-topped',
 ] as const
@@ -27,13 +30,13 @@ export type SiteRecordDef = {
   label: string
   /** One line on what earns a place, in the same voice as the game books. */
   blurb: string
-  unit: 'days' | 'games' | 'runs' | 'boards'
+  unit: 'days' | 'games' | 'boards'
 }
 
 export const SITE_RECORD_DEFS: Record<SiteRecordId, SiteRecordDef> = {
   'day-streak': {
     id: 'day-streak',
-    label: 'Longest streak',
+    label: 'Days played in a row',
     blurb: 'Days in a row with a run on the board. Miss one and it starts again.',
     unit: 'days',
   },
@@ -42,12 +45,6 @@ export const SITE_RECORD_DEFS: Record<SiteRecordId, SiteRecordDef> = {
     label: 'Most games in a day',
     blurb: 'Different cabinets played between one midnight and the next.',
     unit: 'games',
-  },
-  'runs-in-a-day': {
-    id: 'runs-in-a-day',
-    label: 'Busiest day',
-    blurb: 'Most scores saved in a single day, whatever they were.',
-    unit: 'runs',
   },
   'days-played': {
     id: 'days-played',
@@ -278,10 +275,9 @@ async function buildSiteRecords(scope?: { names: Set<string> } | null): Promise<
 
   const streaks = new TopTen()
   const gamesInDay = new TopTen()
-  const runsInDay = new TopTen()
   const daysPlayed = new TopTen()
   const boardsHeld = new TopTen()
-  /** Each player's five numbers, in SITE_RECORD_IDS' order. */
+  /** Each player's four numbers, in SITE_RECORD_IDS' order. */
   const byName = new Map<string, number[]>()
   /** Each day's day before, worked out once: there are only so many days. */
   const dayBefore = new Map<number, number>()
@@ -295,8 +291,6 @@ async function buildSiteRecords(scope?: { names: Set<string> } | null): Promise<
     let prev: number | null = null
     let mostGames: DayTally | null = null
     let mostGamesAt: number | null = null
-    let mostRuns: DayTally | null = null
-    let mostRunsAt: number | null = null
     for (const [day, dayTally] of days) {
       let before = dayBefore.get(day)
       if (before === undefined) {
@@ -314,26 +308,21 @@ async function buildSiteRecords(scope?: { names: Set<string> } | null): Promise<
         mostGames = dayTally
         mostGamesAt = day
       }
-      if (!mostRuns || dayTally.runs > mostRuns.runs) {
-        mostRuns = dayTally
-        mostRunsAt = day
-      }
     }
     const lastDay = days[days.length - 1]![1]
     const boards = held.get(name)
-    const values = [streak, mostGames?.games ?? 0, mostRuns?.runs ?? 0, days.length, boards?.boards ?? 0]
+    const values = [streak, mostGames?.games ?? 0, days.length, boards?.boards ?? 0]
     byName.set(name, values)
 
     // Each at the moment it got there: the day its streak reached its length, its last new game of its day
-    // of most games, its last run of its busiest day, its latest day's first run, the last of its boards taken.
+    // of most games, its latest day's first run, the last of its boards taken.
     streaks.offer(name, values[0]!, streakReached)
     gamesInDay.offer(name, values[1]!, mostGames ? Math.max(mostGames.gamesBefore, mostGames.gameFirst) : 0, mostGamesAt)
-    runsInDay.offer(name, values[2]!, mostRuns?.last ?? 0, mostRunsAt)
-    daysPlayed.offer(name, values[3]!, lastDay.first)
-    boardsHeld.offer(name, values[4]!, boards?.at ?? 0)
+    daysPlayed.offer(name, values[2]!, lastDay.first)
+    boardsHeld.offer(name, values[3]!, boards?.at ?? 0)
   }
 
-  const tops = [streaks, gamesInDay, runsInDay, daysPlayed, boardsHeld]
+  const tops = [streaks, gamesInDay, daysPlayed, boardsHeld]
   const all = [...byName.values()]
   const sorted = SITE_RECORD_IDS.map((_, i) => Int32Array.from(all.map((v) => v[i]!).filter((v) => v > 0)).sort())
   return {

@@ -29,11 +29,14 @@ import {
 
 /** Default page of a record board, for callers that ask for no depth. */
 const BOARD_PAGE = 100
-const ASTEROIDS_WAVE_MAX = 20
-// Fastest to length 20 was retired (Ramsey, 2026-10-05): the books start at 30.
-const SNAKE_LENGTH_MILESTONE_MIN = 30
-const SNAKE_LENGTH_MILESTONE_MAX = 100
-const SNAKE_LENGTH_MILESTONE_STEP = 10
+/*
+ * The waves Asteroids times a clear of, and the lengths Snake times a growth to, in their books: every fifth
+ * wave, and 30, 50, 75 and 100 (Ramsey, 2026-10-13: "yes, all of it", trimming them). They were every wave to
+ * 20 and every tenth length from 30, and past the first few nobody reached them: a wall of empty books at the
+ * top of each game's Records tab. Fastest to length 20 was retired before (2026-10-05).
+ */
+const ASTEROIDS_WAVE_BOOKS: readonly number[] = [5, 10, 15, 20]
+const SNAKE_LENGTH_BOOKS: readonly number[] = [30, 50, 75, 100]
 const CROSSWALK_ROW_MILESTONE_MIN = 50
 const CROSSWALK_ROW_MILESTONE_MAX = 200
 const CROSSWALK_ROW_MILESTONE_STEP = 25
@@ -71,17 +74,13 @@ function boardKey(game: GameSlug, recordId: string) {
 }
 
 function buildAsteroidsWaveRecords(): RecordDef[] {
-  const defs: RecordDef[] = []
-  for (let wave = 1; wave <= ASTEROIDS_WAVE_MAX; wave++) {
-    defs.push({
-      id: `wave-time-${wave}`,
-      game: 'asteroids',
-      label: `Wave ${wave} clear`,
-      direction: 'lower',
-      unit: 'ms',
-    })
-  }
-  return defs
+  return ASTEROIDS_WAVE_BOOKS.map((wave) => ({
+    id: `wave-time-${wave}`,
+    game: 'asteroids',
+    label: `Wave ${wave} clear`,
+    direction: 'lower',
+    unit: 'ms',
+  }))
 }
 
 const ASTEROIDS_HIGHEST_COMBO: RecordDef = {
@@ -101,21 +100,13 @@ const PATRIOT_DIRECT_STREAK: RecordDef = {
 }
 
 function buildSnakeFastestLengthRecords(): RecordDef[] {
-  const defs: RecordDef[] = []
-  for (
-    let length = SNAKE_LENGTH_MILESTONE_MIN;
-    length <= SNAKE_LENGTH_MILESTONE_MAX;
-    length += SNAKE_LENGTH_MILESTONE_STEP
-  ) {
-    defs.push({
-      id: `fastest-length-${length}`,
-      game: 'snake',
-      label: `Fastest to length ${length}`,
-      direction: 'lower',
-      unit: 'ms',
-    })
-  }
-  return defs
+  return SNAKE_LENGTH_BOOKS.map((length) => ({
+    id: `fastest-length-${length}`,
+    game: 'snake',
+    label: `Fastest to length ${length}`,
+    direction: 'lower',
+    unit: 'ms',
+  }))
 }
 
 function buildCrosswalkFastestRowRecords(): RecordDef[] {
@@ -314,6 +305,91 @@ const FRENZY_LEVIATHAN: RecordDef = {
   fastest: 40_000,
 }
 
+/*
+ * Books for the games that had only the two every game keeps, and a few more of what the games already count
+ * (Ramsey, 2026-10-13: "yes, all of it"). Each is a run's figure, posted once the run is over. Only Putt's has a
+ * cap: a round is five holes, so five holes in one at most. The rest lean on the run, the rate limit and the ban
+ * list, as the other books without a measured cap do (recordsRoutes.ts recordFits).
+ */
+const PUTT_HOLES_IN_ONE: RecordDef = {
+  id: 'holes-in-one',
+  game: 'putt',
+  label: 'Holes in one in a round',
+  direction: 'higher',
+  unit: 'count',
+  cap: { floor: 5, perSecond: 0 },
+}
+
+/** Bullets brushed past without being hit: Barrage's own way of playing close. */
+const BARRAGE_GRAZES: RecordDef = {
+  id: 'grazes',
+  game: 'barrage',
+  label: 'Grazes in a run',
+  direction: 'higher',
+  unit: 'count',
+}
+
+const BARRAGE_FURTHEST_WAVE: RecordDef = {
+  id: 'furthest-wave',
+  game: 'barrage',
+  label: 'Furthest wave',
+  direction: 'higher',
+  unit: 'count',
+}
+
+/** The longest tune sung back in a run: Fireflies' first tune is three notes, and each one got right adds one. */
+const FIREFLIES_LONGEST_TUNE: RecordDef = {
+  id: 'longest-tune',
+  game: 'fireflies',
+  label: 'Longest tune sung back',
+  direction: 'higher',
+  unit: 'count',
+}
+
+/** Nights all five lanterns were lit and the night was through. */
+const FIREFLIES_NIGHTS: RecordDef = {
+  id: 'nights-cleared',
+  game: 'fireflies',
+  label: 'Nights cleared in a run',
+  direction: 'higher',
+  unit: 'count',
+}
+
+/** Kills set off one from another: the same book id as Crosswalk's chain, so it reads and is called the same way. */
+const PATRIOT_LONGEST_CHAIN: RecordDef = {
+  id: 'longest-chain',
+  game: 'patriot',
+  label: 'Longest chain',
+  direction: 'higher',
+  unit: 'count',
+}
+
+/** Waves in a row that ended with every city they started with still standing. */
+const PATRIOT_CLEAN_WAVES: RecordDef = {
+  id: 'clean-wave-streak',
+  game: 'patriot',
+  label: 'Waves without losing a city',
+  direction: 'higher',
+  unit: 'count',
+}
+
+const PELLETS_MAZES: RecordDef = {
+  id: 'mazes-cleared',
+  game: 'pellets',
+  label: 'Mazes cleared in a run',
+  direction: 'higher',
+  unit: 'count',
+}
+
+/** Fruit eaten one after another while each one's ring still ran. */
+const SNAKE_LONGEST_CHAIN: RecordDef = {
+  id: 'longest-chain',
+  game: 'snake',
+  label: 'Longest chain',
+  direction: 'higher',
+  unit: 'count',
+}
+
 export const PLAY_DAYS_STREAK_ID = 'play-days-streak'
 export const THRESHOLD_STREAK_ID = 'threshold-streak'
 
@@ -323,29 +399,35 @@ const MIN_CROSS_RUN_STREAK = 2
 /**
  * Score a run must meet (or beat) to keep a “strong scores in a row” streak.
  * Spotter uses inverted time (higher board score = faster clear).
+ *
+ * Each is about the score a quarter of runs reach, from the games' ticket ladders on the seeded worlds, whose runs
+ * are played by each game's own model (Ramsey, 2026-10-13: "yes, all of it"). Most had been picked by hand before
+ * anyone played, and more than half of all runs cleared them, so their books counted runs played rather than good
+ * runs, as Frenzy's did at 3,000; Putt's asked for two holes in one a round. The books were counted again at these
+ * lines (repairs.ts). Set them again from real runs a few weeks after launch.
  */
 export const SCORE_STREAK_THRESHOLDS: Record<GameSlug, number> = {
-  barrage: 4000,
+  barrage: 10_000,
   // Ramsey, 2026-10-11: "scores over 10,000 in a row". At 3,000 most runs counted; the book was counted again at
   // this line (repairs.ts).
   frenzy: 10_000,
-  asteroids: 1000,
-  patriot: 1000,
-  snake: 500,
+  asteroids: 20_000,
+  patriot: 5000,
+  snake: 600,
   crosswalk: 75,
-  stacker: 15,
+  stacker: 25,
   centroid: 0,
-  pop: 300,
+  pop: 1500,
   simon: 10,
   spotter: 955_000, // ≈ under 45s
-  pellets: 2000,
+  pellets: 5000,
   findbug: 940_000, // ≈ a full five-scene run under 60s
-  crumbtrail: 10_000,
-  bop: 25,
-  // Putt's five short holes are par 10, and a round at par pays 1,000: this is four under, or fewer with aces.
-  putt: 1400,
+  crumbtrail: 6000,
+  bop: 40,
+  // A round at par: five holes in two strokes each pays 1,000.
+  putt: 1000,
   fireflies: 60,
-  pileup: 3000,
+  pileup: 9000,
   // Dailies: none kept (see buildCrossRunStreakRecords).
   acechase: 0,
   hotlap: 0,
@@ -410,6 +492,15 @@ const RECORD_DEFS: RecordDef[] = [
   FRENZY_CHAIN,
   FRENZY_FRENZIES,
   FRENZY_LEVIATHAN,
+  PUTT_HOLES_IN_ONE,
+  BARRAGE_GRAZES,
+  BARRAGE_FURTHEST_WAVE,
+  FIREFLIES_LONGEST_TUNE,
+  FIREFLIES_NIGHTS,
+  PATRIOT_LONGEST_CHAIN,
+  PATRIOT_CLEAN_WAVES,
+  PELLETS_MAZES,
+  SNAKE_LONGEST_CHAIN,
   ...buildAsteroidsWaveRecords(),
   ...buildSnakeFastestLengthRecords(),
   ...buildCrosswalkFastestRowRecords(),
@@ -574,25 +665,14 @@ export function getRecordDef(game: string, recordId: string): RecordDef | null {
 
 export function isAsteroidsWaveTimeRecord(recordId: string): number | null {
   const match = /^wave-time-(\d+)$/.exec(recordId)
-  if (!match) return null
-  const wave = Number(match[1])
-  if (!Number.isInteger(wave) || wave < 1 || wave > ASTEROIDS_WAVE_MAX) return null
-  return wave
+  const wave = match ? Number(match[1]) : NaN
+  return ASTEROIDS_WAVE_BOOKS.includes(wave) ? wave : null
 }
 
 export function isSnakeFastestLengthRecord(recordId: string): number | null {
   const match = /^fastest-length-(\d+)$/.exec(recordId)
-  if (!match) return null
-  const length = Number(match[1])
-  if (
-    !Number.isInteger(length) ||
-    length < SNAKE_LENGTH_MILESTONE_MIN ||
-    length > SNAKE_LENGTH_MILESTONE_MAX ||
-    length % SNAKE_LENGTH_MILESTONE_STEP !== 0
-  ) {
-    return null
-  }
-  return length
+  const length = match ? Number(match[1]) : NaN
+  return SNAKE_LENGTH_BOOKS.includes(length) ? length : null
 }
 
 export function isCrosswalkFastestRowRecord(recordId: string): number | null {
@@ -1406,15 +1486,13 @@ export async function renamePlayerAcrossRecords(
 }
 
 export {
-  ASTEROIDS_WAVE_MAX,
+  ASTEROIDS_WAVE_BOOKS,
   ASTEROIDS_HIGHEST_COMBO,
   PATRIOT_DIRECT_STREAK,
   PELLETS_CRUMB_STREAK,
   CRUMBTRAIL_ROWS,
   CRUMBTRAIL_CRUMB_STREAK,
-  SNAKE_LENGTH_MILESTONE_MIN,
-  SNAKE_LENGTH_MILESTONE_MAX,
-  SNAKE_LENGTH_MILESTONE_STEP,
+  SNAKE_LENGTH_BOOKS,
   CROSSWALK_ROW_MILESTONE_MIN,
   CROSSWALK_ROW_MILESTONE_MAX,
   CROSSWALK_ROW_MILESTONE_STEP,

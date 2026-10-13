@@ -175,7 +175,8 @@ const asteroids: Model = (q, rng) => {
     t += secs
     const par = Math.max(28, 48 - (wave - 1) * 2)
     score += rocks * perRock * luck(rng, 0.1) + (wave + 1) * 50 + Math.max(0, Math.round(par - secs)) * 20
-    records.push({ recordId: `wave-time-${wave}`, value: Math.round(secs * 1000), atMs: t * 1000 })
+    // Every fifth wave's clear is timed in a book (records.ts ASTEROIDS_WAVE_BOOKS).
+    if (wave % 5 === 0) records.push({ recordId: `wave-time-${wave}`, value: Math.round(secs * 1000), atMs: t * 1000 })
   }
   const rocks = Math.min(5 + cleared, 12)
   const share = rng() * 0.85
@@ -193,6 +194,11 @@ const patriot: Model = (q, rng) => {
   const records: RunRecord[] = []
   const direct = Math.round(curve(q, 1.3, 4, 11) * luck(rng, 0.35))
   if (direct >= 2) records.push({ recordId: 'direct-streak', value: direct, atMs: play * 1000 })
+  // Kills set off one from another, and waves in a row with no city lost (the site's PATRIOT book floors).
+  const chain = Math.round(curve(q, 2, 4.5, 10) * luck(rng, 0.35))
+  if (chain >= 3) records.push({ recordId: 'longest-chain', value: chain, atMs: play * 1000 })
+  const clean = Math.round(curve(q, 0.8, 2.5, 7) * luck(rng, 0.4))
+  if (clean >= 2) records.push({ recordId: 'clean-wave-streak', value: clean, atMs: play * 1000 })
   return finish('patriot', rng, score, play, records)
 }
 
@@ -207,13 +213,17 @@ const snake: Model = (q, rng) => {
   const score = roundTo(foods * (21 + 0.17 * foods) * between(rng, 0.95, 1.05), 2)
   const times = stepTimes(rng, foods, lerp(2.8, 1.6, q) * between(rng, 0.92, 1.1), 0.4)
   const records: RunRecord[] = []
-  for (let m = 30; m <= 100; m += 10) {
+  // The lengths timed in a book (records.ts SNAKE_LENGTH_BOOKS).
+  for (const m of [30, 50, 75, 100]) {
     if (length < m) break
     const at = times[m - 4]! * 1000
     records.push({ recordId: `fastest-length-${m}`, value: Math.round(at), atMs: at })
   }
   const play = times[foods - 1]! + between(rng, 1, 6)
   if (length >= 8) records.push({ recordId: 'longest', value: length, atMs: play * 1000 })
+  // Fruit eaten one after another inside each one's ring: the better the player, the longer they keep it going.
+  const chain = Math.min(foods, Math.round(curve(q, 2, 5, 14) * luck(rng, 0.35)))
+  if (chain >= 3) records.push({ recordId: 'longest-chain', value: chain, atMs: play * 1000 })
   return finish('snake', rng, score, play, records)
 }
 
@@ -276,6 +286,9 @@ const pellets: Model = (q, rng) => {
   const records: RunRecord[] = []
   const crumbs = Math.round(curve(q, 9, 22, 46) * luck(rng, 0.25) * (0.8 + 0.2 * Math.min(1, score / 5000)))
   if (crumbs >= 10) records.push({ recordId: 'crumb-streak', value: crumbs, atMs: play * 1000 })
+  // A maze is its crumbs and a chaser or two: a few thousand points.
+  const mazes = Math.floor(score / between(rng, 3200, 4200))
+  if (mazes >= 1) records.push({ recordId: 'mazes-cleared', value: mazes, atMs: play * 1000 })
   return finish('pellets', rng, score, play, records)
 }
 
@@ -310,20 +323,28 @@ const putt: Model = (q, rng) => {
   const spread = lerp(0.8, 0.6, q)
   let score = 0
   let strokes = 0
+  let aces = 0
   for (const par of PUTT_PARS) {
     const s = Math.max(1, Math.round(par + offset + gauss(rng) * spread))
     strokes += s
+    if (s === 1) aces += 1
     score += Math.max(0, par + 2 - s) * 100 + (s === 1 ? 200 : 0)
   }
   // Each hole's fly-over and drop, and each stroke's look, pull and roll.
   const play = strokes * between(rng, 5.5, 8) + PUTT_PARS.length * between(rng, 3, 4.5)
-  return finish('putt', rng, score, play, [])
+  const records: RunRecord[] = aces >= 1 ? [{ recordId: 'holes-in-one', value: aces, atMs: play * 1000 }] : []
+  return finish('putt', rng, score, play, records)
 }
 
 const barrage: Model = (q, rng) => {
   const score = Math.max(50, Math.round(soften(curve(q, 850, 6500, 26_000) * luck(rng, 0.42), 50_000, 90_000)))
   const play = score / (lerp(38, 115, q) * between(rng, 0.85, 1.15))
-  return finish('barrage', rng, score, play, [])
+  // The wave it got to, and the bullets brushed past on the way: the better the player, the closer they fly.
+  const wave = Math.max(1, Math.round(1 + Math.sqrt(score / 90) * between(rng, 0.85, 1.1)))
+  const grazes = Math.round(play * lerp(0.3, 1.8, q) * between(rng, 0.7, 1.3))
+  const records: RunRecord[] = [{ recordId: 'furthest-wave', value: wave, atMs: play * 1000 }]
+  if (grazes >= 10) records.push({ recordId: 'grazes', value: grazes, atMs: play * 1000 })
+  return finish('barrage', rng, score, play, records)
 }
 
 /**
@@ -368,7 +389,7 @@ const fireflies: Model = (q, rng) => {
         const slip = 0.02 + 0.9 / (1 + Math.exp(-(len - span) / 1.1))
         if (rng() < slip) {
           const got = Math.floor(rng() * len)
-          return finish('fireflies', rng, score + got, t + watch + got * 0.55 + 1, [])
+          return finish('fireflies', rng, score + got, t + watch + got * 0.55 + 1, fireflyBooks(tunes, night - 1, t))
         }
         score += len
         t += watch + len * 0.55
@@ -391,7 +412,16 @@ const fireflies: Model = (q, rng) => {
     score += 5
     t += 4
   }
-  return finish('fireflies', rng, score, t, [])
+  return finish('fireflies', rng, score, t, fireflyBooks(tunes, 39, t))
+}
+
+/** Fireflies' books at a run's end: its longest tune sung back (3 notes the first), and the nights it cleared. */
+function fireflyBooks(tunes: number, nights: number, t: number): RunRecord[] {
+  const records: RunRecord[] = []
+  const longest = tunes > 0 ? 3 + tunes - 1 : 0
+  if (longest >= 5) records.push({ recordId: 'longest-tune', value: longest, atMs: t * 1000 })
+  if (nights >= 1) records.push({ recordId: 'nights-cleared', value: nights, atMs: t * 1000 })
+  return records
 }
 
 /**

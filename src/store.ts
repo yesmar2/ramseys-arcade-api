@@ -1148,6 +1148,14 @@ async function dayIndex(game: GameSlug): Promise<Map<number, DayPlayer[]>> {
 }
 
 /**
+ * Every day's players on a game, best first, by day key (YYYYMMDD): each tag's best run that day, a tie going to
+ * whoever got there first. Read only: it's the kept index, for a daily's records (dailyRecords.ts).
+ */
+export async function dayBoards(game: GameSlug): Promise<ReadonlyMap<number, readonly DayPlayer[]>> {
+  return dayIndex(game)
+}
+
+/**
  * A day's players on a game, best first: each tag's best run that day, a tie
  * going to whoever got there first. What a daily's top three are paid by
  * (tickets.ts), once the day is over, and a Hot Lap track's own board begins

@@ -458,10 +458,11 @@ leaderboardsRouter.get('/:game/days', async (req, res) => {
 
 /**
  * A daily's records of its own (dailyRecords.ts), for the Records tab of its page: who has won the most
- * days (days that are over), and on Hot Lap and Ace Chase who holds the most past tracks' or holes'
- * records, with the numbers of the ones they hold. With `name`, where that tag stands on each, or null when
- * it has none. `place` is its place in the order shown; `tied` is how many others have as many.
- * `leaders` is how many share the top count: `top` is only the first ten.
+ * days (days that are over), who has been on the most days' podiums, on a racing daily the longest run of
+ * gold medals, and on Hot Lap and Ace Chase who holds the most past tracks' or holes' records, with the
+ * numbers of the ones they hold. With `name`, where that tag stands on each, or null when it has none.
+ * `place` is its place in the order shown; `tied` is how many others have as many. `leaders` is how many
+ * share the top count: `top` is only the first ten.
  */
 leaderboardsRouter.get('/:game/daily-records', async (req, res) => {
   const game = resolveGameSlug(req.params.game)
@@ -474,12 +475,22 @@ leaderboardsRouter.get('/:game/daily-records', async (req, res) => {
     return
   }
   const who = typeof req.query.name === 'string' && req.query.name.trim() ? req.query.name.trim().slice(0, 12).toUpperCase() : null
-  const { daysWon, courseRecords } = await dailyRecords(game)
+  const { daysWon, podiumDays, goldStreak, courseRecords } = await dailyRecords(game)
   const days = who ? standingOn(daysWon.ranked, who) : null
   const courses = who && courseRecords ? standingOn(courseRecords.ranked, who) : null
   const dayTop = await withAvatarIds(daysWon.ranked.slice(0, 10))
   const courseTop = courseRecords ? await withAvatarIds(courseRecords.ranked.slice(0, 10)) : []
   const atTop = (ranked: DailyTally[]) => (ranked[0] ? ranked.filter((t) => t.count === ranked[0]!.count).length : 0)
+  /** A count of days, as Days won is said: the first ten, and where `name` stands. */
+  const dayCount = async (ranked: DailyTally[]) => {
+    const mine = who ? standingOn(ranked, who) : null
+    return {
+      players: ranked.length,
+      leaders: atTop(ranked),
+      top: (await withAvatarIds(ranked.slice(0, 10))).map((t) => ({ name: t.name, days: t.count, avatarId: t.avatarId })),
+      you: mine ? { days: mine.tally.count, place: mine.place, tied: mine.tied } : null,
+    }
+  }
   res.setHeader('Cache-Control', 'public, max-age=30')
   res.json({
     game,
@@ -490,6 +501,8 @@ leaderboardsRouter.get('/:game/daily-records', async (req, res) => {
       top: dayTop.map((t) => ({ name: t.name, days: t.count, avatarId: t.avatarId })),
       you: days ? { days: days.tally.count, place: days.place, tied: days.tied } : null,
     },
+    podiumDays: { closedDays: podiumDays.closedDays, ...(await dayCount(podiumDays.ranked)) },
+    ...(goldStreak ? { goldStreak: await dayCount(goldStreak.ranked) } : {}),
     ...(courseRecords
       ? {
           courseRecords: {

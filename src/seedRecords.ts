@@ -1,12 +1,10 @@
 import {
-  ASTEROIDS_WAVE_MAX,
+  ASTEROIDS_WAVE_BOOKS,
   isRecordsStoreEmpty,
   listRecordDefs,
   PLAY_DAYS_STREAK_ID,
   replaceAllRecords,
-  SNAKE_LENGTH_MILESTONE_MAX,
-  SNAKE_LENGTH_MILESTONE_MIN,
-  SNAKE_LENGTH_MILESTONE_STEP,
+  SNAKE_LENGTH_BOOKS,
   CROSSWALK_ROW_MILESTONE_MAX,
   CROSSWALK_ROW_MILESTONE_MIN,
   CROSSWALK_ROW_MILESTONE_STEP,
@@ -190,9 +188,10 @@ export function buildRecordsSeed(seed = 20260904) {
       )
   }
 
-  for (let wave = 1; wave <= ASTEROIDS_WAVE_MAX; wave++) {
+  const lastWave = ASTEROIDS_WAVE_BOOKS[ASTEROIDS_WAVE_BOOKS.length - 1]!
+  for (const wave of ASTEROIDS_WAVE_BOOKS) {
     const key = `asteroids::wave-time-${wave}`
-    const depthNeed = wave / ASTEROIDS_WAVE_MAX
+    const depthNeed = wave / lastWave
     const pool = players.filter((p) => p.skill >= depthNeed * 0.32 - 0.08)
     const count = Math.max(5, Math.min(16, Math.round(12 - wave * 0.18 + rand() * 3)))
     store[key] = pool.slice(0, count).map((p) =>
@@ -205,13 +204,10 @@ export function buildRecordsSeed(seed = 20260904) {
     )
   }
 
-  for (
-    let length = SNAKE_LENGTH_MILESTONE_MIN;
-    length <= SNAKE_LENGTH_MILESTONE_MAX;
-    length += SNAKE_LENGTH_MILESTONE_STEP
-  ) {
+  const longest = SNAKE_LENGTH_BOOKS[SNAKE_LENGTH_BOOKS.length - 1]!
+  for (const length of SNAKE_LENGTH_BOOKS) {
     const key = `snake::fastest-length-${length}`
-    const need = length / SNAKE_LENGTH_MILESTONE_MAX
+    const need = length / longest
     const pool = players.filter((p) => p.skill >= need * 0.32)
     const count = Math.max(5, Math.min(14, Math.round(11 - length * 0.035 + rand() * 2)))
     store[key] = pool.slice(0, count).map((p) =>

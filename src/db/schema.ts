@@ -948,3 +948,14 @@ export const dayGhosts = pgTable(
   },
   (t) => [primaryKey({ columns: [t.game, t.track, t.name] })],
 )
+
+/**
+ * Who asked the coming-soon page to tell them when Blipka opens (launchList.ts): the address and when, nothing
+ * else. The page promises one email on opening day and then the address is gone, so the send deletes each row
+ * as its email goes.
+ */
+export const launchList = pgTable('launch_list', {
+  /** Trimmed and lowercased, so the same address twice is one row. */
+  email: text('email').primaryKey(),
+  createdAt: bigint('created_at', { mode: 'number' }).notNull(),
+})

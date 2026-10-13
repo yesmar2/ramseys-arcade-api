@@ -211,6 +211,13 @@
       "when": 1791579155263,
       "tag": "0029_course_bests",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1791906859212,
+      "tag": "0030_launch_list",
+      "breakpoints": true
     }
   ]
 }

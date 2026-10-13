@@ -5,6 +5,8 @@ import { accountFromRequest } from './auth.js'
 import { banName, listBans, purgeName, recentScores, unbanName, voidScores } from './bans.js'
 import { listClientErrors } from './clientErrors.js'
 import { listFeedback } from './feedback.js'
+import { launchEmail, leaveLaunchList, listLaunchList, sendLaunchBatch, sendLaunchTest } from './launchList.js'
+import { BATCH_MAX, mailerReady } from './mailer.js'
 import { listFlags, reviewFlag, unreviewedCount } from './scoreFlags.js'
 import { getClaim } from './names.js'
 import { playerStats } from './playerStats.js'
@@ -238,6 +240,50 @@ adminRouter.get('/feedback', async (req, res) => {
     await requireAdmin(req)
     const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 100))
     res.json({ feedback: await listFeedback(limit) })
+  } catch (err) {
+    refuse(err, res)
+  }
+})
+
+/**
+ * The coming-soon page's launch list (launchList.ts): who's on it, the latest first; whether this server can
+ * send email; and the email they'll get.
+ */
+adminRouter.get('/launch-list', async (req, res) => {
+  try {
+    await requireAdmin(req)
+    res.json({ emails: await listLaunchList(), mailer: mailerReady(), batch: BATCH_MAX, mail: launchEmail() })
+  } catch (err) {
+    refuse(err, res)
+  }
+})
+
+/** One address off the list, for someone who asked. */
+adminRouter.delete('/launch-list/:email', async (req, res) => {
+  try {
+    await requireAdmin(req)
+    res.json({ removed: await leaveLaunchList(String(req.params.email ?? '')) })
+  } catch (err) {
+    refuse(err, res)
+  }
+})
+
+/** The launch email to the admin asking, to see it as the list will. */
+adminRouter.post('/launch-list/test', async (req, res) => {
+  try {
+    const account = await requireAdmin(req)
+    await sendLaunchTest(account.email)
+    res.json({ to: account.email })
+  } catch (err) {
+    refuse(err, res)
+  }
+})
+
+/** The launch email to the next batch on the list; each address is deleted once its email has gone. */
+adminRouter.post('/launch-list/send', async (req, res) => {
+  try {
+    await requireAdmin(req)
+    res.json(await sendLaunchBatch())
   } catch (err) {
     refuse(err, res)
   }

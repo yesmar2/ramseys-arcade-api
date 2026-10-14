@@ -184,8 +184,11 @@ const TYPICAL_PACE_MS = 53_000
 /*
  * Lander's step went to 10% and Swoop's to 13% on 2026-10-11, when Ramsey found their platinum "a little too
  * easy": his best Lander days landed 27 to 28% under the blue ship, his best Swoop days 36 to 38% under the bird.
+ * Hot Lap's step went to 5% and Marble Run's to 10% on 2026-10-14, when Ramsey found gold and platinum "too hard"
+ * in both: his best Hot Lap laps had landed 13 to 25% under the blue car (17% the middle day, 12.8% that day, short of
+ * gold at 14%), and no one's Marble Run had reached platinum's 36% (the best 34.5%; his 30.8% that day was gold).
  */
-export const RACE_MEDAL_STEP = { hotlap: 0.06, marblerun: 0.12, lander: 0.1, swoop: 0.13, wobblerun: 0.12 } as const
+export const RACE_MEDAL_STEP = { hotlap: 0.05, marblerun: 0.1, lander: 0.1, swoop: 0.13, wobblerun: 0.12 } as const
 
 /**
  * How many steps faster than the blue each medal is, bronze to platinum. Platinum stays three; the others sit
@@ -213,8 +216,8 @@ function raceSteps(pace: number, step: number, blue: string, score: (ms: number)
 }
 
 /**
- * Hot Lap, on a day whose blue car laps in `paceMs`: under 7% faster than it 3, by 7% 5, by 11% 8, by 14%
- * 11, by 18% 15. Without a blue car, a lap pays the 3 alone.
+ * Hot Lap, on a day whose blue car laps in `paceMs`: under 6% faster than it 3, by 6% 5, by 9% 8, by 12%
+ * 11, by 15% 15. Without a blue car, a lap pays the 3 alone.
  */
 export function hotlapLadder(paceMs: number | null | undefined): Ladder {
   const base = { base: 3, baseLabel: 'a lap today' }
@@ -253,8 +256,8 @@ const BALL_MIN_MS = 30_000
 const BALL_MAX_MS = 90_000
 
 /**
- * Marble Run, on a day whose blue ball rolls down in `paceMs`: under 14% faster than it 3, by 14% 5, by
- * 22% 8, by 29% 11, by 36% 15, as Hot Lap pays against its blue car. Without a blue ball, a run pays the 3 alone.
+ * Marble Run, on a day whose blue ball rolls down in `paceMs`: under 12% faster than it 3, by 12% 5, by
+ * 18% 8, by 24% 11, by 30% 15, as Hot Lap pays against its blue car. Without a blue ball, a run pays the 3 alone.
  */
 export function marblerunLadder(paceMs: number | null | undefined): Ladder {
   const base = { base: 3, baseLabel: 'a run today' }

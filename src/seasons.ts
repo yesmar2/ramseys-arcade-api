@@ -109,7 +109,7 @@ const SPACE_RACE: SeasonReward[] = [
   tickets(9, 75),
   { level: 10, kind: 'prize', id: 't-liftoff', name: 'Liftoff', what: 'Title' },
   { level: 11, kind: 'prize', id: 'nm-countdown', name: 'Countdown', what: 'Name style' },
-  { level: 12, kind: 'skin', id: 'asteroids-comet', name: 'Comet', what: 'Asteroids ship', game: 'asteroids' },
+  { level: 12, kind: 'skin', id: 'asteroids-comet', name: 'Comet', what: 'Space Rocks ship', game: 'asteroids' },
   tickets(13, 100),
   { level: 14, kind: 'prize', id: 'ringed', name: 'Ringed planet', what: 'Badge finish' },
   { level: 15, kind: 'skin', id: 'barrage-nova', name: 'Nova fighter', what: 'Barrage ship', game: 'barrage' },
@@ -135,7 +135,7 @@ const SPACE_RACE: SeasonReward[] = [
  * across the five skin games and fifteen looks, then five bonus levels only Pass+ climbs to.
  */
 const SPACE_RACE_PLUS: SeasonReward[] = [
-  { level: 1, kind: 'skin', id: 'asteroids-shuttle', name: 'Shuttle', what: 'Asteroids ship', game: 'asteroids', plus: true },
+  { level: 1, kind: 'skin', id: 'asteroids-shuttle', name: 'Shuttle', what: 'Space Rocks ship', game: 'asteroids', plus: true },
   { level: 2, kind: 'prize', id: 't-flight-director', name: 'Flight Director', what: 'Title', plus: true },
   { level: 4, kind: 'prize', id: 'nm-aurora', name: 'Aurora', what: 'Name style', plus: true },
   { level: 5, kind: 'prize', id: 'nm-telemetry', name: 'Telemetry', what: 'Name style', plus: true },
@@ -156,7 +156,7 @@ const SPACE_RACE_PLUS: SeasonReward[] = [
   { level: 29, kind: 'prize', id: 'cd-station', name: 'Space station', what: 'Card theme', plus: true },
   { level: 30, kind: 'prize', id: 'eclipse', name: 'Eclipse', what: 'Badge finish', plus: true },
   // The bonus levels, past the free row's last.
-  { level: 31, kind: 'skin', id: 'asteroids-orbiter', name: 'Orbiter', what: 'Asteroids ship', game: 'asteroids', plus: true },
+  { level: 31, kind: 'skin', id: 'asteroids-orbiter', name: 'Orbiter', what: 'Space Rocks ship', game: 'asteroids', plus: true },
   { level: 32, kind: 'skin', id: 'lander-starhopper', name: 'Starhopper', what: 'Lander ship', game: 'lander', plus: true },
   { level: 33, kind: 'prize', id: 'nm-wormhole', name: 'Wormhole', what: 'Name style', plus: true },
   { level: 34, kind: 'prize', id: 'black-hole', name: 'Black hole', what: 'Badge finish', plus: true },

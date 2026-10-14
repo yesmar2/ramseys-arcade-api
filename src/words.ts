@@ -15,7 +15,7 @@ export const GAME_LABELS: Record<GameSlug, string> = {
   snake: 'Snake',
   pop: 'Pop',
   centroid: 'Centroid',
-  asteroids: 'Asteroids',
+  asteroids: 'Space Rocks',
   simon: 'Simon',
   crosswalk: 'Crosswalk',
   spotter: 'Spotter',

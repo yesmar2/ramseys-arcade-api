@@ -1090,7 +1090,7 @@ function brackets(players: Player[]): Tournament[] {
   // Running: eight, single elimination, the semi-finals being played now.
   {
     const startsAt = NOW - 40 * HOUR
-    const t = make('Asteroids Cup', 'asteroids', startsAt, 8, { maxAttempts: 2, roundPlayHours: 24, elimination: 'single' }, regulars(startsAt).slice(0, 8))
+    const t = make('Space Rocks Cup', 'asteroids', startsAt, 8, { maxAttempts: 2, roundPlayHours: 24, elimination: 'single' }, regulars(startsAt).slice(0, 8))
     lockBracket(t, startsAt + 2 * HOUR)
     playBracket(t, players, NOW - 20 * MINUTE, 2)
     for (const m of t.bracket?.matches ?? []) {

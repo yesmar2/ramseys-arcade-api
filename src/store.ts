@@ -534,9 +534,11 @@ const LIVE_ON_DECK_GAMES: readonly GameSlug[] = ['wobblerun']
  * nowhere, though their own pages still play. Like a retired game, no new event picks one, and they count
  * toward nobody's standings. Take a game off this list the day the site releases it.
  */
-// Ace Chase is held back (Ramsey, 2026-10-06: "let's hide it for now").
+// Ace Chase is held back (Ramsey, 2026-10-06: "let's hide it for now"), and Putt (2026-10-14: "i want to hide
+// putt game for now").
 export const ON_DECK_GAMES: ReadonlySet<GameSlug> = new Set<GameSlug>([
   'acechase',
+  'putt',
   ...(isLiveApi() ? LIVE_ON_DECK_GAMES : []),
 ])
 

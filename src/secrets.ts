@@ -39,7 +39,7 @@ export const SECRETS = {
   donuts: { n: 22, name: 'Donuts', says: 'Spun three donuts on Hot Lap’s track.' },
   marbles: { n: 23, name: 'Lost Your Marbles', says: 'Fell off Marble Run three times before the first checkpoint.' },
   wargames: { n: 24, name: 'Shall We Play a Game?', says: 'Let a whole wave of Patriot fall without firing a shot.' },
-  safespot: { n: 25, name: 'Safe Spot', says: 'Hid from the chasers in Pellets’ safe spot.' },
+  safespot: { n: 25, name: 'Safe Spot', says: 'Hid from the bugs in Glowberry’s safe spot.' },
   shootingstar: { n: 27, name: 'Shooting Star', says: 'Caught a shooting star over the Fireflies pond.' },
   moon: { n: 28, name: 'Shoot the Moon', says: 'Shot the moon over Barrage until it had a black eye.' },
   staffonly: { n: 29, name: 'Staff Only', says: 'Tried the door marked Staff Only.' },

@@ -19,7 +19,7 @@ export const GAME_LABELS: Record<GameSlug, string> = {
   simon: 'Simon',
   crosswalk: 'Crosswalk',
   spotter: 'Spotter',
-  pellets: 'Pellets',
+  pellets: 'Glowberry',
   findbug: 'Find the Bug',
   crumbtrail: 'Crumbtrail',
   bop: 'Fidget',

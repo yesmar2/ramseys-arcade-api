@@ -1104,7 +1104,7 @@ function brackets(players: Player[]): Tournament[] {
   // Filling: six of eight seats taken, no draw yet.
   {
     const startsAt = NOW - 2 * DAY
-    const t = make('Pellets Eight', 'pellets', startsAt, 8, { maxAttempts: 1, roundPlayHours: 24, elimination: 'single' }, regulars(startsAt).slice(0, 6))
+    const t = make('Glowberry Eight', 'pellets', startsAt, 8, { maxAttempts: 1, roundPlayHours: 24, elimination: 'single' }, regulars(startsAt).slice(0, 6))
     for (const seat of t.players) seat.joinedAt = Math.min(seat.joinedAt, NOW - HOUR)
     out.push(t)
   }

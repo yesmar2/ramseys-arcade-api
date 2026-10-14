@@ -12,7 +12,10 @@ import { ordinal } from './words.js'
 /*
  * Seasons: a stretch of about nine weeks with a theme, a free pass of 30 levels and looks to win on it.
  * Ramsey's son put the idea to him ("seasons and skins and things, like fortnite does"); Ramsey picked
- * Space Race for the first, to start with the site's launch on Oct 31 (2026-10-02).
+ * Space Race for the first, to start with the site's launch (2026-10-02). The launch moved from Oct 31 to Nov 14
+ * (Ramsey, 2026-10-14: "let's go with nov 14th. scale tickets down probably"), and Space Race still ends on
+ * Jan 4 so Cold Snap stays in the winter: seven weeks, not nine, so its levels and its Dailies goal are scaled
+ * to them.
  *
  * The pass is moved by tickets: every ticket won in the season counts, spending them takes nothing back,
  * and a level comes every `perLevel` of them. Tickets a level itself gives (reason 'season') and an admin's
@@ -238,14 +241,16 @@ export const SEASONS: readonly SeasonDef[] = [
     id: 1,
     slug: 'space-race',
     name: 'Space Race',
-    firstDay: 20261031,
+    // Launch day to the day before Cold Snap: 52 days. 120 tickets a level and 24 days of Dailies keep the pace
+    // of Cold Snap's 150 and 30 over its 63 (and the 66 Space Race had from Oct 31).
+    firstDay: 20261114,
     lastDay: 20270104,
     levels: 30,
-    perLevel: 150,
+    perLevel: 120,
     spotlight: ['lander', 'asteroids', 'barrage'],
     rewards: SPACE_RACE,
     goals: [
-      { id: 'dailies', title: 'Keep the Dailies on 30 days', need: 30, reward: { kind: 'prize', id: 't-regular', name: 'The Regular title' } },
+      { id: 'dailies', title: 'Keep the Dailies on 24 days', need: 24, reward: { kind: 'prize', id: 't-regular', name: 'The Regular title' } },
       { id: 'games', title: 'Win tickets in 12 different games', need: 12, reward: { kind: 'tickets', amount: 200, name: '200 tickets' } },
     ],
     // $2.99 for the season, the same as a month of Plus, so joining Plus for a month and leaving is no cheaper (Ramsey, 2026-10-04).

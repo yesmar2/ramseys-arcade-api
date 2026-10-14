@@ -118,7 +118,7 @@ export const PRIZES: readonly Prize[] = [
   { id: 'nm-wormhole', kind: 'name', price: 0, earned: true },
   { id: 'black-hole', kind: 'finish', price: 0, earned: true },
   { id: 't-legend', kind: 'title', price: 0, earned: true },
-  // Season 1's goal of keeping the Dailies on 30 of its days (seasons.ts).
+  // Season 1's goal of keeping the Dailies on 24 of its days (seasons.ts).
   { id: 't-regular', kind: 'title', price: 0, earned: true },
   // Season 2, Cold Snap: its pass (seasons.ts), never traded for.
   { id: 't-cold-snap', kind: 'title', price: 0, earned: true },

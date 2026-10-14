@@ -198,14 +198,14 @@ const SNAKE_LONGEST: RecordDef = {
 }
 
 /**
- * Blue chasers eaten. Only the frightened ones: a surge bounces a chaser away
- * rather than eating it, and the two pay on different ladders, so counting both
+ * Scared bugs caught, after a glowberry. Only the scared ones: a surge bounces a bug away
+ * rather than catching it, and the two pay on different ladders, so counting both
  * here would make the label mean something it does not say.
  */
 const CRUMBTRAIL_GHOSTS: RecordDef = {
   id: 'chasers-eaten',
   game: 'crumbtrail',
-  label: 'Chasers eaten in a run',
+  label: 'Bugs caught in a run',
   direction: 'higher',
   unit: 'count',
 }

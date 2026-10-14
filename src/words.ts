@@ -10,7 +10,7 @@ import type { GameSlug } from './store.js'
 export const GAME_LABELS: Record<GameSlug, string> = {
   barrage: 'Barrage',
   frenzy: 'Frenzy',
-  stacker: 'Stacker',
+  stacker: 'Highrise',
   patriot: 'Patriot',
   snake: 'Snake',
   pop: 'Pop',
@@ -47,6 +47,7 @@ const GAME_ADDRESS: Partial<Record<GameSlug, string>> = {
   asteroids: 'space-rocks',
   bop: 'fidget',
   pellets: 'glowberry',
+  stacker: 'highrise',
 }
 
 export function gameAddress(game: string): string {

@@ -1080,7 +1080,7 @@ function brackets(players: Player[]): Tournament[] {
   // Finished: sixteen, double elimination, a round every twelve hours.
   {
     const startsAt = dayStart(addDays(TODAY, -9)) + 17 * HOUR
-    const t = make('Stacker Sixteen', 'stacker', startsAt, 16, { maxAttempts: 1, roundPlayHours: 12, elimination: 'double' }, regulars(startsAt).slice(0, 16))
+    const t = make('Highrise Sixteen', 'stacker', startsAt, 16, { maxAttempts: 1, roundPlayHours: 12, elimination: 'double' }, regulars(startsAt).slice(0, 16))
     lockBracket(t, startsAt + 6 * HOUR)
     playBracket(t, players, NOW, null)
     maybeEndWhenBracketFinished(t, Math.max(...t.scores.map((s) => s.at)) + 5 * MINUTE)

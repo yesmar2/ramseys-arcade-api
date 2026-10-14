@@ -5,7 +5,7 @@ import { notify } from './notifications.js'
 import { boardDateKey, dayPlayers, dayStartMs, isRankedGame, type GameSlug } from './store.js'
 import { DAY_TOP_TICKETS } from './tickets.js'
 import { TODAY_DAILIES, todayRule } from './today.js'
-import { scoreFigure } from './words.js'
+import { gameAddress, scoreFigure } from './words.js'
 
 /*
  * Knocked off the podium: a racing daily's run that takes a top-three place pushes whoever had third down to
@@ -78,8 +78,8 @@ export async function tellPodiumLost(opts: {
       kind: 'podium-lost',
       title: `You’re off the podium on ${what.daily}`,
       body: `${opts.name}’s ${what.run} of ${scoreFigure(opts.game, passer.score)} put you ${ordinal(place)}. Win a top-three place back before the day ends, and its tickets with it.`,
-      href: `/games/${opts.game}`,
-      meta: { actor: opts.name, game: opts.game, place, endsAt, playHref: `/games/${opts.game}/play` },
+      href: `/games/${gameAddress(opts.game)}`,
+      meta: { actor: opts.name, game: opts.game, place, endsAt, playHref: `/games/${gameAddress(opts.game)}/play` },
       digestKey: `podium-lost:${day}:${opts.game}`,
       once: true,
       now: opts.now,

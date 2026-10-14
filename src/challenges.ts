@@ -4,7 +4,7 @@ import { db } from './db/client.js'
 import { challengeResults, challenges, leaderboardScores } from './db/schema.js'
 import { notify } from './notifications.js'
 import { boardDateKey, DAILY_GAMES, type GameSlug } from './store.js'
-import { gameLabel, gapWords, isTime, scoreFigure, scoreWords } from './words.js'
+import { gameAddress, gameLabel, gapWords, isTime, scoreFigure, scoreWords } from './words.js'
 
 /**
  * Challenges: one saved run, sent to a friend to beat.
@@ -203,7 +203,7 @@ async function tellChallenger(
       title: `${run.name} beat your ${scoreWords(game, challenge.score)} on ${gameLabel(game)}`,
       body: `With ${scoreWords(game, run.score)}. Your turn.`,
       // Their winning run, sent back as a challenge: the target is already set.
-      href: what.replyId ? `/c/${game}/${what.replyId}` : `/games/${game}/play`,
+      href: what.replyId ? `/c/${game}/${what.replyId}` : `/games/${gameAddress(game)}/play`,
       meta,
       digestKey: `challenge-beaten:${challenge.id}:${run.name}`,
       now,
@@ -219,7 +219,7 @@ async function tellChallenger(
     kind: 'challenge-taken',
     title: `${run.name} took your challenge on ${gameLabel(game)}`,
     body: `${scoreFigure(game, run.score)}, ${gapWords(game, challenge.score - run.score)} ${short} your ${set}.`,
-    href: `/games/${game}`,
+    href: `/games/${gameAddress(game)}`,
     meta,
     digestKey: `challenge-taken:${challenge.id}:${run.name}`,
     now,

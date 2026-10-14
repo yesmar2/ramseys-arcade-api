@@ -40,6 +40,20 @@ export function gameLabel(game: string): string {
 }
 
 /**
+ * A game's part of a site address, `/games/<this>`, as the site writes it (its hooks/useHashRoute.ts
+ * GAME_ADDRESS): the name players know where the slug was another company's. The site still opens the old one.
+ */
+const GAME_ADDRESS: Partial<Record<GameSlug, string>> = {
+  asteroids: 'space-rocks',
+  bop: 'fidget',
+  pellets: 'glowberry',
+}
+
+export function gameAddress(game: string): string {
+  return GAME_ADDRESS[game as GameSlug] ?? game
+}
+
+/**
  * Games whose score counts something with a name of its own. Fireflies' is points, as the site says it: a
  * note sung back is only one of the ways to them.
  */

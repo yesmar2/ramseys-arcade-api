@@ -7,7 +7,7 @@ import { trackState } from './trackLaps.js'
 import { announceRewrite, insertWithFeed, MULTI_INSTANCE, onChange, onRewrite } from './feed.js'
 import { getClaim } from './names.js'
 import { notify } from './notifications.js'
-import { clock, gameLabel, scoreFigure, spanWords } from './words.js'
+import { clock, gameAddress, gameLabel, scoreFigure, spanWords } from './words.js'
 import {
   ALLOWED_GAMES,
   boardDateKey,
@@ -625,7 +625,7 @@ export function coursePastHref(game: GameSlug, n: number): string | null {
   const course = COURSES[game]
   if (!course) return null
   const id = course.prefix === 'track' || course.prefix === 'hole' ? String(n) : courseDayIso(course.firstDay, n)
-  return `/games/${game}/past#course-${id}`
+  return `/games/${gameAddress(game)}/past#course-${id}`
 }
 
 /** Which track, hole or day a Past tab row's id is (coursePastHref's): its number, or its day's date. */
@@ -1542,7 +1542,7 @@ async function notifyRecordTaken(
     // While the course is today's, its #1 is 1st today, not a record yet, and the note says so.
     const course = courseOfRecord(game, recordId)
     const href = course != null ? coursePastHref(game, course) : null
-    const playHref = course != null ? courseWinBackHref(game, course) : `/games/${game}/play`
+    const playHref = course != null ? courseWinBackHref(game, course) : `/games/${gameAddress(game)}/play`
     const today = course != null && courseIsToday(game, course, now)
     await notify({
       accountId: claim.accountId,

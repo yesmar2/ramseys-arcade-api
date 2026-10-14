@@ -22,7 +22,7 @@ export const GAME_LABELS: Record<GameSlug, string> = {
   pellets: 'Pellets',
   findbug: 'Find the Bug',
   crumbtrail: 'Crumbtrail',
-  bop: 'Bop',
+  bop: 'Fidget',
   putt: 'Putt',
   fireflies: 'Fireflies',
   pileup: 'Pileup',

@@ -524,21 +524,24 @@ export const RETIRED_GAMES: ReadonlySet<GameSlug> = new Set<GameSlug>(['simon', 
 
 /**
  * Games held back on the live site only, while staging keeps them to try (the web's lib/liveSite.ts): on deck
- * on the live API, and off its Dailies (today.ts todayRule). Wobble Run (Ramsey, 2026-10-09: "i want to hide
- * wobble run on production for now").
+ * on the live API, and off its Dailies (today.ts todayRule). None now: Wobble Run was, from 2026-10-09, until it
+ * went on deck everywhere (below).
  */
-const LIVE_ON_DECK_GAMES: readonly GameSlug[] = ['wobblerun']
+const LIVE_ON_DECK_GAMES: readonly GameSlug[] = []
 
 /**
  * Games the site is holding back to release after launch, one at a time (the web's onDeck flag): listed
  * nowhere, though their own pages still play. Like a retired game, no new event picks one, and they count
  * toward nobody's standings. Take a game off this list the day the site releases it.
  */
-// Ace Chase is held back (Ramsey, 2026-10-06: "let's hide it for now"), and Putt (2026-10-14: "i want to hide
-// putt game for now").
+// Ace Chase is held back (Ramsey, 2026-10-06: "let's hide it for now"), Putt (2026-10-14: "i want to hide putt
+// game for now"), and Wobble Run, held back on the live site since 2026-10-09 and on staging too from 2026-10-15
+// ("can we hide wobble run for now"): off the Dailies there as well (today.ts todayRule). Releasing it needs its
+// Dailies `from` moved to the release day, or todayRule puts it back on every past day since it came.
 export const ON_DECK_GAMES: ReadonlySet<GameSlug> = new Set<GameSlug>([
   'acechase',
   'putt',
+  'wobblerun',
   ...(isLiveApi() ? LIVE_ON_DECK_GAMES : []),
 ])
 

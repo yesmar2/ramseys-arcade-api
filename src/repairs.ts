@@ -54,6 +54,9 @@ const REPAIRS: Repair[] = [
     run: async () => {
       let removed = 0
       for (const game of TIME_SCORED_GAMES) {
+        // A game time-scored since (Marble Run and the racing dailies) has no sample band to be above: Infinity,
+        // which a fresh database refuses as a number, stopping every repair after this one.
+        if (!Number.isFinite(seedScoreCap(game))) continue
         const gone = await db()
           .delete(leaderboardScores)
           .where(

@@ -338,6 +338,76 @@ const TAGS = [
   'ROOMIE', 'NEIGHBOR', 'MAILMAN', 'BARISTA', 'CHEF', 'DJ_MOE', 'LOOPER', 'REWIND',
 ] as const
 
+/*
+ * A crowd bigger than the list above, with `--players N` (Ramsey, 2026-10-16: "can we fill in 10s of thousands
+ * of records and data for local host? i just want to test what it's like when we have that much data"). Past the
+ * list, tags are made the way people make them: more names, a name with a number, two words run together, a word
+ * and a number. All of them 12 characters at most, uppercase, and never anyone's real tag.
+ */
+const MORE_NAMES = [
+  'ADA', 'AMIR', 'ANYA', 'ARI', 'ASH', 'BEAU', 'BLAKE', 'BO', 'CAL', 'CARA', 'CHLOE', 'DARA', 'DEV', 'ELI', 'EMIL',
+  'ESME', 'EVAN', 'FARAH', 'FELIX', 'GIA', 'HAL', 'HANA', 'IDA', 'IGGY', 'IRIS', 'JADE', 'JALEN', 'JESS', 'JOEL',
+  'JUDE', 'KAI', 'KARA', 'KENJI', 'KOFI', 'LACEY', 'LARS', 'LIA', 'LOLA', 'LUCA', 'LUZ', 'MACY', 'MALIK', 'MATEO',
+  'MAX', 'MIA', 'MIRA', 'NIA', 'NIKO', 'NOEL', 'OLA', 'OMAR', 'OREN', 'PIA', 'RAYA', 'REMY', 'RIO', 'ROMY', 'ROSA',
+  'RUSS', 'SAGE', 'SAMI', 'SETH', 'SKY', 'STEVIE', 'TARA', 'TOBY', 'TONI', 'TY', 'VAL', 'VIKTOR', 'WILL', 'WREN',
+  'YUSUF', 'ZARA', 'ZEKE', 'ZIGGY',
+]
+const TAG_WORDS = [
+  'FOX', 'OWL', 'WOLF', 'HAWK', 'BEAR', 'LYNX', 'ORCA', 'YETI', 'PIXEL', 'BYTE', 'NOVA', 'COMET', 'ROCKET', 'NINJA',
+  'ROBOT', 'DRAGON', 'TIGER', 'SHARK', 'RAVEN', 'VIPER', 'GHOST', 'BLAZE', 'FROST', 'STORM', 'EMBER', 'ZAP', 'BOLT',
+  'GECKO', 'PANDA', 'MANGO', 'TACO', 'WAFFLE', 'COOKIE', 'NOODLE', 'BEAN', 'SPROUT', 'CACTUS', 'PEBBLE', 'ORBIT',
+  'ATOM', 'LASER', 'TURBO', 'DASH', 'ACE', 'KNIGHT', 'WIZARD', 'JESTER', 'BANDIT', 'RANGER', 'PILOT', 'ROOKIE',
+  'LEGEND', 'CHAMP', 'HERO', 'BOSS',
+]
+const TAG_TRAITS = [
+  'SWIFT', 'LUCKY', 'NEON', 'SILENT', 'MIGHTY', 'TINY', 'BIG', 'RED', 'BLUE', 'GOLD', 'ICY', 'HOT', 'SNEAKY', 'HAPPY',
+  'SLEEPY', 'FUZZY', 'SUPER', 'MEGA', 'ULTRA', 'HYPER', 'RETRO', 'COSMIC', 'SPICY', 'SALTY', 'SPOOKY', 'WILD', 'CHILL',
+  'EPIC', 'DIZZY',
+]
+
+/** `count` more tags than the list, none of them in `taken`. */
+function crowdTags(count: number, taken: ReadonlySet<string>): string[] {
+  const names = [...TAGS.slice(0, 70), ...MORE_NAMES]
+  const out: string[] = []
+  const seen = new Set(taken)
+  const add = (tag: string) => {
+    if (out.length >= count || tag.length > 12 || seen.has(tag)) return
+    seen.add(tag)
+    out.push(tag)
+  }
+  const num = () => String(Math.floor(chance(0.65) ? rand() * 100 : rand() * 1000))
+  for (const name of MORE_NAMES) add(name)
+  for (let guard = 0; out.length < count && guard < count * 60; guard++) {
+    const r = rand()
+    if (r < 0.3) add(`${pick(names)}${num()}`)
+    else if (r < 0.55) add(`${pick(TAG_TRAITS)}${pick(TAG_WORDS)}`)
+    else if (r < 0.7) add(`${pick(TAG_WORDS)}${num()}`)
+    else if (r < 0.8) add(`${pick(names)}_${String.fromCharCode(65 + Math.floor(rand() * 26))}`)
+    else if (r < 0.9) add(`${pick(names)}${pick(TAG_WORDS)}`)
+    else add(`${pick(TAG_WORDS)}${pick(TAG_WORDS)}`)
+  }
+  return out
+}
+
+/** How many players the world has: `--players N` (or `--players=N`), else null for the list's own. */
+function playerCount(): number | null {
+  const at = process.argv.findIndex((a) => a === '--players' || a.startsWith('--players='))
+  if (at < 0) return null
+  const arg = process.argv[at]!
+  const n = Math.floor(Number(arg.includes('=') ? arg.split('=')[1] : process.argv[at + 1]))
+  return Number.isFinite(n) && n > 0 ? n : null
+}
+
+/** Up to `k` of a long list that pass `ok`, picked at random without shuffling all of it. */
+function sampleWhere<T>(list: readonly T[], k: number, ok: (item: T) => boolean): T[] {
+  const out = new Set<T>()
+  for (let tries = 0; out.size < k && tries < k * 40; tries++) {
+    const item = list[Math.floor(rand() * list.length)]!
+    if (ok(item)) out.add(item)
+  }
+  return [...out]
+}
+
 const DEVICES: DeviceType[] = ['phone', 'phone', 'phone', 'tablet', 'desktop', 'desktop']
 
 type Run = {
@@ -413,8 +483,13 @@ function timeOnDay(key: number, hour: number, notBefore = 0): number | null {
   return at
 }
 
-function makePlayers(existing: Set<string>): Player[] {
-  const tags = TAGS.filter((t) => !existing.has(t))
+function makePlayers(existing: Set<string>, count: number | null = null): Player[] {
+  const listed = TAGS.filter((t) => !existing.has(t))
+  // Without `--players` it's the list, as it always was.
+  const tags =
+    count == null || count <= listed.length
+      ? listed.slice(0, count ?? listed.length)
+      : [...listed, ...crowdTags(count - listed.length, new Set([...existing, ...TAGS]))]
   return tags.map((tag, i) => {
     // A few are very good, a fifth are strong, half are regulars, the rest
     // casual. The very good sit just above the strong rather than in a class
@@ -1428,11 +1503,15 @@ async function seedSocial(d: Db, players: Player[]) {
     rows.push({ id: sid('fr'), accountIdA: x.accountId, accountIdB: y.accountId, createdAt: Math.round(between(since, NOW - HOUR)) })
   }
   // Everyone has a few friends, the keen ones more, and people who play the same games find each other.
+  // In a crowd of thousands (`--players`), a few are picked at random rather than everyone looked at for each player.
+  const crowd = players.length > 1000
   for (const p of players) {
     const n = Math.round(1 + p.activity * 6)
-    const alike = players.filter((q) => q !== p && q.favorites.some((g) => p.favorites.includes(g)))
-    for (const q of shuffle(alike).slice(0, Math.ceil(n * 0.7))) link(p, q)
-    for (const q of shuffle(players).slice(0, Math.floor(n * 0.3))) link(p, q)
+    const isAlike = (q: Player) => q !== p && q.favorites.some((g) => p.favorites.includes(g))
+    const alike = crowd ? sampleWhere(players, Math.ceil(n * 0.7), isAlike) : shuffle(players.filter(isAlike)).slice(0, Math.ceil(n * 0.7))
+    for (const q of alike) link(p, q)
+    const any = crowd ? sampleWhere(players, Math.floor(n * 0.3), (q) => q !== p) : shuffle(players).slice(0, Math.floor(n * 0.3))
+    for (const q of any) link(p, q)
   }
   await insertRows(d, friendships, rows)
 
@@ -1549,7 +1628,7 @@ async function main() {
 /** Play the world and write it: players, runs, record books, events, friends and groups. */
 async function buildWorld(d: Db): Promise<Tournament[]> {
   const existing = new Set((await d.select({ name: nameClaims.name }).from(nameClaims)).map((r) => r.name))
-  const players = makePlayers(existing)
+  const players = makePlayers(existing, playerCount())
   const official = officialEvents()
   const hosted = hostedScoreEvents(players)
   const sittingsFor = new Map<string, Sitting[]>()
@@ -1752,8 +1831,9 @@ async function buildWorld(d: Db): Promise<Tournament[]> {
       data: { ...meta, rowsChangedAt: NOW } as unknown as Record<string, unknown>,
       official: Boolean(t.official),
       cadence: t.cadence ?? null,
-      startsAt: t.startsAt,
-      endsAt: t.endsAt,
+      // Whole milliseconds, as the columns keep them: a bracket that finished ends at its last run, which can be a fraction.
+      startsAt: Math.round(t.startsAt),
+      endsAt: Math.round(t.endsAt),
       visibility: t.visibility ?? (t.official ? 'public' : 'private'),
       inviteCode: t.inviteCode ?? null,
     }

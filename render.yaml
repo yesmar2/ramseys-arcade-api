@@ -16,8 +16,10 @@ services:
     envVars:
       - key: NODE_VERSION
         value: "22"
+      # The site's addresses, comma separated. A Blueprint sync sets this from here and overwrites the dashboard:
+      # editing this file on 2026-10-16 put back the old one-address value and shut blipka.com out of the API.
       - key: CORS_ORIGIN
-        value: https://ramseys-arcade.vercel.app
+        value: https://blipka.com,https://www.blipka.com,https://ramseys-arcade.vercel.app
       # Set in Render dashboard → Neon pooled connection string
       - key: DATABASE_URL
         sync: false

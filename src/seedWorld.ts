@@ -50,6 +50,7 @@ import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { OPEN_DAYS } from './archive.js'
 import { randomAvatarId } from './avatars.js'
 import {
   armMatchClocks,
@@ -104,10 +105,14 @@ import {
   trophyAwards,
   trophyCursor,
 } from './db/schema.js'
+import { CENTROID_FIRST_KEY } from './centroid/launch.js'
 import { assertNotProduction, dbTarget } from './env.js'
 import { HALFFULL_FIRST_KEY } from './halffull/launch.js'
 import { holeNumber } from './holes.js'
 import { HOTLAP_FIRST_DAY, HOTLAP_PACE_MS } from './hotlapPace.js'
+import { LANDER_FIRST_DAY, LANDER_PACE_MS } from './landerPace.js'
+import { MARBLERUN_FIRST_DAY, MARBLERUN_PACE_MS } from './marblerunPace.js'
+import { SWOOP_FIRST_DAY, SWOOP_PACE_MS } from './swoopPace.js'
 import {
   computePlayDaysStreak,
   courseOnDay,
@@ -121,13 +126,16 @@ import { TIME_SCORE_BASE, TRIES_SCORE_BASE } from './scoreLimits.js'
 import {
   aceChasePattern,
   aceChaseTries,
+  centroidFigure,
   findBugMs,
   halfFullFigure,
   hotLapMs,
   playRun,
+  raceMs,
   SEEDED_DAILIES,
   SEEDED_GAMES,
   type RunRecord,
+  type SeededRace,
 } from './seedGames.js'
 import {
   BOARD_TZ,
@@ -257,20 +265,78 @@ const keyOfDay = (day: string) => Number(day.replace(/-/g, ''))
 const dayOfKey = (key: number) =>
   `${Math.floor(key / 10_000)}-${String(Math.floor(key / 100) % 100).padStart(2, '0')}-${String(key % 100).padStart(2, '0')}`
 
-/** Each daily's first day (YYYYMMDD): Hot Lap's track #1, Ace Chase's hole #1, the first Today's Wanted and Today's Pour. */
+/**
+ * Each daily's first day (YYYYMMDD): Hot Lap's track #1, Ace Chase's hole #1, the first Today's Wanted and
+ * Today's Pour, Marble Run's course #1, Lander's cave #1, Swoop's hills #1 and the first Today's Plates.
+ */
 const DAILY_FROM: Record<string, number> = {
   hotlap: keyOfDay(HOTLAP_FIRST_DAY),
   acechase: keyOfDay(ACECHASE_FIRST_DAY),
   findbug: keyOfDay(FINDBUG_FIRST_DAY),
   halffull: HALFFULL_FIRST_KEY,
+  marblerun: keyOfDay(MARBLERUN_FIRST_DAY),
+  lander: keyOfDay(LANDER_FIRST_DAY),
+  swoop: keyOfDay(SWOOP_FIRST_DAY),
+  centroid: CENTROID_FIRST_KEY,
 }
 const DAILY_SET: ReadonlySet<GameSlug> = new Set(SEEDED_DAILIES)
 
-/** How much a daily draws a player who does the dailies. Hot Lap and Ace Chase draw nearly all of them. */
-const DAILY_LIKE: Record<string, number> = { hotlap: 0.95, acechase: 0.97, findbug: 0.95, halffull: 0.85 }
+/**
+ * How much a daily draws a player who does the dailies. Hot Lap and Ace Chase draw nearly all of them, and the
+ * other races most: since 2026-10-06 any two of the races keep a day (today.ts RACES_KEEP).
+ */
+const DAILY_LIKE: Record<string, number> = {
+  hotlap: 0.95,
+  acechase: 0.97,
+  findbug: 0.95,
+  halffull: 0.85,
+  swoop: 0.9,
+  lander: 0.88,
+  marblerun: 0.88,
+  centroid: 0.8,
+}
 
-/** The dailies whose regulars come by for the day's track or hole alone, and go back to past ones. */
-const COURSE_DAILIES = ['acechase', 'hotlap'] as const
+/** The races, played a few runs at a time on the day's course, which keeps a board of its own after its day. */
+const RACES = ['hotlap', 'marblerun', 'lander', 'swoop'] as const
+type Race = (typeof RACES)[number]
+const isRace = (game: GameSlug): game is Race => (RACES as readonly GameSlug[]).includes(game)
+
+/** Each race's planned blue times, by course: Hot Lap's by track, the others' by day (trackLaps.ts). */
+const RACE_PACE: Record<Race, readonly number[]> = {
+  hotlap: HOTLAP_PACE_MS,
+  marblerun: MARBLERUN_PACE_MS,
+  lander: LANDER_PACE_MS,
+  swoop: SWOOP_PACE_MS,
+}
+
+/**
+ * A race's course on day `key` and its blue's time, or null before its first: Hot Lap's tracks come round, and
+ * every other race's course is its day's number, its blue the plan's, which comes round past its end.
+ */
+function raceCourse(game: Race, key: number): { n: number; pace: number } | null {
+  const day = dayNumberOf(key, game)
+  if (day < 1) return null
+  const n = game === 'hotlap' ? trackOfDay(day) : day
+  const pace = game === 'hotlap' ? RACE_PACE.hotlap[n - 1] : RACE_PACE[game][(n - 1) % RACE_PACE[game].length]
+  return pace ? { n, pace } : null
+}
+
+/** A race's run in ms: Hot Lap's lap, or another race's run (seedGames.ts). */
+function raceRunMs(game: Race, q: number, pace: number, run: number): number {
+  return game === 'hotlap' ? hotLapMs(q, pace, run, rand) : raceMs(game as SeededRace, q, pace, run, rand)
+}
+
+/**
+ * The dailies whose regulars come by for the day's course or hole alone, and go back to past ones, and how
+ * likely each is in such a visit.
+ */
+const COURSE_DAILIES: readonly { game: GameSlug; like: number }[] = [
+  { game: 'swoop', like: 0.6 },
+  { game: 'lander', like: 0.6 },
+  { game: 'hotlap', like: 0.85 },
+  { game: 'marblerun', like: 0.6 },
+  { game: 'acechase', like: 0.85 },
+]
 
 /** The bug hunt's first full day: its finds were kept from the evening before (bugHunt.ts). */
 const HUNT_FROM = 20260925
@@ -301,14 +367,16 @@ function hash(text: string): number {
 }
 
 /**
- * A daily's day's own difficulty, the same for everyone: 1 an ordinary day. Hot Lap's is its track's
- * blue car already; the hole, the scenes and the glasses vary from day to day.
+ * A daily's day's own difficulty, the same for everyone: 1 an ordinary day. The races' is each course's blue
+ * already; the hole, the scenes and the glasses vary from day to day, and the plates get trickier through the
+ * week, Monday's the plainest and Sunday's the hardest (the site's dead-center plan.ts DAY_LEVELS).
  */
 function dayHardness(game: GameSlug, key: number): number {
   const r = mulberry32(hash(`${game}:${key}`))()
   if (game === 'acechase') return 0.7 + 0.8 * r
   if (game === 'findbug') return 0.85 + 0.45 * r
   if (game === 'halffull') return 0.85 + 0.35 * r
+  if (game === 'centroid') return 0.82 + 0.06 * ((weekday(key) + 6) % 7) + 0.1 * r
   return 1
 }
 
@@ -425,16 +493,16 @@ type Run = {
   hole?: { tries: number; pattern: string }
 }
 
-/** A past track or hole played from a daily's archive, after its day: onto its own board, not the game's. */
+/** A past course or hole played from a daily's archive, after its day: onto its own board, not the game's. */
 type ArchivePlay = {
-  game: 'hotlap' | 'acechase'
-  /** The track's or hole's number. */
+  game: Race | 'acechase'
+  /** The track's, course's or hole's number. */
   n: number
   /** Its day, YYYY-MM-DD. */
   day: string
   at: number
   device: DeviceType
-  /** Hot Lap: the lap. */
+  /** A race: the lap or run. */
   ms?: number
   /** Ace Chase: the tries, and how each ended. */
   tries?: number
@@ -653,32 +721,31 @@ function dailyRun(
 }
 
 /**
- * Today's Track, Hole, Wanted or Pour, as each is played: a few laps of the day's track, each one on the
- * board; the hole until its first bullseye, the tries as one result; the day's first sweep and first pour,
- * the only ones that count, so nobody plays those twice. When it ended, the start again if there was
- * nothing to play, or nothing if it would have ended in the future.
+ * Today's Track, Course, Cave, Hills, Hole, Wanted, Pour or Plates, as each is played: a few runs of the day's
+ * race, each one on the board; the hole until its first bullseye, the tries as one result; the day's first
+ * sweep, pour and plates, the only ones that count, so nobody plays those twice. When it ended, the start
+ * again if there was nothing to play, or nothing if it would have ended in the future.
  */
 function playDaily(p: Player, game: GameSlug, startAt: number, form: number): number | null {
   const key = boardDateKey(startAt)
   if (key < (DAILY_FROM[game] ?? Number.POSITIVE_INFINITY)) return startAt
   const q = dailyAbility(p, game) * form
   const hard = dayHardness(game, key)
-  if (game === 'hotlap') {
-    const track = trackOfDay(dayNumberOf(key))
-    const pace = HOTLAP_PACE_MS[track - 1]
-    if (!pace) return startAt
-    const laps = 1 + Math.floor(rand() * (1.5 + 2.5 * Math.min(1, p.dailyTaste)))
+  if (isRace(game)) {
+    const course = raceCourse(game, key)
+    if (!course) return startAt
+    const runs = 1 + Math.floor(rand() * (1.5 + 2.5 * Math.min(1, p.dailyTaste)))
     let t = startAt
-    for (let lap = 0; lap < laps; lap++) {
-      const ms = hotLapMs(q, pace, lap, rand)
-      // The lights, the lap, and the line.
+    for (let i = 0; i < runs; i++) {
+      const ms = raceRunMs(game, q, course.pace, i)
+      // The lights, the run, and the line.
       const durationMs = ms + Math.round(between(3.2, 6) * 1000)
-      // A day's laps stay in its day.
+      // A day's runs stay in its day.
       if (boardDateKey(t + durationMs) !== key) break
-      const run = dailyRun(p, game, t, durationMs, TIME_SCORE_BASE - ms, [
-        { recordId: `track-${track}`, value: ms, atMs: durationMs },
-      ])
-      if (!run) return lap ? t : null
+      // Only Hot Lap's tracks keep a record each in its record book (records.ts COURSES).
+      const records = game === 'hotlap' ? [{ recordId: `track-${course.n}`, value: ms, atMs: durationMs }] : []
+      const run = dailyRun(p, game, t, durationMs, TIME_SCORE_BASE - ms, records)
+      if (!run) return i ? t : null
       t = run.at + between(8, 60) * 1000
     }
     return t
@@ -711,25 +778,32 @@ function playDaily(p: Player, game: GameSlug, startAt: number, form: number): nu
     const run = dailyRun(p, game, startAt, durationMs, figure, [{ recordId: `pour-${n}`, value: figure, atMs: durationMs }])
     return run ? run.at : null
   }
+  if (game === 'centroid') {
+    const figure = centroidFigure(q, hard, rand)
+    // Six plates: a look, a tap, the pin going in.
+    const durationMs = Math.round((6 * between(3, 8) + between(2, 5)) * 1000)
+    const run = dailyRun(p, game, startAt, durationMs, figure, [])
+    return run ? run.at : null
+  }
   return startAt
 }
 
 /**
- * The dailies someone plays when they sit down on day `key`, in the card's order: the ones out by then,
- * each as likely as their taste for the dailies and how often they come by.
+ * The dailies someone plays when they sit down on day `key`, in the card's order (the races, then the ones
+ * just for fun): the ones out by then, each as likely as their taste for the dailies and how often they come by.
  */
 function dailiesFor(p: Player, key: number): GameSlug[] {
   if (!p.dailyTaste) return []
   const keen = p.dailyTaste * (0.55 + 0.4 * p.activity)
-  return (['acechase', 'hotlap', 'findbug', 'halffull'] as GameSlug[]).filter(
+  return (['swoop', 'lander', 'hotlap', 'marblerun', 'acechase', 'findbug', 'halffull', 'centroid'] as GameSlug[]).filter(
     (g) => key >= DAILY_FROM[g]! && chance(clamp(keen * DAILY_LIKE[g]!, 0, 0.97)),
   )
 }
 
 /**
- * The days a Hot Lap or Ace Chase regular comes by for the day's track or hole alone, on days they skip
+ * The days a race or Ace Chase regular comes by for the day's courses or hole alone, on days they skip
  * everything else (`visiting`: the days they come by anyway), now and then going back to a past one too.
- * So a day's track and hole draw more of the arcade than the days' other games do.
+ * So a day's courses and hole draw more of the arcade than the days' other games do.
  */
 function courseVisits(p: Player, visiting: ReadonlySet<number>): Sitting[] {
   if (!p.dailyTaste) return []
@@ -744,7 +818,7 @@ function courseVisits(p: Player, visiting: ReadonlySet<number>): Sitting[] {
     if (key === TODAY && dayStart(key) + hour * HOUR > NOW - 25 * MINUTE && !chance(0.3)) continue
     const at = timeOnDay(key, hour, p.joinedAt + between(1, 6) * MINUTE)
     if (at == null) continue
-    const games: GameSlug[] = COURSE_DAILIES.filter((g) => key >= DAILY_FROM[g]! && chance(0.85))
+    const games = COURSE_DAILIES.filter((c) => key >= DAILY_FROM[c.game]! && chance(c.like)).map((c) => c.game)
     if (!games.length) continue
     out.push({ at, games, archive: key > DAILY_FROM.hotlap! && chance(0.25 + 0.25 * taste) })
   }
@@ -752,7 +826,7 @@ function courseVisits(p: Player, visiting: ReadonlySet<number>): Sitting[] {
 }
 
 /**
- * A go at the past tracks and holes: one to three of them, each a different one, one after another.
+ * A go at the past courses and holes: one to three of them, each a different one, one after another.
  */
 function playArchive(p: Player, from: number): number {
   const courses = 1 + (chance(0.45) ? 1 : 0) + (chance(0.15) ? 1 : 0)
@@ -763,17 +837,21 @@ function playArchive(p: Player, from: number): number {
 }
 
 /**
- * A past track or hole from a daily's archive: a lap or four at a past track, some to better their own
- * lap and some on a day they missed, or a past hole they never played (a hole keeps an account's first
- * result only). Kept on the track's or hole's own board. `done`: the ones already played this sitting.
+ * A past course or hole from a daily's archive: a run or four at a past race's course, some to better their
+ * own time and some on a day they missed, or a past hole they never played (a hole keeps an account's first
+ * result only). Kept on the course's or hole's own board. A race's courses from the week before are
+ * everyone's (archive.ts OPEN_DAYS); an older one is a Plus member's practice, on no board, so nobody here
+ * plays one. `done`: the ones already played this sitting.
  */
 function playArchiveCourse(p: Player, from: number, done: Set<string>): number {
   const key = boardDateKey(from)
-  const options: { game: 'hotlap' | 'acechase'; n: number; day: string }[] = []
-  for (let d = 1; d < dayNumberOf(key); d++) {
-    const track = trackOfDay(d)
-    const day = dayOfKey(addDays(DAILY_FROM.hotlap!, d - 1))
-    if (!done.has(`hotlap:${day}`)) options.push({ game: 'hotlap', n: track, day })
+  const options: { game: Race | 'acechase'; n: number; day: string }[] = []
+  for (const game of RACES) {
+    for (let k = Math.max(DAILY_FROM[game]!, addDays(key, -OPEN_DAYS)); k < key; k = nextDay(k)) {
+      const course = raceCourse(game, k)
+      const day = dayOfKey(k)
+      if (course && !done.has(`${game}:${day}`)) options.push({ game, n: course.n, day })
+    }
   }
   for (let k = DAILY_FROM.acechase!; k < key; k = nextDay(k)) {
     const day = dayOfKey(k)
@@ -787,16 +865,17 @@ function playArchiveCourse(p: Player, from: number, done: Set<string>): number {
   done.add(`${choice.game}:${choice.day}`)
   const device = chance(0.9) ? p.device : pick(DEVICES)
   let t = from + between(0.5, 4) * MINUTE
-  if (choice.game === 'hotlap') {
-    const pace = HOTLAP_PACE_MS[choice.n - 1]
+  if (choice.game !== 'acechase') {
+    const game = choice.game
+    const pace = raceCourse(game, keyOfDay(choice.day))?.pace
     if (!pace) return from
-    const laps = 1 + Math.floor(rand() * 4)
-    for (let lap = 0; lap < laps; lap++) {
-      const ms = hotLapMs(dailyAbility(p, 'hotlap'), pace, lap + 1, rand)
+    const runs = 1 + Math.floor(rand() * 4)
+    for (let i = 0; i < runs; i++) {
+      const ms = raceRunMs(game, dailyAbility(p, game), pace, i + 1)
       const end = t + ms + between(3.2, 6) * 1000
       if (end > NOW - 2 * MINUTE) break
       p.archive.push({ ...choice, at: end, device, ms })
-      p.practice.hotlap = (p.practice.hotlap ?? 0) + 1
+      p.practice[game] = (p.practice[game] ?? 0) + 1
       t = end + between(8, 60) * 1000
     }
     return t
@@ -1275,8 +1354,10 @@ function recordBooks(players: Player[]): RecordRow[] {
     ].sort((a, b) => a.at - b.at)
     for (const { run, play } of steps) {
       if (play) {
-        const id = play.game === 'hotlap' ? `track-${play.n}` : `hole-${play.n}`
-        post(play.game, id, play.game === 'hotlap' ? play.ms! : play.tries!, play.at, play.device)
+        // Only Hot Lap's tracks and Ace Chase's holes have a record each; the other races' courses keep theirs
+        // on their own boards.
+        if (play.game === 'hotlap') post(play.game, `track-${play.n}`, play.ms!, play.at, play.device)
+        if (play.game === 'acechase') post(play.game, `hole-${play.n}`, play.tries!, play.at, play.device)
         continue
       }
       if (!run) continue
@@ -1332,9 +1413,10 @@ async function clearSeed(d: Db) {
     .where(like(nameClaims.accountId, 'seed-acct-%'))
   await d.delete(recordScores).where(inArray(recordScores.name, seededTags))
   await d.delete(tournamentsTable).where(like(tournamentsTable.id, 'seed-%'))
+  // The list's tags, and a crowd's (`--players`), whose tags aren't on the list.
   await d
     .delete(trophyAwards)
-    .where(or(inArray(trophyAwards.name, [...TAGS]), like(trophyAwards.eventId, 'seed-%')))
+    .where(or(inArray(trophyAwards.name, [...TAGS]), inArray(trophyAwards.name, seededTags), like(trophyAwards.eventId, 'seed-%')))
   await d.delete(friendships).where(like(friendships.id, 'seed-%'))
   await d.delete(friendRequests).where(like(friendRequests.id, 'seed-%'))
   await d.delete(groupMembers).where(like(groupMembers.groupId, 'seed-%'))
@@ -1662,11 +1744,12 @@ async function buildWorld(d: Db): Promise<Tournament[]> {
           hunt: key >= HUNT_FROM && chance(0.3 + 0.35 * p.activity + 0.1 * Math.min(1, p.dailyTaste)),
         })
       }
-      // The keenest come back later the same day now and then, some for another go at the day's track.
+      // The keenest come back later the same day now and then, some for another go at one of the day's races.
       if (at != null && p.activity > 0.7 && chance(0.2)) {
         const later = timeOnDay(key, Math.min(23.5, hourOf(at) + between(2, 5)), at + 2 * HOUR)
-        const lap = key >= DAILY_FROM.hotlap! && p.dailyTaste > 0.6 && chance(0.35)
-        if (later != null) plan.push({ at: later, games: [...(lap ? (['hotlap'] as GameSlug[]) : []), ...chooseGames(p, key, official)] })
+        const races = RACES.filter((g) => key >= DAILY_FROM[g]!)
+        const again: GameSlug[] = races.length && p.dailyTaste > 0.6 && chance(0.35) ? [pick(races)] : []
+        if (later != null) plan.push({ at: later, games: [...again, ...chooseGames(p, key, official)] })
       }
     }
     plan.push(...courseVisits(p, new Set(days)))
@@ -1773,12 +1856,13 @@ async function buildWorld(d: Db): Promise<Tournament[]> {
       })),
   )
   await insertRows(d, dailyHoleResults, holeDays)
+  // Runs on the races' past courses, each onto its course's own board (trackLaps.ts).
   const laps = players.flatMap((p) =>
     p.archive
-      .filter((a) => a.game === 'hotlap')
+      .filter((a) => a.game !== 'acechase')
       .map((a) => ({
         id: sid('tl'),
-        game: 'hotlap',
+        game: a.game,
         track: a.n,
         accountId: p.accountId,
         name: p.tag,
@@ -1810,7 +1894,7 @@ async function buildWorld(d: Db): Promise<Tournament[]> {
   )
   await insertRows(d, bugHuntFinds, finds)
   console.log(
-    `  ${holeDays.length} Today's Hole results, ${laps.length} laps and ${holesLater.length} hole results from the archives, ${finds.length} bugs caught`,
+    `  ${holeDays.length} Today's Hole results, ${laps.length} runs on past courses and ${holesLater.length} hole results from the archives, ${finds.length} bugs caught`,
   )
 
   console.log('Filling record books…')

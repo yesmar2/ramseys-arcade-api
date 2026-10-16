@@ -488,7 +488,7 @@ export function playRun(game: GameSlug, q: number, rng: Rng): SeedRun {
  * the day, from each one's first. `hard` is the day's own difficulty, the same for everyone: 1 an ordinary
  * day, more a harder one.
  */
-export const SEEDED_DAILIES: readonly GameSlug[] = ['hotlap', 'acechase', 'findbug', 'halffull']
+export const SEEDED_DAILIES: readonly GameSlug[] = ['hotlap', 'acechase', 'findbug', 'halffull', 'marblerun', 'lander', 'swoop', 'centroid']
 
 /**
  * A Hot Lap lap in milliseconds, on a track whose blue car goes round in `pace`: a middling driver about
@@ -501,6 +501,35 @@ export function hotLapMs(q: number, pace: number, lap: number, rng: Rng): number
   const form = g > 0 ? 1 + g * 0.05 : 1 + g * 0.012
   const share = curve(clamp(q, 0, 1), 1.3, 0.97, 0.74) * (1 - 0.006 * Math.min(lap, 3)) * form
   return Math.round(pace * Math.max(0.815, share))
+}
+
+/*
+ * The other races' shapes, as shares of the day's blue time: a first go (`slow`), a middling player (`mid`) and
+ * the very best (`fast`), who close on `best` past `knee` rather than reach it, so a board's leaders don't tie.
+ * Each follows its game's medals (ticketLadders.ts RACE_MEDAL_STEP: platinum is 30% under the blue at Marble
+ * Run and Lander and 39% at Swoop), and its best players take platinum, as Ramsey's own runs do: Marble Run 31
+ * to 35% under, and platinum at Lander and Swoop easy for him before it was made harder. A middling player is
+ * about level with the blue.
+ */
+const RACE_SHAPES = {
+  marblerun: { slow: 1.45, mid: 0.98, fast: 0.6, knee: 0.74, best: 0.66 },
+  lander: { slow: 1.5, mid: 0.98, fast: 0.58, knee: 0.74, best: 0.65 },
+  swoop: { slow: 1.35, mid: 0.95, fast: 0.5, knee: 0.64, best: 0.56 },
+} as const
+
+export type SeededRace = keyof typeof RACE_SHAPES
+
+/**
+ * A Marble Run, Lander or Swoop run in milliseconds, on a course whose blue goes in `pace`, as hotLapMs is a
+ * Hot Lap lap. A slip, a crash or a missed hill costs seconds and a clean run gains little, and each course is
+ * new on its day, so the runs of a sitting learn it more than Hot Lap's laps learn a track that comes round.
+ */
+export function raceMs(game: SeededRace, q: number, pace: number, run: number, rng: Rng): number {
+  const shape = RACE_SHAPES[game]
+  const g = gauss(rng)
+  const form = g > 0 ? 1 + g * 0.06 : 1 + g * 0.015
+  const share = curve(clamp(q, 0, 1), shape.slow, shape.mid, shape.fast) * (1 - 0.012 * Math.min(run, 3)) * form
+  return Math.round(pace / soften(1 / share, 1 / shape.knee, 1 / shape.best))
 }
 
 /**
@@ -549,4 +578,22 @@ export function halfFullFigure(q: number, hard: number, rng: Rng): number {
     total += Math.max(0, 100 - 2 * (Math.round(off * 10) / 10))
   }
   return Math.floor((100 * total) / 5 + 1e-6)
+}
+
+/**
+ * Today's Plates, as Centroid's board keeps them: hundredths of a point (9346 is 93.4%). Each of six taps
+ * lands some way off its plate's balance point, a sharp eye within a point or two of its size and a first go
+ * five or ten off, and now and then a plate fools the eye altogether (aiming at the middle of its box scores
+ * 53 to 74). A plate scores 100 less three a point off, to a tenth, and the day is their mean (the API's
+ * centroid/score.ts).
+ */
+export function centroidFigure(q: number, hard: number, rng: Rng): number {
+  const spread = curve(clamp(q, 0, 1), 9, 4, 1.4) * hard
+  let total = 0
+  for (let i = 0; i < 6; i++) {
+    let off = Math.abs(gauss(rng)) * spread
+    if (rng() < 0.2 * (1 - q)) off += between(rng, 4, 14)
+    total += Math.max(0, 100 - 3 * (Math.round(off * 10) / 10))
+  }
+  return Math.floor((100 * total) / 6 + 1e-6)
 }

@@ -8,6 +8,7 @@ import { listFeedback } from './feedback.js'
 import { launchEmail, leaveLaunchList, listLaunchList, sendLaunchBatch, sendLaunchTest } from './launchList.js'
 import { BATCH_MAX, mailerReady } from './mailer.js'
 import { listFlags, reviewFlag, unreviewedCount } from './scoreFlags.js'
+import { runCheck } from './runCheck.js'
 import { getClaim } from './names.js'
 import { resetPreview, resetWorld } from './resetWorld.js'
 import { playerStats } from './playerStats.js'
@@ -317,6 +318,17 @@ adminRouter.post('/reset', async (req, res) => {
     const restarting = Boolean(process.env.RENDER)
     res.json({ ...done, restarting })
     if (restarting) setTimeout(() => process.exit(0), 1500)
+  } catch (err) {
+    refuse(err, res)
+  }
+})
+
+/** How many of the last days' saves came with their run, game by game (runCheck.ts): REQUIRE_RUN_TOKEN's go-ahead. */
+adminRouter.get('/run-check', async (req, res) => {
+  try {
+    await requireAdmin(req)
+    const days = Math.min(30, Math.max(1, Number(req.query.days) || 7))
+    res.json(await runCheck(days))
   } catch (err) {
     refuse(err, res)
   }

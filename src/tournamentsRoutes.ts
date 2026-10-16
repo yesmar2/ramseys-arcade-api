@@ -5,8 +5,9 @@ import { isBanned } from './bans.js'
 import { planErrorFields } from './plans.js'
 import { assertCanUseName } from './names.js'
 import { takeToken } from './rateLimit.js'
-import { claimRun, peekRun, runClaimRef, startRun } from './runs.js'
-import { checkScoreRate } from './scoreLimits.js'
+import { claimRun, peekRun, runClaimRef, RUNS_REQUIRED, startRun } from './runs.js'
+import { checkScoreRate, TIME_SCORE_BASE } from './scoreLimits.js'
+import { floorMsFor } from './trackLaps.js'
 import { awardTickets, DAILY_TICKETS } from './tickets.js'
 import { resolveGameSlug, type GameSlug } from './store.js'
 import {
@@ -46,6 +47,8 @@ const scoreSchema = z.object({
   invite: z.string().min(4).max(16).optional(),
   /** Optional until REQUIRE_RUN_TOKEN — older clients do not send one. */
   runId: z.string().min(1).max(64).optional(),
+  /** How long after the run began its id came back, as the site measured it (runs.ts runLag). */
+  runLagMs: z.number().int().min(0).max(3_600_000).optional(),
   /** A racing daily's run: the course it was on, for an event raced on one. */
   course: z.number().int().positive().optional(),
 })
@@ -66,9 +69,6 @@ const TRY_START_LIMIT = { limit: 40, windowMs: 10 * 60 * 1000 }
  * actually costs somebody something, so it is not generous either.
  */
 const TOURNAMENT_SUBMIT_LIMIT = { limit: 60, windowMs: 10 * 60 * 1000 }
-
-const REQUIRE_RUN_TOKEN =
-  process.env.REQUIRE_RUN_TOKEN === '1' || process.env.REQUIRE_RUN_TOKEN === 'true'
 
 const RUN_ERRORS: Record<'UNKNOWN' | 'USED' | 'EXPIRED' | 'MISMATCH', string> = {
   UNKNOWN: 'That run is not on record',
@@ -374,17 +374,24 @@ tournamentsRouter.post('/:id/scores', async (req, res) => {
      * score in every event it qualifies for but only once in each.
      */
     const game = resolveGameSlug(parsed.data.game)
-    const { runId, score } = parsed.data
+    const { runId, runLagMs, score, course } = parsed.data
+    // The boards' floors hold here too (trackLaps.ts floorMsFor): a race's on the course it was run on.
+    const floorMs = game ? floorMsFor(game, course) : null
+    if (floorMs != null && TIME_SCORE_BASE - score < floorMs) {
+      console.warn(`[anticheat] rejected a ${game} tournament score of ${score} from account ${account.id}: under ${floorMs}ms`)
+      res.status(400).json({ error: 'That score is not possible in the time the run took', code: 'SCORE_IMPLAUSIBLE' })
+      return
+    }
     if (runId && game) {
-      const run = await peekRun(runId, account.id, game)
+      const run = await peekRun(runId, account.id, game, undefined, runLagMs)
       if (!run.ok) {
         res.status(400).json({ error: RUN_ERRORS[run.code], code: `RUN_${run.code}` })
         return
       }
-      const plausible = checkScoreRate(game, score, run.elapsedMs)
+      const plausible = checkScoreRate(game, score, run.checkedMs)
       if (!plausible.ok) {
         console.warn(
-          `[anticheat] rejected a ${game} tournament score of ${score} from account ${account.id} after ${run.elapsedMs}ms: ${plausible.reason}`,
+          `[anticheat] rejected a ${game} tournament score of ${score} from account ${account.id} after ${run.checkedMs}ms: ${plausible.reason}`,
         )
         res.status(400).json({
           error: 'That score is not possible in the time the run took',
@@ -392,7 +399,7 @@ tournamentsRouter.post('/:id/scores', async (req, res) => {
         })
         return
       }
-    } else if (!runId && REQUIRE_RUN_TOKEN) {
+    } else if (!runId && RUNS_REQUIRED) {
       res.status(400).json({ error: 'Start the run before submitting', code: 'RUN_REQUIRED' })
       return
     }

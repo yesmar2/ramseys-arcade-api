@@ -9,7 +9,7 @@ import { tellBeatenFriends } from './todayBeaten.js'
 import { hasPodium, podiumNames, tellPodiumLost } from './podiumLost.js'
 import { isBanned } from './bans.js'
 import { clientIp, hashIp, takeToken } from './rateLimit.js'
-import { claimRun, peekRun } from './runs.js'
+import { claimRun, peekRun, RUNS_REQUIRED } from './runs.js'
 import { claimFirstRunDay, FIRST_RUN_DAILIES, FIRST_RUN_TTL_MS, firstRunError, firstRunProblem } from './firstRun.js'
 import { judgePours, minPourMs, poursSchema } from './halffull/save.js'
 import { judgePlates, minPlatesMs, platesSchema } from './centroid/save.js'
@@ -24,8 +24,7 @@ import { recordChallengeRun } from './challenges.js'
 import { payRun, plausiblePickups, type RunTickets } from './tickets.js'
 import { SEASON_PRIZES, seasonAfterRun, standingsSeason } from './seasons.js'
 import { runSkin } from './skins.js'
-import { landerPlannedPace, marblerunPlannedPace, swoopPlannedPace, wobblerunPlannedPace } from './ticketLadders.js'
-import { WOBBLERUN_FLOOR } from './trackLaps.js'
+import { floorMsFor } from './trackLaps.js'
 import {
   addScore,
   ALLOWED_GAMES,
@@ -188,6 +187,8 @@ const submitSchema = z.object({
   device: z.enum(['phone', 'tablet', 'desktop']).optional(),
   /** Optional until REQUIRE_RUN_TOKEN — older clients do not send one. */
   runId: z.string().min(1).max(64).optional(),
+  /** How long after the run began its id came back, as the site measured it (runs.ts runLag). */
+  runLagMs: z.number().int().min(0).max(3_600_000).optional(),
   /** The challenge this run was played against, from a friend's link. */
   challengeId: z.string().min(1).max(16).optional(),
   /** Prize tickets the run picked up on the way (Crosswalk's), paid on top of the run's own. */
@@ -208,9 +209,6 @@ const submitSchema = z.object({
  * rather than an address, which a phone on mobile data changes constantly.
  */
 const SUBMIT_LIMIT = { limit: 40, windowMs: 10 * 60 * 1000 }
-
-const REQUIRE_RUN_TOKEN =
-  process.env.REQUIRE_RUN_TOKEN === '1' || process.env.REQUIRE_RUN_TOKEN === 'true'
 
 const RUN_ERRORS: Record<'UNKNOWN' | 'USED' | 'EXPIRED' | 'MISMATCH', string> = {
   UNKNOWN: 'That run is not on record',
@@ -572,7 +570,7 @@ leaderboardsRouter.post('/:game', async (req, res) => {
     return
   }
 
-  const { name, token, device, runId, challengeId, pickups, pace, pours, plates, skin } = parsed.data
+  const { name, token, device, runId, runLagMs, challengeId, pickups, pace, pours, plates, skin } = parsed.data
   let score = parsed.data.score
   // Before launch, Plus members play a new game as practice: its boards open to everyone on launch day (earlyAccess.ts).
   if (beforeLaunch(game)) {
@@ -643,64 +641,44 @@ leaderboardsRouter.post('/:game', async (req, res) => {
    * keep working through the deploy. REQUIRE_RUN_TOKEN closes that door once
    * the site has caught up.
    */
-  // A day's Marble Run can't be rolled much faster than the day's blue ball, the plan's own (marblerunPace.ts): a
-  // time under 60% of it is refused, whatever the clock says. The loosest guess at the best a hand could do.
-  if (game === 'marblerun' && TIME_SCORE_BASE - score < 0.6 * (marblerunPlannedPace() ?? 42_000)) {
-    console.warn(`[anticheat] rejected marblerun ${score} from account ${account.id}: faster than the day's course allows`)
-    res.status(400).json({ error: 'That score is not possible in the time the run took', code: 'SCORE_IMPLAUSIBLE' })
-    return
-  }
-  // Nor a day's Lander much faster than the day's blue ship (landerPace.ts). A hand can cut a cave's corners
-  // and dive where the blue ship eases down, so the floor is lower: 45% of its time.
-  if (game === 'lander' && TIME_SCORE_BASE - score < 0.45 * (landerPlannedPace() ?? 49_000)) {
-    console.warn(`[anticheat] rejected lander ${score} from account ${account.id}: faster than the day's cave allows`)
-    res.status(400).json({ error: 'That score is not possible in the time the run took', code: 'SCORE_IMPLAUSIBLE' })
-    return
-  }
-  // Nor a day's Swoop (swoopPace.ts). The blue bird reacts a third of a second late and dives in the air only
-  // half the time. On a streak of clean landings the bird can go faster (the site's swoop sim.ts capFor), and on
-  // the hills as they've been since they went 75% longer, a search of every hold and let-go came in at 36.9% of
-  // the blue bird's raced time on the plan's quickest day (#17). The floor is 30%, under that with room for a
-  // line the search missed.
-  if (game === 'swoop' && TIME_SCORE_BASE - score < 0.3 * (swoopPlannedPace() ?? 85_000)) {
-    console.warn(`[anticheat] rejected swoop ${score} from account ${account.id}: faster than the day's hills allow`)
-    res.status(400).json({ error: 'That score is not possible in the time the run took', code: 'SCORE_IMPLAUSIBLE' })
-    return
-  }
-  // Nor a day's Wobble Run much faster than the day's blue blip (wobblerunPace.ts): under 40% of its raced time
-  // (trackLaps.ts WOBBLERUN_FLOOR, which past gauntlets' boards share, and which says how it's held under the
-  // plan's fastest search).
-  if (game === 'wobblerun' && TIME_SCORE_BASE - score < WOBBLERUN_FLOOR * (wobblerunPlannedPace() ?? 80_000)) {
-    console.warn(`[anticheat] rejected wobblerun ${score} from account ${account.id}: faster than the day's gauntlet allows`)
+  // No time-scored run beats its floor, whatever the clock says (trackLaps.ts floorMsFor): a race's is a share of
+  // its course's blue run, well under the best a hand has done, and Find the Bug's and Spotter's are fixed. The
+  // server's clock only says a run lasted at least as long as it claims, which never stops a fast claim.
+  const floorMs = floorMsFor(game)
+  if (floorMs != null && TIME_SCORE_BASE - score < floorMs) {
+    console.warn(`[anticheat] rejected ${game} ${score} from account ${account.id}: under the fastest believable, ${floorMs}ms`)
     res.status(400).json({ error: 'That score is not possible in the time the run took', code: 'SCORE_IMPLAUSIBLE' })
     return
   }
 
   const firstRunOnly = FIRST_RUN_DAILIES.has(game)
   let durationMs: number | null = null
+  // The time the score is held to: the server's, plus the late start the site reported (runs.ts runLag).
+  let checkedMs: number | null = null
   if (runId) {
-    const run = await peekRun(runId, account.id, game, firstRunOnly ? FIRST_RUN_TTL_MS : undefined)
+    const run = await peekRun(runId, account.id, game, firstRunOnly ? FIRST_RUN_TTL_MS : undefined, runLagMs)
     if (!run.ok) {
       res.status(400).json({ error: RUN_ERRORS[run.code], code: `RUN_${run.code}` })
       return
     }
     durationMs = run.elapsedMs
+    checkedMs = run.checkedMs
     // Five pours can't be locked faster than each glass's lock allows (halffull/save.ts minPourMs).
-    if (game === 'halffull' && run.elapsedMs < minPourMs(pours?.auto)) {
-      console.warn(`[anticheat] rejected halffull from account ${account.id}: five pours in ${run.elapsedMs}ms`)
+    if (game === 'halffull' && run.checkedMs < minPourMs(pours?.auto)) {
+      console.warn(`[anticheat] rejected halffull from account ${account.id}: five pours in ${run.checkedMs}ms`)
       res.status(400).json({ error: 'That score is not possible in the time the run took', code: 'SCORE_IMPLAUSIBLE' })
       return
     }
     // Six plates can't be played faster than each comes on and stands (centroid/save.ts minPlatesMs).
-    if (game === 'centroid' && run.elapsedMs < minPlatesMs()) {
-      console.warn(`[anticheat] rejected centroid from account ${account.id}: six plates in ${run.elapsedMs}ms`)
+    if (game === 'centroid' && run.checkedMs < minPlatesMs()) {
+      console.warn(`[anticheat] rejected centroid from account ${account.id}: six plates in ${run.checkedMs}ms`)
       res.status(400).json({ error: 'That score is not possible in the time the run took', code: 'SCORE_IMPLAUSIBLE' })
       return
     }
-    const plausible = checkScoreRate(game, score, run.elapsedMs)
+    const plausible = checkScoreRate(game, score, run.checkedMs)
     if (!plausible.ok) {
       console.warn(
-        `[anticheat] rejected ${game} ${score} from account ${account.id} after ${run.elapsedMs}ms: ${plausible.reason}`,
+        `[anticheat] rejected ${game} ${score} from account ${account.id} after ${run.checkedMs}ms: ${plausible.reason}`,
       )
       res.status(400).json({
         error: 'That score is not possible in the time the run took',
@@ -708,7 +686,7 @@ leaderboardsRouter.post('/:game', async (req, res) => {
       })
       return
     }
-  } else if (REQUIRE_RUN_TOKEN) {
+  } else if (RUNS_REQUIRED) {
     res.status(400).json({ error: 'Start the run before saving a score', code: 'RUN_REQUIRED' })
     return
   }
@@ -766,7 +744,8 @@ leaderboardsRouter.post('/:game', async (req, res) => {
 
   // Read before the write, so "was this far past the rest?" has an answer: a daily's today, the others' all time
   // (a daily has no board for all time, store.ts ALL_TIME_GAMES, and days' runs can't be measured against each other).
-  const bestBefore = (await getBoard(game, DAILY_GAMES.has(game) ? 'daily' : 'all'))[0]?.score ?? 0
+  const boardBefore = await getBoard(game, DAILY_GAMES.has(game) ? 'daily' : 'all')
+  const bestBefore = boardBefore[0]?.score ?? 0
   // The player's own best before this run, for its tickets: a new best pays more, and none at all is a first go.
   // A daily's, from its runs of any day, says only whether this is a first go (tickets.ts pays it no best).
   const priorBest = DAILY_GAMES.has(game)
@@ -801,8 +780,10 @@ leaderboardsRouter.post('/:game', async (req, res) => {
       score,
       runId: runId ?? null,
       durationMs,
+      checkedMs,
     },
     bestBefore,
+    { boardSize: boardBefore.length, floorMs },
   )
 
   // A run from a friend's link: kept against the challenge, and its sender told.

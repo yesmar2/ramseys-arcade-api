@@ -2,7 +2,7 @@ import crypto from 'node:crypto'
 import { and, desc, eq, isNull, sql } from 'drizzle-orm'
 import { db } from './db/client.js'
 import { leaderboardScores, scoreFlags } from './db/schema.js'
-import { rateAllowance } from './scoreLimits.js'
+import { rateAllowance, TIME_SCORE_BASE, TIME_SCORED_GAMES } from './scoreLimits.js'
 import type { GameSlug } from './store.js'
 
 /**
@@ -17,14 +17,30 @@ import type { GameSlug } from './store.js'
  * because the alternative is a heuristic quietly throwing away real runs.
  */
 
-/** Past this multiple of the best existing score, a run wants explaining. */
-const OUTLIER_MULTIPLE = 2.5
+/**
+ * Past this multiple of the best existing score, a run wants explaining. It was 2.5 until 2026-10-16, which let
+ * a patient fake twice the best (a run opened, left to run on, then a big score sent) through unnoticed; a flag
+ * costs only a look, so it's lower now.
+ */
+const OUTLIER_MULTIPLE = 1.5
 
 /** A score using this much of what the elapsed time allowed is at the edge. */
 const NEAR_CAP_FRACTION = 0.85
 
 /** Below this, a board is too thin for "far past the rest" to mean anything. */
 const MIN_BOARD_FOR_OUTLIER = 5
+
+/**
+ * A time this far under the best before it wants explaining too: 15% faster than the board's best. A time is
+ * never a multiple of another (a run 2.5 times as good would take no time at all), so the time-scored boards,
+ * the races among them, went unwatched until 2026-10-16.
+ */
+const FAST_SHARE = 0.85
+
+/** A time within this much of its floor (trackLaps.ts floorMsFor) is at the edge of what a board believes. */
+const NEAR_FLOOR = 1.1
+
+const seconds = (ms: number) => `${(ms / 1000).toFixed(1)}s`
 
 export type FlagKind = 'outlier' | 'near-cap'
 
@@ -74,30 +90,61 @@ export async function flagIfSuspicious(
     score: number
     runId?: string | null
     durationMs?: number | null
+    /** The time its score was held to, with any late start the site reported (runs.ts runLag). */
+    checkedMs?: number | null
   },
   bestBefore: number,
+  board: {
+    /** How many were on the board the best came from, for a time-scored game. */
+    boardSize?: number
+    /** The fastest the board believes, for a time-scored game (trackLaps.ts floorMsFor). */
+    floorMs?: number | null
+  } = {},
 ): Promise<void> {
+  const { checkedMs, ...flagged } = entry
   try {
+    if (TIME_SCORED_GAMES.has(entry.game)) {
+      const ms = TIME_SCORE_BASE - entry.score
+      const bestMs = bestBefore > 0 ? TIME_SCORE_BASE - bestBefore : null
+      if (bestMs != null && ms < bestMs * FAST_SHARE && (board.boardSize ?? 0) >= MIN_BOARD_FOR_OUTLIER) {
+        await record({
+          ...flagged,
+          kind: 'outlier',
+          detail: `${seconds(ms)}, ${Math.round((1 - ms / bestMs) * 100)}% faster than the best before it, ${seconds(bestMs)}`,
+        })
+        return
+      }
+      if (board.floorMs != null && ms < board.floorMs * NEAR_FLOOR) {
+        await record({
+          ...flagged,
+          kind: 'near-cap',
+          detail: `${seconds(ms)}, within ${Math.round((NEAR_FLOOR - 1) * 100)}% of the fastest believed, ${seconds(board.floorMs)}`,
+        })
+      }
+      return
+    }
+
     if (
       bestBefore > 0 &&
       entry.score > bestBefore * OUTLIER_MULTIPLE &&
       (await boardDepth(entry.game)) >= MIN_BOARD_FOR_OUTLIER
     ) {
       await record({
-        ...entry,
+        ...flagged,
         kind: 'outlier',
         detail: `${(entry.score / bestBefore).toFixed(1)}x the previous best of ${bestBefore}`,
       })
       return
     }
 
-    if (entry.durationMs != null) {
-      const allowed = rateAllowance(entry.game, entry.durationMs)
+    const heldTo = checkedMs ?? entry.durationMs
+    if (heldTo != null) {
+      const allowed = rateAllowance(entry.game, heldTo)
       if (allowed != null && allowed > 0 && entry.score >= allowed * NEAR_CAP_FRACTION) {
         await record({
-          ...entry,
+          ...flagged,
           kind: 'near-cap',
-          detail: `used ${Math.round((entry.score / allowed) * 100)}% of what ${(entry.durationMs / 1000).toFixed(1)}s allows`,
+          detail: `used ${Math.round((entry.score / allowed) * 100)}% of what ${seconds(heldTo)} allows`,
         })
       }
     }

@@ -29,6 +29,8 @@ const BEST_LIMIT = { limit: 60, windowMs: 10 * 60 * 1000 }
 const bestSchema = z.object({
   ms: z.number().int().positive().max(TIME_SCORE_BASE - 1),
   runId: z.string().min(1).max(64),
+  /** How long after the run began its id came back, as the site measured it (runs.ts runLag). */
+  runLagMs: z.number().int().min(0).max(3_600_000).optional(),
 })
 
 function courseGame(raw: string): GameSlug | null {
@@ -90,7 +92,7 @@ courseBestsRouter.post('/:game/:n', async (req, res) => {
     res.status(400).json({ error: 'Invalid body', details: parsed.error.flatten() })
     return
   }
-  const { ms, runId } = parsed.data
+  const { ms, runId, runLagMs } = parsed.data
   if (ms < fastestBelievable(n, game)) {
     res.status(400).json({ error: 'That time is not possible on this course', code: 'SCORE_OUT_OF_RANGE' })
     return
@@ -112,14 +114,14 @@ courseBestsRouter.post('/:game/:n', async (req, res) => {
     return
   }
   // Timed by the server as a board's run is: it can't have taken less time than it claims.
-  const run = await peekRun(runId, account.id, game)
+  const run = await peekRun(runId, account.id, game, undefined, runLagMs)
   if (!run.ok) {
     res.status(400).json({ error: 'That run is not on record', code: `RUN_${run.code}` })
     return
   }
-  const plausible = checkScoreRate(game, TIME_SCORE_BASE - ms, run.elapsedMs)
+  const plausible = checkScoreRate(game, TIME_SCORE_BASE - ms, run.checkedMs)
   if (!plausible.ok) {
-    console.warn(`[anticheat] rejected a ${game} course ${n} best of ${ms}ms from account ${account.id} after ${run.elapsedMs}ms: ${plausible.reason}`)
+    console.warn(`[anticheat] rejected a ${game} course ${n} best of ${ms}ms from account ${account.id} after ${run.checkedMs}ms: ${plausible.reason}`)
     res.status(400).json({ error: 'That time is not possible in the time the run took', code: 'SCORE_IMPLAUSIBLE' })
     return
   }

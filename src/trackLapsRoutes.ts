@@ -53,6 +53,8 @@ const lapSchema = z.object({
   token: z.string().min(1).max(128).optional(),
   device: z.enum(['phone', 'tablet', 'desktop']).optional(),
   runId: z.string().min(1).max(64),
+  /** How long after the run began its id came back, as the site measured it (runs.ts runLag). */
+  runLagMs: z.number().int().min(0).max(3_600_000).optional(),
   skin: z.string().min(1).max(40).optional(),
 })
 
@@ -156,7 +158,7 @@ tracksRouter.post('/:game/:n/laps', async (req, res) => {
     res.status(400).json({ error: 'Invalid body', details: parsed.error.flatten() })
     return
   }
-  const { name, score, token, device, runId, skin } = parsed.data
+  const { name, score, token, device, runId, runLagMs, skin } = parsed.data
   if (score > scoreCeiling(game) || TIME_SCORE_BASE - score < fastestBelievable(n, game)) {
     res.status(400).json({ error: 'That lap is not possible on this track', code: 'SCORE_OUT_OF_RANGE' })
     return
@@ -173,14 +175,14 @@ tracksRouter.post('/:game/:n/laps', async (req, res) => {
     return
   }
   // Timed by the server as a day's lap is: it can't have taken less time than it claims.
-  const run = await peekRun(runId, account.id, game)
+  const run = await peekRun(runId, account.id, game, undefined, runLagMs)
   if (!run.ok) {
     res.status(400).json({ error: RUN_ERRORS[run.code], code: `RUN_${run.code}` })
     return
   }
-  const plausible = checkScoreRate(game, score, run.elapsedMs)
+  const plausible = checkScoreRate(game, score, run.checkedMs)
   if (!plausible.ok) {
-    console.warn(`[anticheat] rejected a ${game} track ${n} lap of ${score} from account ${account.id} after ${run.elapsedMs}ms: ${plausible.reason}`)
+    console.warn(`[anticheat] rejected a ${game} track ${n} lap of ${score} from account ${account.id} after ${run.checkedMs}ms: ${plausible.reason}`)
     res.status(400).json({ error: 'That lap is not possible in the time the run took', code: 'SCORE_IMPLAUSIBLE' })
     return
   }

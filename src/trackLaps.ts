@@ -40,14 +40,35 @@ type CoursePlan = { firstDay: string; pace: readonly number[]; repeats: boolean;
  */
 export const WOBBLERUN_FLOOR = 0.4
 
+/*
+ * Each game's floor holds on its day's board (routes.ts), in events (tournamentsRoutes.ts) and on its courses
+ * after their day, all through {@link floorMsFor}.
+ */
 const PLANS: Partial<Record<GameSlug, CoursePlan>> = {
   // The best lap so far is about 85% of the blue car's.
   hotlap: { firstDay: HOTLAP_FIRST_DAY, pace: HOTLAP_PACE_MS, repeats: true, floor: 0.7 },
-  // As a day's board believes them (routes.ts).
+  // A course can't be rolled much faster than its blue ball, the plan's own: the loosest guess at the best a
+  // hand could do.
   marblerun: { firstDay: MARBLERUN_FIRST_DAY, pace: MARBLERUN_PACE_MS, repeats: false, floor: 0.6 },
+  // A hand can cut a cave's corners and dive where the blue ship eases down, so its floor is lower.
   lander: { firstDay: LANDER_FIRST_DAY, pace: LANDER_PACE_MS, repeats: false, floor: 0.45 },
+  // The blue bird reacts a third of a second late and dives in the air only half the time. On a streak of clean
+  // landings a bird can go faster (the site's swoop sim.ts capFor), and on the hills as they've been since they
+  // went 75% longer, a search of every hold and let-go came in at 36.9% of the blue bird's raced time on the
+  // plan's quickest day (#17). The floor is under that, with room for a line the search missed.
   swoop: { firstDay: SWOOP_FIRST_DAY, pace: SWOOP_PACE_MS, repeats: false, floor: 0.3 },
   wobblerun: { firstDay: WOBBLERUN_FIRST_DAY, pace: WOBBLERUN_PACE_MS, repeats: false, floor: WOBBLERUN_FLOOR },
+}
+
+/**
+ * The time-scored games that aren't raced on courses, and the fastest run each believes, in ms. Find the Bug is
+ * five scenes, each searched on the clock for a bug nobody's seen yet that day (the clock waits while the
+ * wanted card is up), so under 0.8 s a scene on average is no hand's; the site's best are tens of seconds.
+ * Spotter is one picture, and half a second is the fastest a hand can be.
+ */
+const FIXED_FLOORS: Partial<Record<GameSlug, number>> = {
+  findbug: 4_000,
+  spotter: 500,
 }
 
 /** The games whose courses keep boards of their own. */
@@ -118,6 +139,21 @@ export function fastestBelievable(n: number, game: GameSlug = 'hotlap'): number 
   const plan = planOf(game)
   const pace = plan.pace.length ? plan.pace[(n - 1) % plan.pace.length] : undefined
   return Math.round((pace ?? 40_000) * plan.floor)
+}
+
+/** The course a race plays today: Hot Lap's track, or any other race's day number. */
+export function todaysCourse(game: GameSlug, now = Date.now()): number {
+  return courseOfDay(game, Math.max(1, dayNumberOf(boardDateKey(now), game)))
+}
+
+/**
+ * The fastest run of a time-scored game a board believes, in ms, or null for a game whose score isn't a time.
+ * A race's is its course's (today's unless one is named, as an event on a past course does); Find the Bug's and
+ * Spotter's are fixed. A time under it is refused.
+ */
+export function floorMsFor(game: GameSlug, course?: number, now = Date.now()): number | null {
+  if (PLANS[game]) return fastestBelievable(course ?? todaysCourse(game, now), game)
+  return FIXED_FLOORS[game] ?? null
 }
 
 /** A driver's best lap on a track: their tag, its score, when it was driven and on what. */

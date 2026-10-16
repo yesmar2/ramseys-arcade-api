@@ -23,6 +23,25 @@ const SWEEP_AFTER_MS = 24 * 60 * 60 * 1000
 /** A daily's day claim is the lock on its first run and the record of a day played: kept far longer. */
 const DAILY_CLAIMS_KEPT_MS = 400 * 24 * 60 * 60 * 1000
 
+/**
+ * Whether a score must come with its run: REQUIRE_RUN_TOKEN on the server. Off, a score sent without a run
+ * id skips every check that needs the run's clock; on, it's refused. /health says which.
+ */
+export const RUNS_REQUIRED = process.env.REQUIRE_RUN_TOKEN === '1' || process.env.REQUIRE_RUN_TOKEN === 'true'
+
+/**
+ * How late a run's id may have come back, as the site measured it (its runLagMs): the start was retried, or
+ * the API was slow to answer, so the server's clock for the run began after the game's did. The checks add
+ * that much to the time the server measured, up to this: a slow start mustn't cost an honest run, and a
+ * minute buys a cheat nothing waiting a minute wouldn't.
+ */
+export const MAX_RUN_LAG_MS = 60_000
+
+/** A run lag as sent, kept between nothing and {@link MAX_RUN_LAG_MS}. */
+export function runLag(ms: number | undefined): number {
+  return ms == null || !Number.isFinite(ms) ? 0 : Math.min(MAX_RUN_LAG_MS, Math.max(0, Math.round(ms)))
+}
+
 export type RunTicket = { runId: string; startedAt: number }
 
 /** Open a run: the server writes down when it began, and hands back the id. */
@@ -40,7 +59,11 @@ export async function startRun(
 export type RunCode = 'UNKNOWN' | 'USED' | 'EXPIRED' | 'MISMATCH'
 
 export type RunLookup =
-  | { ok: true; startedAt: number; elapsedMs: number }
+  /**
+   * `elapsedMs` is the server's own clock, start to now; `checkedMs` adds the lag the site reported for a
+   * late start ({@link runLag}), and is what a score's rate and time are checked against.
+   */
+  | { ok: true; startedAt: number; elapsedMs: number; checkedMs: number }
   | { ok: false; code: RunCode }
 
 /**
@@ -57,6 +80,8 @@ export async function peekRun(
   game: GameSlug,
   /** Longer for a daily's first run, which lasts its day (firstRun.ts). */
   ttlMs = RUN_TTL_MS,
+  /** How late the site says the run's id came back (runLagMs). */
+  lagMs?: number,
 ): Promise<RunLookup> {
   const now = Date.now()
   const [run] = await db().select().from(gameRuns).where(eq(gameRuns.id, runId)).limit(1)
@@ -67,7 +92,8 @@ export async function peekRun(
     return { ok: false, code: 'MISMATCH' }
   }
   if (now - run.startedAt > ttlMs) return { ok: false, code: 'EXPIRED' }
-  return { ok: true, startedAt: run.startedAt, elapsedMs: now - run.startedAt }
+  const elapsedMs = now - run.startedAt
+  return { ok: true, startedAt: run.startedAt, elapsedMs, checkedMs: elapsedMs + runLag(lagMs) }
 }
 
 /**

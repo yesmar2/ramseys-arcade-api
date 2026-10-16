@@ -9,6 +9,7 @@ import { authRouter } from './authRoutes.js'
 import { namesRouter } from './namesRoutes.js'
 import { leaderboardsRouter } from './routes.js'
 import { runsRouter } from './runsRoutes.js'
+import { RUNS_REQUIRED } from './runs.js'
 import { adminRouter } from './adminRoutes.js'
 import { adminEmails } from './admin.js'
 import { recordsRouter } from './recordsRoutes.js'
@@ -178,6 +179,8 @@ async function main() {
       admins: adminEmails().size > 0,
       // The ways to sign in this service can do, which are the ones the site offers.
       signIn: { google: Boolean(getGoogleClientId()), discord: discordEnabled(), email: emailCodesEnabled() },
+      // Whether a score must come with its run (REQUIRE_RUN_TOKEN, runs.ts): off, a save without one isn't timed.
+      runsRequired: RUNS_REQUIRED,
       // The commit running (Render's RENDER_GIT_COMMIT), to tell a finished deploy from one still going.
       commit: process.env.RENDER_GIT_COMMIT?.slice(0, 7) ?? null,
       // The games held back here (store.ts ON_DECK_GAMES): the live API holds back more than staging.

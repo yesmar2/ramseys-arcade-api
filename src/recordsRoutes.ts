@@ -5,7 +5,7 @@ import { accountFromRequest } from './auth.js'
 import { isBanned } from './bans.js'
 import { resolveBoardScope } from './groups.js'
 import { takeToken } from './rateLimit.js'
-import { peekRun } from './runs.js'
+import { peekRun, RUNS_REQUIRED } from './runs.js'
 import { assertCanUseName, withAvatarId, withAvatarIds } from './names.js'
 import {
   addRecord,
@@ -31,6 +31,8 @@ const submitSchema = z.object({
   device: z.enum(['phone', 'tablet', 'desktop']).optional(),
   /** Optional until REQUIRE_RUN_TOKEN — older clients do not send one. */
   runId: z.string().min(1).max(64).optional(),
+  /** How long after the run began its id came back, as the site measured it (runs.ts runLag). */
+  runLagMs: z.number().int().min(0).max(3_600_000).optional(),
 })
 
 /*
@@ -42,9 +44,6 @@ const RECORD_SUBMIT_LIMIT = { limit: 120, windowMs: 10 * 60 * 1000 }
 
 /** How many of a record's breaks a board page carries, newest kept. */
 const PROGRESSION_CAP = 100
-
-const REQUIRE_RUN_TOKEN =
-  process.env.REQUIRE_RUN_TOKEN === '1' || process.env.REQUIRE_RUN_TOKEN === 'true'
 
 const RUN_ERRORS: Record<'UNKNOWN' | 'USED' | 'EXPIRED' | 'MISMATCH', string> = {
   UNKNOWN: 'That run is not on record',
@@ -221,7 +220,7 @@ recordsRouter.post('/:game/:recordId', async (req, res) => {
     return
   }
 
-  const { name, score, token, device, runId } = parsed.data
+  const { name, score, token, device, runId, runLagMs } = parsed.data
   const account = await accountFromRequest(req)
   if (!account) {
     res.status(401).json({ error: 'Sign in to save a score', code: 'AUTH_REQUIRED' })
@@ -248,14 +247,14 @@ recordsRouter.post('/:game/:recordId', async (req, res) => {
    * of the same game.
    */
   if (runId) {
-    const run = await peekRun(runId, account.id, game)
+    const run = await peekRun(runId, account.id, game, undefined, runLagMs)
     if (!run.ok) {
       res.status(400).json({ error: RUN_ERRORS[run.code], code: `RUN_${run.code}` })
       return
     }
-    if (!recordFits(def, score, run.elapsedMs)) {
+    if (!recordFits(def, score, run.checkedMs)) {
       console.warn(
-        `[anticheat] rejected ${game}/${recordId} of ${score}${def.unit === 'ms' ? 'ms' : ''} from account ${account.id} after only ${run.elapsedMs}ms`,
+        `[anticheat] rejected ${game}/${recordId} of ${score}${def.unit === 'ms' ? 'ms' : ''} from account ${account.id} after only ${run.checkedMs}ms`,
       )
       res.status(400).json({
         error: def.unit === 'ms' ? 'That time is longer than the run it came from' : 'That is more than the run it came from could hold',
@@ -263,7 +262,7 @@ recordsRouter.post('/:game/:recordId', async (req, res) => {
       })
       return
     }
-  } else if (REQUIRE_RUN_TOKEN) {
+  } else if (RUNS_REQUIRED) {
     res.status(400).json({ error: 'Start the run before saving a record', code: 'RUN_REQUIRED' })
     return
   }

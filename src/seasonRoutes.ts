@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { accountFromRequest } from './auth.js'
 import { confirmCheckout, paymentsEnabled, plusCheckout, returnOrigin } from './payments.js'
 import { takeToken } from './rateLimit.js'
+import { dataResetAt } from './resetWorld.js'
 import {
   hasPlus,
   nextLevelAt,
@@ -29,9 +30,12 @@ export const seasonRouter = Router()
 seasonRouter.get('/', async (req, res) => {
   try {
     const now = Date.now()
+    // When the data was last reset (resetWorld.ts): every page asks for the season, so every device hears of it
+    // and forgets the scores it kept from before.
+    const resetAt = await dataResetAt()
     const season = await seasonNow(now)
     if (!season) {
-      res.json({ season: null, rewards: [], you: null })
+      res.json({ season: null, rewards: [], you: null, resetAt })
       return
     }
     const page = req.query.catchup === '1'
@@ -61,6 +65,7 @@ seasonRouter.get('/', async (req, res) => {
     let standings: SeasonStandingsView | undefined
     if (page && season.status !== 'upcoming') standings = await seasonStandingsView(season, account?.id ?? null, now)
     res.json({
+      resetAt,
       season: seasonInfo(season, now),
       rewards: season.def.rewards.map(rewardView),
       // The Pass+ row, its price, whether this player has it, and whether it can be bought here yet.

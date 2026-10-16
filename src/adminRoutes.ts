@@ -9,6 +9,7 @@ import { launchEmail, leaveLaunchList, listLaunchList, sendLaunchBatch, sendLaun
 import { BATCH_MAX, mailerReady } from './mailer.js'
 import { listFlags, reviewFlag, unreviewedCount } from './scoreFlags.js'
 import { getClaim } from './names.js'
+import { resetPreview, resetWorld } from './resetWorld.js'
 import { playerStats } from './playerStats.js'
 import { grantPlusMembership, plusState } from './plus.js'
 import { grantPlus, hasPlus, revokePlus, seasonInfo, seasonNow, seasonPreview, SEASONS, setSeasonPreview } from './seasons.js'
@@ -284,6 +285,38 @@ adminRouter.post('/launch-list/send', async (req, res) => {
   try {
     await requireAdmin(req)
     res.json(await sendLaunchBatch())
+  } catch (err) {
+    refuse(err, res)
+  }
+})
+
+/** What Reset test data would empty and keep, whether it still works, and when it last ran (resetWorld.ts). */
+adminRouter.get('/reset', async (req, res) => {
+  try {
+    await requireAdmin(req)
+    res.json(await resetPreview())
+  } catch (err) {
+    refuse(err, res)
+  }
+})
+
+const resetBody = z.object({ confirm: z.literal('RESET') })
+
+/**
+ * Empty everything played and drop the sample players, keeping accounts, tags, friends and groups. Then, on
+ * Render, the API starts afresh, so nothing it held in memory outlives the data (Render starts it again).
+ */
+adminRouter.post('/reset', async (req, res) => {
+  try {
+    await requireAdmin(req)
+    if (!resetBody.safeParse(req.body).success) {
+      res.status(400).json({ error: 'Type RESET to confirm.', code: 'CONFIRM' })
+      return
+    }
+    const done = await resetWorld()
+    const restarting = Boolean(process.env.RENDER)
+    res.json({ ...done, restarting })
+    if (restarting) setTimeout(() => process.exit(0), 1500)
   } catch (err) {
     refuse(err, res)
   }

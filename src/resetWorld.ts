@@ -1,6 +1,8 @@
-import { eq, inArray, like, or, sql } from 'drizzle-orm'
+import { and, eq, inArray, isNotNull, isNull, like, notLike, or, sql } from 'drizzle-orm'
+import { encodeAvatar, parseAvatar, type Avatar } from './avatars.js'
 import { db } from './db/client.js'
 import { accounts, appMeta, directedInvites, friendRequests, friendships, groupMembers, groups, nameClaims, trophyCursor } from './db/schema.js'
+import { isFinishBadge } from './prizes.js'
 
 /*
  * Starting over before launch. Ramsey, 2026-10-16: "i want to clear all the data there before" testers are let
@@ -8,7 +10,10 @@ import { accounts, appMeta, directedInvites, friendRequests, friendships, groupM
  * sign-ins, tags, friends and groups, notification settings and push devices, Plus, and the launch email list,
  * feedback and bans. Everything played goes: runs, boards, record books, medals, laps, ghosts, holes, bug hunts,
  * challenges, tickets (Blip's poll answers are ticket rows) and prizes, trophies, season progress, events and
- * their invites, notifications and score flags. The sample players go entirely.
+ * their invites, notifications and score flags. The sample players go entirely. And what an avatar wore from
+ * all that comes off it, as an avatar is saved on its tag (avatars.ts): a prize counter finish goes back to the
+ * plain badge, and its ring, its pin (but the welcome pin everyone has) and the prizes it wore go. Its emblem or
+ * monogram and colours stay. Ramsey, after the first reset: "my users (DAD) stuff from the store wasn't removed".
  *
  * It's the admin page's Reset test data (adminRoutes.ts, /reset), and it stops working when launch day is over,
  * so nothing can empty the live arcade by mistake later. The time it ran goes in app_meta as data_reset_at; the
@@ -61,6 +66,8 @@ export type ResetCounts = {
   feedback: number
   /** Gone. */
   samplePlayers: number
+  /** Real players' avatars wearing something earned or bought, which comes off. */
+  dressedAvatars: number
   runs: number
   boardScores: number
   records: number
@@ -80,6 +87,31 @@ export type ResetPreview = {
   open: boolean
   /** When it last ran, ms, or null. */
   lastResetAt: number | null
+}
+
+/** An avatar with nothing earned or bought on it: the plain badge for a finish, no ring, only the welcome pin, nothing worn. */
+function plainAvatar(avatar: Avatar): Avatar {
+  return {
+    ...avatar,
+    badge: isFinishBadge(avatar.badge) ? 'bold' : avatar.badge,
+    ring: null,
+    pin: avatar.pin === 'welcome' ? 'welcome' : null,
+    worn: [],
+  }
+}
+
+/** The real players' avatars, each with its plain form beside it (the same string when nothing comes off). */
+async function realAvatars(d: Pick<ReturnType<typeof db>, 'select'>) {
+  const rows = await d
+    .select({ name: nameClaims.name, avatarId: nameClaims.avatarId })
+    .from(nameClaims)
+    .where(and(isNotNull(nameClaims.avatarId), or(isNull(nameClaims.accountId), notLike(nameClaims.accountId, SAMPLE_ACCOUNT))))
+  return rows.map((row) => {
+    const avatarId = row.avatarId ?? ''
+    const avatar = parseAvatar(avatarId)
+    // One that doesn't parse is left as it is: nothing here knows what it wears.
+    return { name: row.name, avatarId, plain: avatar ? encodeAvatar(plainAvatar(avatar)) : avatarId }
+  })
 }
 
 async function countAll(): Promise<ResetCounts> {
@@ -103,11 +135,13 @@ async function countAll(): Promise<ResetCounts> {
       (select count(*) from notifications)::int as notifications
   `)
   const r = (rows as unknown as Record<string, number>[])[0] ?? {}
+  const dressed = (await realAvatars(db())).filter((row) => row.plain !== row.avatarId).length
   return {
     players: r.players ?? 0,
     launchList: r.launch_list ?? 0,
     feedback: r.feedback ?? 0,
     samplePlayers: r.sample_players ?? 0,
+    dressedAvatars: dressed,
     runs: r.runs ?? 0,
     boardScores: r.board_scores ?? 0,
     records: r.records ?? 0,
@@ -189,6 +223,10 @@ export async function resetWorld(now = Date.now()): Promise<{ at: number; before
       await tx.execute(sql.raw(`truncate table ${PLAY_TABLES.join(', ')}`))
       // Invites to events that are gone.
       await tx.delete(directedInvites).where(eq(directedInvites.kind, 'tournament'))
+      // What the avatars wore from play and the prize counter comes off them.
+      for (const row of await realAvatars(tx)) {
+        if (row.plain !== row.avatarId) await tx.update(nameClaims).set({ avatarId: row.plain }).where(eq(nameClaims.name, row.name))
+      }
       // The trophy rounds start again from the first week and month (as seedRevision.ts clears them).
       await tx
         .insert(trophyCursor)
@@ -197,7 +235,9 @@ export async function resetWorld(now = Date.now()): Promise<{ at: number; before
       await tx.insert(appMeta).values({ key: 'data_reset_at', value: at }).onConflictDoUpdate({ target: appMeta.key, set: { value: at } })
     })
     resetAtRead = Promise.resolve(now)
-    console.log(`[reset] emptied play and ${before.samplePlayers} sample players at ${at}; ${before.players} accounts kept`)
+    console.log(
+      `[reset] emptied play and ${before.samplePlayers} sample players at ${at}; ${before.players} accounts kept, ${before.dressedAvatars} avatars made plain`,
+    )
     return { at: now, before }
   } finally {
     resetting = false

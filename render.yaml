@@ -6,7 +6,9 @@ services:
     # which was made in the dashboard and isn't in this file.
     branch: production
     runtime: node
-    plan: free
+    # Ramsey moved the live API to Pro in the dashboard (2026-10-16); kept the same here so a Blueprint sync
+    # can't put it back on free, where it slept.
+    plan: pro
     region: oregon
     buildCommand: npm ci && npm run build
     startCommand: npm start

@@ -101,7 +101,7 @@ export function extraReward(level: number): SeasonReward {
 }
 
 const SPACE_RACE: SeasonReward[] = [
-  { level: 1, kind: 'pin', id: 's1', name: 'Season 1 patch', what: 'Pin' },
+  { level: 1, kind: 'pin', id: 's1', name: 'Season 1 pin', what: 'Pin' },
   { level: 2, kind: 'prize', id: 'nm-starlight', name: 'Starlight', what: 'Name style' },
   tickets(3, 50),
   { level: 4, kind: 'prize', id: 'orbit', name: 'Orbit', what: 'Badge finish' },
@@ -174,7 +174,7 @@ const SPACE_RACE_PLUS: SeasonReward[] = [
  * first time, and its spotlight is the games with new skins.
  */
 const COLD_SNAP: SeasonReward[] = [
-  { level: 1, kind: 'pin', id: 's2', name: 'Season 2 patch', what: 'Pin' },
+  { level: 1, kind: 'pin', id: 's2', name: 'Season 2 pin', what: 'Pin' },
   { level: 2, kind: 'prize', id: 'nm-frost', name: 'Frost', what: 'Name style' },
   tickets(3, 50),
   { level: 4, kind: 'prize', id: 'snowflake', name: 'Snowflake', what: 'Badge finish' },

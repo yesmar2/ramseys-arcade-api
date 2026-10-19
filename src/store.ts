@@ -529,12 +529,11 @@ export const RETIRED_GAMES: ReadonlySet<GameSlug> = new Set<GameSlug>(['simon', 
 
 /**
  * Games held back on the live site only, while staging keeps them to try (the web's lib/liveSite.ts): on deck
- * on the live API, and off its Dailies (today.ts todayRule). Wobble Run was, from 2026-10-09, until it went on
- * deck everywhere (below). Sling is from 2026-10-19, the day it came to staging ("i think i like sling the best so
- * far so let's implement that"), until Ramsey releases it: then take it off here and move its Dailies `from`
- * (today.ts SLING_TODAY_FROM) to the release day.
+ * on the live API, and off its Dailies (today.ts todayRule). None now: Wobble Run was, from 2026-10-09, until it
+ * went on deck everywhere (below); Sling was for the day it came to staging, 2026-10-19, until Ramsey released it
+ * that afternoon ("yes release it on live").
  */
-const LIVE_ON_DECK_GAMES: readonly GameSlug[] = ['sling']
+const LIVE_ON_DECK_GAMES: readonly GameSlug[] = []
 
 /**
  * Games the site is holding back to release after launch, one at a time (the web's onDeck flag): listed

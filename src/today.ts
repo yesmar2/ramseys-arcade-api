@@ -81,10 +81,9 @@ export const SWOOP_TODAY_FROM: string | null = '2026-10-06'
 export const WOBBLERUN_TODAY_FROM: string | null = '2026-10-09'
 
 /**
- * The first day Sling's Today's Tower is on the card: the day the game came to staging (the site's
- * games/sling/daily.ts TODAY_FROM says the same). On the live API it's on deck (store.ts LIVE_ON_DECK_GAMES), so
- * off the card there; move this to the release day when it's released, or todayRule puts it back on every day
- * since.
+ * The first day Sling's Today's Tower is on the card: the day the game came, to staging and the live site alike
+ * (released there the same day, 2026-10-19; the site's games/sling/daily.ts TODAY_FROM says the same). It's the
+ * fifth race on the card: any two keep the day, all five are a Full ticket.
  */
 export const SLING_TODAY_FROM: string | null = '2026-10-19'
 

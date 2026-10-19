@@ -4,7 +4,7 @@ import { notifications, pushSubscriptions } from './db/schema.js'
 import { notify } from './notifications.js'
 import { hourIn, inQuietHours, streakRiskTitle } from './push.js'
 import { boardDateKey, boardDayStart } from './store.js'
-import { keptToday, streakRiskKey, todayState } from './today.js'
+import { keptToday, reminderFiled, streakRiskKey, todayState } from './today.js'
 
 /*
  * The Dailies streak reminder: on an evening when a player's streak would end with the day, one note to
@@ -125,7 +125,10 @@ export async function remindStreaks(now = Date.now()): Promise<number> {
       once: true,
       now,
     })
-    if (result.row) filed++
+    if (result.row) {
+      filed++
+      reminderFiled(accountId)
+    }
     // Turned off in their settings: nothing to file today, so nothing to look at again.
     else checked.ids.add(accountId)
   }

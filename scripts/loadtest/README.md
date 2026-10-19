@@ -19,6 +19,8 @@ A crowd on a throwaway database, to see where the API gives out before real play
 10. **Which queries a request makes**: `LOG_SQL=1` prints every query the API sends; `LOG_REQUESTS=1` prints each request with its time and query count.
 11. **More than one server** (`MULTI_INSTANCE=1`, see `src/feed.ts`): start two with the same exports plus `MULTI_INSTANCE=1`, on 8796 and 8797. `node scripts/loadtest/multi-check.mjs` makes changes on one and reads them on the other: a save, a record, a log-out, an avatar, a group, a run in the day's event, a capped event and a bracket joined from both at once. `load.mjs --bases http://127.0.0.1:8796,http://127.0.0.1:8797` sends each request to either at random, each player saying back their last change's feed number as the app does; `compare.mjs --old <one> --new <other>` should then find every answer the same, and so should a third server started afterwards, reading fresh.
 
+12. **Saves, old code against new**: `saves-check.mjs` sends the same saves to both, each on its own copy of one world (its header says how), and compares their answers and the reads after them. `reads-check.mjs` compares signed-in reads (Today, rivals, the day's hole, tickets, secrets) from two servers on one database, `board-pages.mjs` every page of the races' day points. `seeded-signin.mjs` signs in seeded players with friends for both.
+
 Stop with `pg_ctl -D <scratch>/pgdata stop -m fast` and delete the folder.
 
 ## The site's crowd (October 2026)
@@ -27,7 +29,7 @@ Stop with `pg_ctl -D <scratch>/pgdata stop -m fast` and delete the folder.
 
 - **The world:** seed it with the real seed, which plays every daily up to today. A copy of an older world has empty day boards. Use the steps in [The world, seeded](#the-world-seeded) below.
 - **Matching production:** start the API with `REQUIRE_RUN_TOKEN=1`, as production runs.
-- **The command:** `node scripts/loadtest/site.mjs --visitors 300 --guests 100 --players 150 --seconds 120 [--base http://127.0.0.1:8806] [--ramp 10]`.
+- **The command:** `node scripts/loadtest/site.mjs --visitors 300 --guests 100 --players 150 --seconds 120 [--base http://127.0.0.1:8806] [--ramp 10] [--timeline]`.
   - `--visitors` are signed in and look around.
   - `--guests` are signed out.
   - `--players` play.
@@ -65,12 +67,54 @@ Stop with `pg_ctl -D <scratch>/pgdata stop -m fast` and delete the folder.
 
 - **The ceiling:** one server tops out near 500 requests a second, about 550–600 people on this mix. That is CPU, not stalls.
 - **What's left:**
-  - Saves are the costliest request: about 12 queries each, through the 10-connection pool.
   - `buildSiteRecords` takes about 0.9 s once a minute.
   - Reading the tables at boot takes about 5 s for scores and 7 s for record books.
   - Memory reached 2.6 GB of a 3 GB heap with 1,300 requests in flight.
 - **Don't trust a slow run until you've checked the machine.** Another process ate three quarters of the CPU during one run here.
-- **Columns:** `q` in the table is the average number of database queries a request made (`X-Db-Queries`).
+- **Columns:** `q` in the table is the average number of database statements a request made (`X-Db-Queries`).
+
+**The save (same day, second pass).** Saves were the slowest request left: 0.4 s at p50 and 3.5 s at p95 at 550 people.
+- **Where they waited** (none of it was Postgres, which ran every statement in well under 25 ms):
+  - **The query count lied.** It was counted when a connection took the query, which under load ran in the context of whichever request had freed the connection, so a request whose queries waited showed none. It's counted for the request that asks now (drizzle's logger). Transactions' begin and commit aren't counted.
+  - **The pool was full of reads.** Counted properly, the crowd made about 233 statements a second, and saves were 6% of them. `GET /today` was 27%, `/today/rivals` 20% (ten queries a call), `/daily-hole` 15%.
+  - **Each statement holds a connection for two round trips.** With `prepare: false`, postgres.js sends every query with parameters as describe, then execute, and pipelines nothing behind it. So every round trip also waits its turn on the event loop.
+  - **The save itself:** 25 statements one after another for a race (11 for an arcade game), each waiting on the last. On top of that, the week's, month's and season's day points were drawn twice per daily save: 35 ms each for a month.
+  - **Not the cause:** a 20-connection pool didn't help.
+- **Changed:**
+  - **The save** (`routes.ts`):
+    - Its reads go out together: the run, the tag when the account holds it already (`names.ts heldClaim`), its ban. So do the board before the write, the player's best, the podium and the skin, while the run is spent.
+    - After the write, the record books, the course record, the flag, a challenge, secrets and the tickets run side by side. The ticket wallet's own steps keep their order: the run's tickets, then Today's streak payouts, then the season.
+    - Today's state is read while the tickets are paid.
+  - **Tickets** (`tickets.ts`): the wallet is locked by one upsert, where it was an insert and a select for update. The ledger rows and the wallet's new balance go in one statement.
+  - **Kept in memory:**
+    - Today's runs on the dailies (`today.ts`), rivals' days (`todayRivals.ts`) and a secret's day of play (`secrets.ts`) are read from the history the boards keep (`store.ts runsOfNames`, `runsByGameBetween`), not the table. Today's hole days and hand-given freezes come in one statement.
+    - `/daily-hole` reads the account's days once. A kept day's streak reminder is taken back once, not on every visit.
+  - **Each player's runs on a game** are kept beside the history (`store.ts` playerRunsIndex), so `bestRunEver` and `playerRuns` no longer walk a game's whole history per call.
+  - **Day points** (`store.ts` pointsOnKeptDays):
+    - The closed days' totals are kept, and only the newest day is folded onto them. It's the same board to the byte, ties and the skin's place in the JSON included. `DAY_POINTS_CHECK=1` makes the API fold every day too, compare, and warn.
+    - A save's place on them before and after its run is counted, not drawn (`placeInDayPoints`).
+  - **Reads:**
+    - `/days` finds a player's place on each day by name, not by a walk down the day's field.
+    - An avatar id is parsed once.
+- **Same answers:**
+  - `saves-check.mjs`: the same 33 saves (errors, a run sent twice and someone else's tag among them) through the old code and the new, each on its own copy of the world, answered the same. They differed only in the token minted for a new tag. So did 120 reads after them (Today, rivals, the day's hole, tickets, secrets, the month's days).
+  - After about 1,000 saves through the new code, the old code reading the tables fresh agreed on everything:
+    - `reads-check.mjs`: 132 of 132 signed-in reads, freeze grants included.
+    - `days-check.mjs`: 4,971 of 4,971.
+    - `compare.mjs`: 400 of 400.
+  - `board-pages.mjs`: 400 of 400 pages of the races' day points matched too, with `skin-runs.sql`'s skinned runs in them, after 400 more saves with `DAY_POINTS_CHECK=1`, which warned of nothing.
+- **At 550 people** (300 / 100 / 150), the old code and the new back to back, the CPU clock at 72–108% for both:
+
+| Code | Requests a second | p50 | p95 | p99 | Saves p50 / p95 / p99 | Failed |
+|---|---|---|---|---|---|---|
+| Before (3289e72) | 409 | 33 ms | 1.15 s | 3.3 s | 0.75 s / 7.5 s / 8.0 s | 1,447 of 157,673 |
+| After | 409 | 11 ms | 288 ms | 1.5 s | 33 ms / 376 ms / 1.5 s | 1,373 of 165,634 |
+
+- **About those numbers:**
+  - This laptop varies a lot run to run. With Chrome busy beside it, or the CPU clocked down to 70–80%, the same new code gave saves p95 1.6 s. The old code got 5.6 s under that load, and 11 s once.
+  - Almost all the failures (1,361 of 1,373) are dropped connections in the client's 10-second ramp, when everyone boots at once. They come from the client and the machine, old code or new.
+- **`site.mjs --timeline`** prints requests and saves in 30-second steps. Saves come in waves (the players start together, and a race takes about a minute). In the wave steps saves still reach about 1–1.5 s at p95. Between waves they're 0.1–0.2 s.
+- **What's left for saves:** `prepare: true` would make each statement one round trip and let postgres.js pipeline. That needs a try against Neon's pooler first. A save is still about eight round trips one after another, and the wallet's transaction is the longest of them.
 
 ## Where the time goes
 

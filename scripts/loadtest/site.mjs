@@ -2,7 +2,7 @@
 // pages and their boards, and runs played the way the games play them (run start, the run's own length, records,
 // the save, the end card's reads, a race's ghost). load.mjs is the September crowd; this one follows the site.
 //
-// Usage: node site.mjs --visitors 300 --guests 100 --players 150 --seconds 120 [--base http://127.0.0.1:8806]
+// Usage: node site.mjs --visitors 300 --guests 100 --players 150 --seconds 120 [--base http://127.0.0.1:8806] [--timeline]
 //   --visitors  signed-in people walking pages, with the header's polls
 //   --guests    signed-out people walking pages
 //   --players   signed-in people playing runs, end card included, with a page between runs now and then
@@ -22,6 +22,8 @@ const PLAYERS = Number(arg('players', 0))
 const SECONDS = Number(arg('seconds', 60))
 const TIMEOUT_MS = Number(arg('timeout', 30000))
 const RAMP_MS = Number(arg('ramp', 10)) * 1000
+// --timeline: every request's time, by when it finished, for a report in 30-second steps at the end.
+const TIMELINE = process.argv.includes('--timeline')
 
 const RACES = ['hotlap', 'swoop', 'lander', 'marblerun']
 const ARCADE = ['asteroids', 'patriot', 'snake', 'crosswalk', 'stacker', 'pop', 'pellets', 'crumbtrail', 'bop', 'barrage', 'frenzy', 'fireflies', 'pileup']
@@ -37,6 +39,7 @@ const between = (lo, hi) => lo + Math.random() * (hi - lo)
 const samples = new Map() // label -> [ms]
 const failures = new Map() // "label status code" -> count
 const queries = new Map() // label -> database queries, summed (the API says each request's in X-Db-Queries)
+const timeline = [] // [finished at, label, ms or null for a failure], with --timeline
 let inFlight = 0
 let peakInFlight = 0
 let measuring = false
@@ -60,12 +63,14 @@ async function call(who, label, path, init = {}) {
         { const j = JSON.parse(body); code = j.code ?? String(j.error ?? "").slice(0, 50) + (j.details ? " " + JSON.stringify(j.details).slice(0, 160) : "") }
       } catch {}
       if (measuring) failures.set(`${label} ${res.status} ${code}`.trim(), (failures.get(`${label} ${res.status} ${code}`.trim()) ?? 0) + 1)
+      if (measuring && TIMELINE) timeline.push([Date.now(), label, null])
       return null
     }
     if (measuring) {
       queries.set(label, (queries.get(label) ?? 0) + Number(res.headers.get('x-db-queries') ?? 0))
       if (!samples.has(label)) samples.set(label, [])
       samples.get(label).push(ms)
+      if (TIMELINE) timeline.push([Date.now(), label, ms])
     }
     try {
       return JSON.parse(body)
@@ -75,6 +80,7 @@ async function call(who, label, path, init = {}) {
   } catch (err) {
     const kind = err.name === 'AbortError' ? 'timeout' : 'error'
     if (measuring) failures.set(`${label} ${kind}`, (failures.get(`${label} ${kind}`) ?? 0) + 1)
+    if (measuring && TIMELINE) timeline.push([Date.now(), label, null])
     return null
   } finally {
     clearTimeout(timer)
@@ -487,6 +493,27 @@ const all = [...samples.values()].flat().sort((a, b) => a - b)
 console.table(rows)
 if (failures.size) console.table([...failures.entries()].sort((a, b) => b[1] - a[1]).map(([what, n]) => ({ failed: what, count: n })))
 const failed = [...failures.values()].reduce((a, b) => a + b, 0)
+if (TIMELINE) {
+  // In 30-second steps: every request, and the saves on their own.
+  const steps = new Map()
+  for (const [at, label, ms] of timeline) {
+    const step = Math.floor((at - t0) / 30_000)
+    const row = steps.get(step) ?? { all: [], saves: [], failed: 0 }
+    if (ms == null) row.failed++
+    else {
+      row.all.push(ms)
+      if (label === 'POST save') row.saves.push(ms)
+    }
+    steps.set(step, row)
+  }
+  console.table(
+    [...steps.entries()].sort((a, b) => a[0] - b[0]).map(([step, { all, saves, failed }]) => {
+      const a = all.sort((x, y) => x - y)
+      const s = saves.sort((x, y) => x - y)
+      return { from: `${step * 30}s`, requests: a.length, failed, p50: Math.round(pct(a, 50) ?? 0), p95: Math.round(pct(a, 95) ?? 0), saves: s.length, 'saves p50': Math.round(pct(s, 50) ?? 0), 'saves p95': Math.round(pct(s, 95) ?? 0) }
+    }),
+  )
+}
 console.log(
   `${total} ok, ${failed} failed, ${(total / wall).toFixed(0)} req/s over ${wall.toFixed(0)}s · all p50 ${Math.round(pct(all, 50))} ms, p95 ${Math.round(pct(all, 95))} ms, p99 ${Math.round(pct(all, 99))} ms · peak in flight ${peakInFlight} · server memory ${rss.length ? `${Math.min(...rss)}–${Math.max(...rss)} MB` : 'n/a'}`,
 )

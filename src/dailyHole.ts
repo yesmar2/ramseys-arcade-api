@@ -109,13 +109,7 @@ function previousDay(day: string): string {
 }
 
 /** Days in a row with a result: counting today if there is one, or up to yesterday while there isn't. */
-async function streakOf(accountId: string, today: string): Promise<number> {
-  const rows = await db()
-    .select({ day: dailyHoleResults.day })
-    .from(dailyHoleResults)
-    .where(eq(dailyHoleResults.accountId, accountId))
-    .orderBy(desc(dailyHoleResults.day))
-    .limit(400)
+function streakOf(rows: readonly { day: string }[], today: string): number {
   const days = new Set(rows.map((r) => r.day))
   let d = days.has(today) ? today : previousDay(today)
   let n = 0
@@ -131,17 +125,21 @@ export async function dailyReply(accountId: string | null, now = Date.now()): Pr
   const day = huntDay(now)
   const reply = await dayReply(day, now)
   if (!accountId) return reply
-  const [mine] = await db()
+  // The account's last 400 days in one read: today's result, if there is one, is the newest of them.
+  const days = await db()
     .select()
     .from(dailyHoleResults)
-    .where(and(eq(dailyHoleResults.accountId, accountId), eq(dailyHoleResults.day, day)))
+    .where(eq(dailyHoleResults.accountId, accountId))
+    .orderBy(desc(dailyHoleResults.day))
+    .limit(400)
+  const mine = days.find((r) => r.day === day)
   const caught = mine ? await catchUp(accountId, mine, now) : { tag: null, board: false }
   return {
     ...(caught.tickets ? await dayReply(day, now) : reply),
     you: {
       tries: mine?.tries ?? null,
       place: null,
-      streak: await streakOf(accountId, day),
+      streak: streakOf(days, day),
       tag: caught.tag,
       board: caught.board,
       pattern: mine?.pattern ?? null,

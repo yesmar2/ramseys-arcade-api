@@ -185,8 +185,21 @@ export function parseAvatar(value: unknown): Avatar | null {
   return { kind: 'emblem', emblem, ...common }
 }
 
+/*
+ * Every board row's avatar is checked as it goes out, and a board is the same few thousand ids over and over:
+ * each string is parsed once and its answer kept (bounded, in case of junk).
+ */
+const avatarIdChecked = new Map<string, boolean>()
+
 export function isAvatarId(value: unknown): value is AvatarId {
-  return parseAvatar(value) !== null
+  if (typeof value !== 'string') return false
+  let ok = avatarIdChecked.get(value)
+  if (ok === undefined) {
+    ok = parseAvatar(value) !== null
+    if (avatarIdChecked.size >= 100_000) avatarIdChecked.clear()
+    avatarIdChecked.set(value, ok)
+  }
+  return ok
 }
 
 function hashName(name: string) {

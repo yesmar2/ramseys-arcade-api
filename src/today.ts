@@ -1,11 +1,11 @@
-import { and, eq, gte, inArray } from 'drizzle-orm'
+import { and, eq, gte, inArray, sql } from 'drizzle-orm'
 import { db } from './db/client.js'
-import { dailyHoleResults, leaderboardScores, prizesOwned, ticketLedger } from './db/schema.js'
+import { dailyHoleResults, prizesOwned, ticketLedger } from './db/schema.js'
 import { HALFFULL_TODAY_FROM } from './halffull/launch.js'
 import { CENTROID_TODAY_FROM } from './centroid/launch.js'
 import { namesOwnedByAccount } from './names.js'
 import { notify, withdrawNotification } from './notifications.js'
-import { DAILY_SINCE, boardDateKey, isListedGame, previousBoardDateKey, type GameSlug } from './store.js'
+import { DAILY_SINCE, boardDateKey, isListedGame, previousBoardDateKey, runsOfNames, type GameSlug } from './store.js'
 import { awardTickets } from './tickets.js'
 
 /*
@@ -338,23 +338,50 @@ const dayOf = (key: number) => {
   return `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}`
 }
 
-/** What an account has done of the dailies, day by day, over the lookback. */
-async function playedDays(accountId: string, now: number): Promise<Record<TodayKey, Map<number, number>>> {
-  const fromMs = now - LOOKBACK_DAYS * 86_400_000
-  const fromDay = dayOf(boardDateKey(fromMs))
-  const tags = (await namesOwnedByAccount(accountId)).map((t) => t.name)
-  const runs = (game: 'hotlap' | 'findbug' | 'halffull' | 'centroid' | 'marblerun' | 'lander' | 'swoop' | 'wobblerun' | 'sling') =>
-    tags.length
-      ? db()
-          .select({ score: leaderboardScores.score, at: leaderboardScores.at })
-          .from(leaderboardScores)
-          .where(and(eq(leaderboardScores.game, game), inArray(leaderboardScores.name, tags), gte(leaderboardScores.at, fromMs)))
-      : Promise.resolve([] as { score: number; at: number }[])
-  const [holes, laps, finds, pours, courses, caves, flights, gauntlets, plateDays, climbs] = await Promise.all([
+/** An account's Today's Hole days over the lookback, and with `grants`, its freezes given by hand in the same read. */
+async function holeDays(accountId: string, fromDay: string, grants?: Map<number, number>): Promise<{ day: string; tries: number }[]> {
+  const holes = () =>
     db()
       .select({ day: dailyHoleResults.day, tries: dailyHoleResults.tries })
       .from(dailyHoleResults)
-      .where(and(eq(dailyHoleResults.accountId, accountId), gte(dailyHoleResults.day, fromDay))),
+      .where(and(eq(dailyHoleResults.accountId, accountId), gte(dailyHoleResults.day, fromDay)))
+  if (!grants) return holes()
+  // One statement for both, as freezeGrants counts them: every visit to Today and every daily's save asks.
+  const rows = await db().execute<{ day: string | null; tries: number | null; at: string | number | null }>(
+    sql`select ${dailyHoleResults.day} as day, ${dailyHoleResults.tries} as tries, null::bigint as at from ${dailyHoleResults}
+      where ${dailyHoleResults.accountId} = ${accountId} and ${dailyHoleResults.day} >= ${fromDay}
+      union all
+      select null, null, ${ticketLedger.at} from ${ticketLedger}
+      where ${ticketLedger.accountId} = ${accountId} and ${ticketLedger.reason} = ${FREEZE_GRANT}`,
+  )
+  const out: { day: string; tries: number }[] = []
+  for (const row of rows) {
+    if (row.day != null) out.push({ day: row.day, tries: Number(row.tries) })
+    else if (row.at != null) {
+      const day = boardDateKey(Number(row.at))
+      grants.set(day, (grants.get(day) ?? 0) + 1)
+    }
+  }
+  return out
+}
+
+/**
+ * What an account has done of the dailies, day by day, over the lookback. With `grants`, its freezes given by
+ * hand go in it, by day, as freezeGrants gives them.
+ */
+async function playedDays(accountId: string, now: number, grants?: Map<number, number>): Promise<Record<TodayKey, Map<number, number>>> {
+  const fromMs = now - LOOKBACK_DAYS * 86_400_000
+  const fromDay = dayOf(boardDateKey(fromMs))
+  const tags = (await namesOwnedByAccount(accountId)).map((t) => t.name)
+  // The account's runs on the dailies come from the history the boards keep (store.ts runsOfNames), not the
+  // table: a save's settleToday and every visit read them, nine queries at once, more than the pool has.
+  const DAILIES = ['hotlap', 'findbug', 'halffull', 'centroid', 'marblerun', 'lander', 'swoop', 'wobblerun', 'sling'] as const
+  const [holes, ...ran] = await Promise.all([
+    holeDays(accountId, fromDay, grants),
+    ...DAILIES.map((game) => (tags.length ? runsOfNames(game, tags, fromMs) : [])),
+  ])
+  const runs = (game: (typeof DAILIES)[number]) => ran[DAILIES.indexOf(game)]!
+  const [laps, finds, pours, courses, caves, flights, gauntlets, plateDays, climbs] = [
     runs('hotlap'),
     runs('findbug'),
     runs('halffull'),
@@ -364,7 +391,7 @@ async function playedDays(accountId: string, now: number): Promise<Record<TodayK
     runs('wobblerun'),
     runs('centroid'),
     runs('sling'),
-  ])
+  ]
   const played: Record<TodayKey, Map<number, number>> = {
     hole: new Map(),
     track: new Map(),
@@ -437,9 +464,10 @@ async function playedDays(accountId: string, now: number): Promise<Record<TodayK
 
 export async function todayState(accountId: string, now = Date.now()): Promise<TodayState> {
   const today = boardDateKey(now)
-  const [played, grants] = await Promise.all([playedDays(accountId, now), freezeGrants([accountId])])
+  const grants = new Map<number, number>()
+  const played = await playedDays(accountId, now, grants)
   const kept = keptDays(played)
-  const walk = walkStreak(kept, today, walkFrom(now), grants.get(accountId))
+  const walk = walkStreak(kept, today, walkFrom(now), grants.size ? grants : undefined)
   const days: TodayState['days'] = []
   for (let i = 0, key = today; i < CALENDAR_DAYS; i++, key = previousBoardDateKey(key)) {
     days.unshift(dayEntry(played, kept, walk.frozen, key))
@@ -546,6 +574,18 @@ export function keptToday(state: Pick<TodayState, 'live' | 'done' | 'need'>): bo
   return state.live.filter((key) => state.done[key]).length >= state.need
 }
 
+/*
+ * The day whose streak reminder this server has taken back, by account: a kept day's is taken back once, not
+ * on every visit and every save after. Forgotten when a reminder is filed (streakReminders.ts), so one filed
+ * after all is taken back too.
+ */
+const reminderTakenBack = new Map<string, string>()
+
+/** A streak reminder just filed for the account: the next settle takes it back if the day is kept. */
+export function reminderFiled(accountId: string) {
+  reminderTakenBack.delete(accountId)
+}
+
 /** A streak milestone paid: its day, and when it was paid (its ledger row's time). */
 export type TodayReached = { day: number; at: number }
 
@@ -557,9 +597,19 @@ export type TodayReached = { day: number; at: number }
  *
  * A kept day also takes back its streak reminder, if one went out: there's nothing left at risk.
  */
-export async function settleToday(accountId: string, now = Date.now()): Promise<TodayState & { reached: TodayReached[] }> {
-  const state = await todayState(accountId, now)
-  if (keptToday(state)) await withdrawNotification(accountId, streakRiskKey(state.day)).catch(() => undefined)
+export async function settleToday(
+  accountId: string,
+  now = Date.now(),
+  /** The day's state, if it's been read already (a save reads it while its tickets are paid). */
+  known?: TodayState,
+): Promise<TodayState & { reached: TodayReached[] }> {
+  const state = known ?? (await todayState(accountId, now))
+  if (keptToday(state) && reminderTakenBack.get(accountId) !== state.day) {
+    await withdrawNotification(accountId, streakRiskKey(state.day)).then(
+      () => reminderTakenBack.set(accountId, state.day),
+      () => undefined,
+    )
+  }
   const due = TODAY_MILESTONES.filter((m) => state.streak.best >= m.day)
   if (!due.length) return { ...state, reached: [] }
   const paid = new Map(

@@ -30,19 +30,28 @@ function ensurePool() {
     idle_timeout: 20,
     connect_timeout: 30,
     prepare: false,
-    debug: (_connection, query) => {
-      const stats = queryStats.getStore()
-      if (stats) stats.queries++
-      // LOG_SQL=1 prints every query, to see which ones a request makes.
-      if (process.env.LOG_SQL === '1') console.log(`[sql] ${String(query).replace(/\s+/g, ' ').slice(0, 160)}`)
-    },
   })
   return sqlClient
 }
 
+/*
+ * Each statement is counted against the request that asked for it, as drizzle sends it on (its logger runs in
+ * the asker's context). postgres.js's own hook runs when a connection takes the query, which under load is
+ * often in the context of whichever request freed the connection: a request whose queries waited counted none.
+ * A transaction's begin and commit aren't counted.
+ */
+const counter = {
+  logQuery(query: string) {
+    const stats = queryStats.getStore()
+    if (stats) stats.queries++
+    // LOG_SQL=1 prints every query, to see which ones a request makes.
+    if (process.env.LOG_SQL === '1') console.log(`[sql] ${query.replace(/\s+/g, ' ').slice(0, 160)}`)
+  },
+}
+
 export function db() {
   if (dbInstance) return dbInstance
-  dbInstance = drizzle(ensurePool(), { schema })
+  dbInstance = drizzle(ensurePool(), { schema, logger: counter })
   return dbInstance
 }
 

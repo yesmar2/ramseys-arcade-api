@@ -589,14 +589,17 @@ export async function syncSeason(
   const season = await seasonNow(now)
   if (!season || season.status !== 'live') return null
   const { def } = season
-  const earned = await seasonEarned(accountId, season.startsAt, season.endsAt)
-  const plus = def.plus ? await hasPlus(accountId, def.id) : false
+  // Three reads, side by side: every save after a run that paid tickets comes through here.
+  const [earned, plus, [last]] = await Promise.all([
+    seasonEarned(accountId, season.startsAt, season.endsAt),
+    def.plus ? hasPlus(accountId, def.id) : false,
+    db()
+      .select({ earned: seasonProgress.earned, level: seasonProgress.level })
+      .from(seasonProgress)
+      .where(and(eq(seasonProgress.accountId, accountId), eq(seasonProgress.season, def.id)))
+      .limit(1),
+  ])
   const level = levelFor(def, earned)
-  const [last] = await db()
-    .select({ earned: seasonProgress.earned, level: seasonProgress.level })
-    .from(seasonProgress)
-    .where(and(eq(seasonProgress.accountId, accountId), eq(seasonProgress.season, def.id)))
-    .limit(1)
   const before = last?.earned ?? 0
   const lastLevel = last?.level ?? 0
   if (level > lastLevel || (catchUp && level > 0)) {

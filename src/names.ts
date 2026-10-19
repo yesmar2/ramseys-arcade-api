@@ -334,6 +334,18 @@ export async function assertCanUseName(
   })
 }
 
+/**
+ * The claim on `name` if this account holds it already: what assertCanUseName answers then, and without a
+ * write, so a save can ask it beside its other checks. Null when assertCanUseName would have more to do (a
+ * tag nobody holds, someone else's, or one held by its token alone).
+ */
+export async function heldClaim(name: string, accountId: string): Promise<{ name: string; token: string; created: false } | null> {
+  const cleaned = cleanPlayerName(name)
+  if (!cleaned) return null
+  const existing = await getClaim(cleaned)
+  return existing?.accountId === accountId ? { name: cleaned, token: existing.token, created: false } : null
+}
+
 /** Verify ownership without creating a new claim. */
 export async function assertOwnsName(
   name: string,

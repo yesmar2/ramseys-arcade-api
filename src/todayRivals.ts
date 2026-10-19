@@ -1,10 +1,10 @@
-import { and, eq, gte, inArray, sql } from 'drizzle-orm'
+import { and, gte, inArray } from 'drizzle-orm'
 import { db } from './db/client.js'
-import { dailyHoleResults, leaderboardScores, nameClaims } from './db/schema.js'
+import { dailyHoleResults, nameClaims } from './db/schema.js'
 import { listFriends } from './friends.js'
 import { assertGroupBoardAccess, listGroupsFor } from './groups.js'
 import { namesOwnedByAccount, withAvatarIds } from './names.js'
-import { BOARD_TZ, DAILY_SINCE, boardDateKey } from './store.js'
+import { DAILY_SINCE, boardDateKey, runsOfNames } from './store.js'
 import { TODAY_SINCE, freezeGrants, keptDays, todayRule, walkStreak } from './today.js'
 
 /*
@@ -58,12 +58,6 @@ const dayOf = (key: number) => {
   return `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}`
 }
 
-/**
- * A board day key worked out in the database, in the boards' own time zone. The zone is written into the
- * query rather than bound, so the grouping and the selected column are the same expression.
- */
-const dayKeySql = sql<number>`to_char(to_timestamp(${leaderboardScores.at} / 1000.0) at time zone ${sql.raw(`'${BOARD_TZ.replace(/'/g, '')}'`)}, 'YYYYMMDD')::int`
-
 type Player = { name: string; accountId: string | null; me: boolean }
 
 /** Who's in: the account's tag, and its friends' or a group's. */
@@ -105,15 +99,21 @@ export async function todayRivals(accountId: string, groupId: string | null, now
   const fromMs = now - RIVAL_LOOKBACK_DAYS * 86_400_000
   const fromDay = dayOf(boardDateKey(fromMs))
 
-  // One look at each daily for everyone: the day's result, per player per day.
-  const perDay = (game: 'hotlap' | 'findbug' | 'halffull' | 'centroid' | 'marblerun' | 'lander' | 'swoop' | 'wobblerun' | 'sling') =>
-    names.length
-      ? db()
-          .select({ name: leaderboardScores.name, day: dayKeySql, best: sql<number>`max(${leaderboardScores.score})::int` })
-          .from(leaderboardScores)
-          .where(and(eq(leaderboardScores.game, game), inArray(leaderboardScores.name, names), gte(leaderboardScores.at, fromMs)))
-          .groupBy(leaderboardScores.name, dayKeySql)
-      : Promise.resolve([] as { name: string; day: number; best: number }[])
+  // Each daily's result for everyone, per player per day: their best run of the day, from the history the
+  // boards keep (store.ts runsOfNames). It was nine grouped queries of the table a visit.
+  const perDay = async (game: 'hotlap' | 'findbug' | 'halffull' | 'centroid' | 'marblerun' | 'lander' | 'swoop' | 'wobblerun' | 'sling') => {
+    const out: { name: string; day: number; best: number }[] = []
+    for (const name of new Set(names)) {
+      const best = new Map<number, number>()
+      for (const run of await runsOfNames(game, [name], fromMs)) {
+        const day = boardDateKey(run.at)
+        const had = best.get(day)
+        if (had == null || run.score > had) best.set(day, run.score)
+      }
+      for (const [day, score] of best) out.push({ name, day, best: score })
+    }
+    return out
+  }
   const [holes, laps, finds, pours, courses, caves, flights, gauntlets, plateRuns, climbs] = await Promise.all([
     accounts.length
       ? db()

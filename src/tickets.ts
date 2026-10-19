@@ -117,10 +117,17 @@ function ledgerId(now: number) {
   return `${now}-${crypto.randomBytes(6).toString('base64url')}`
 }
 
-/** The wallet row, made if it isn't there, and held until the transaction ends. */
+/**
+ * The wallet row, made if it isn't there, and held until the transaction ends: one statement, where it was an
+ * insert and then a select for update. An upsert that changes nothing still locks the row it meets, waits for
+ * whoever holds it, and returns it as they left it.
+ */
 async function lockWallet(tx: Tx, accountId: string, now: number) {
-  await tx.insert(ticketWallets).values({ accountId, updatedAt: now }).onConflictDoNothing()
-  const [wallet] = await tx.select().from(ticketWallets).where(eq(ticketWallets.accountId, accountId)).for('update')
+  const [wallet] = await tx
+    .insert(ticketWallets)
+    .values({ accountId, updatedAt: now })
+    .onConflictDoUpdate({ target: ticketWallets.accountId, set: { accountId: sql`excluded.account_id` } })
+    .returning()
   return wallet!
 }
 
@@ -234,26 +241,39 @@ export async function payRun(input: {
         detail: ofRun,
       })
     }
-    const paid = rows.length
-      ? await tx
-          .insert(ticketLedger)
-          .values(rows)
-          .onConflictDoNothing()
-          .returning({ reason: ticketLedger.reason, amount: ticketLedger.amount })
-      : []
+    let paid: { reason: string; amount: number }[] = []
+    if (rows.length) {
+      // The rows and the wallet in one statement, a round trip fewer while the wallet is held: the wallet takes
+      // only the rows that went in (one paid already is left out by its conflict), as it did when it was a
+      // statement of its own after them.
+      const ofRuns = sql.join([...RUN_REASONS].map((reason) => sql`${reason}`), sql`, `)
+      const inserted = tx
+        .insert(ticketLedger)
+        .values(rows)
+        .onConflictDoNothing()
+        .returning({ reason: ticketLedger.reason, amount: ticketLedger.amount })
+      paid = [
+        ...(await tx.execute<{ reason: string; amount: number }>(sql`with paid as ${inserted},
+          wallet as (
+            update ${ticketWallets} set
+              "balance" = ${ticketWallets.balance} + (select coalesce(sum("amount"), 0) from paid),
+              "earned" = ${ticketWallets.earned} + (select coalesce(sum("amount"), 0) from paid),
+              "run_day" = ${today},
+              "run_today" = ${usedToday} + (select coalesce(sum("amount"), 0) from paid where "reason" in (${ofRuns})),
+              "updated_at" = ${now}
+            where ${ticketWallets.accountId} = ${input.accountId}
+          )
+          select "reason", "amount" from paid`)),
+      ].map((row) => ({ reason: row.reason, amount: Number(row.amount) }))
+    } else {
+      await tx
+        .update(ticketWallets)
+        .set({ runDay: today, runToday: usedToday, updatedAt: now })
+        .where(eq(ticketWallets.accountId, input.accountId))
+    }
     const earned = paid.reduce((sum, row) => sum + row.amount, 0)
     const runPaid = paid.filter((row) => RUN_REASONS.has(row.reason as TicketReason)).reduce((sum, row) => sum + row.amount, 0)
     const runToday = usedToday + runPaid
-    await tx
-      .update(ticketWallets)
-      .set({
-        balance: sql`${ticketWallets.balance} + ${earned}`,
-        earned: sql`${ticketWallets.earned} + ${earned}`,
-        runDay: today,
-        runToday,
-        updatedAt: now,
-      })
-      .where(eq(ticketWallets.accountId, input.accountId))
     return {
       earned,
       lines: paid.map((row) => ({ reason: row.reason as TicketReason, amount: row.amount })),

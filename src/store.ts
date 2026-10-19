@@ -829,6 +829,7 @@ function rememberScore(game: string, entry: LeaderboardEntry) {
     // Into its day too, if the game's days are kept from this copy (dayBook); otherwise they're drawn afresh.
     const book = dayBooks.get(game)
     if (book && book.epoch === historyCache.epoch) addToDayBook(book, entry)
+    addToPlayerRuns(game, historyCache.epoch, entry)
   }
   gameVersions.set(game, (gameVersions.get(game) ?? 0) + 1)
 }
@@ -920,18 +921,63 @@ export async function allScores(): Promise<ReadonlyMap<string, readonly Leaderbo
   return loadHistory()
 }
 
+/*
+ * Each player's runs on a game, in board order, kept beside the history: a save asked for the player's best
+ * (bestRunEver) and their runs (playerRuns, the streak records), and each walked every run of the game for
+ * them, 100,000 and more on a busy game. Drawn from the copy once per reading of the table, and a save goes
+ * into its player's list in place (rememberScore), as it goes into the history.
+ */
+type PlayerRunsIndex = { epoch: number; byPlayer: Map<number, LeaderboardEntry[]> }
+const playerRunsIndexes = new Map<string, PlayerRunsIndex>()
+/** Lists being drawn, by game and reading: whoever asks meanwhile waits for the same one. */
+const playerRunsDrawing = new Map<string, Promise<PlayerRunsIndex>>()
+
+async function playerRunsIndex(game: string): Promise<PlayerRunsIndex> {
+  const copy = await loadCopy()
+  const hit = playerRunsIndexes.get(game)
+  if (hit && hit.epoch === copy.epoch) return hit
+  const key = `${game}:${copy.epoch}`
+  let drawing = playerRunsDrawing.get(key)
+  if (!drawing) {
+    drawing = (async () => {
+      // In a turn of its own: the first save after the table is read asks for every game's, and drawn in one
+      // go they held everything else up for half a second at 2 million runs.
+      await new Promise((resolve) => setImmediate(resolve))
+      const byPlayer = new Map<number, LeaderboardEntry[]>()
+      for (const entry of copy.byGame.get(game) ?? []) {
+        const pid = refOf(entry).pid
+        const runs = byPlayer.get(pid)
+        if (runs) runs.push(entry)
+        else byPlayer.set(pid, [entry])
+      }
+      const index = { epoch: copy.epoch, byPlayer }
+      playerRunsIndexes.set(game, index)
+      return index
+    })().finally(() => playerRunsDrawing.delete(key))
+    playerRunsDrawing.set(key, drawing)
+  }
+  return drawing
+}
+
+/** A run just put into the history, into its player's list too, if the game's lists are kept from this copy. */
+function addToPlayerRuns(game: string, epoch: number, entry: LeaderboardEntry) {
+  const index = playerRunsIndexes.get(game)
+  if (!index || index.epoch !== epoch) return
+  const pid = refOf(entry).pid
+  const runs = index.byPlayer.get(pid)
+  if (runs) insertInOrder(runs, entry)
+  else index.byPlayer.set(pid, [entry])
+}
+
 /**
  * One player's runs on one game, newest first: read from the history, where
  * each run knows its player, rather than from the table on every save.
  */
 export async function playerRuns(game: GameSlug, name: string): Promise<{ score: number; at: number }[]> {
-  const list = (await loadHistory()).get(game) ?? []
+  const index = await playerRunsIndex(game)
   const ref = playerRefs.get(name)
   if (!ref) return []
-  const runs: { score: number; at: number }[] = []
-  for (const e of list) {
-    if ((e as HistoryRun)[PLAYER] === ref) runs.push({ score: e.score, at: e.at })
-  }
+  const runs = (index.byPlayer.get(ref.pid) ?? []).map((e) => ({ score: e.score, at: e.at }))
   return runs.sort((a, b) => b.at - a.at)
 }
 
@@ -940,13 +986,38 @@ export async function playerRuns(game: GameSlug, name: string): Promise<{ score:
  * which is in board order. What a daily has in place of a board for all time (ALL_TIME_GAMES).
  */
 export async function bestRunEver(game: GameSlug, name: string): Promise<number | null> {
-  const list = (await loadHistory()).get(game) ?? []
+  const index = await playerRunsIndex(game)
   const ref = playerRefs.get(name.trim().slice(0, 12).toUpperCase())
   if (!ref) return null
-  for (const e of list) {
-    if ((e as HistoryRun)[PLAYER] === ref) return e.score
+  return index.byPlayer.get(ref.pid)?.[0]?.score ?? null
+}
+
+/**
+ * The runs of these tags on a game since `fromMs`, in board order: what the table holds for them, read from the
+ * history instead (Today's days, today.ts, asked it of the table on every save and every visit).
+ */
+export async function runsOfNames(game: GameSlug, names: readonly string[], fromMs: number): Promise<{ score: number; at: number }[]> {
+  const index = await playerRunsIndex(game)
+  const out: { score: number; at: number }[] = []
+  for (const name of names) {
+    const ref = playerRefs.get(name)
+    for (const e of (ref && index.byPlayer.get(ref.pid)) || []) if (e.at >= fromMs) out.push({ score: e.score, at: e.at })
   }
-  return null
+  return out
+}
+
+/** How many runs `name` has on each game from `start` until `end`, games with none left out: from the history. */
+export async function runsByGameBetween(name: string, start: number, end: number): Promise<{ game: string; runs: number }[]> {
+  const copy = await loadCopy()
+  const ref = playerRefs.get(name)
+  if (!ref) return []
+  const out: { game: string; runs: number }[] = []
+  for (const game of copy.byGame.keys()) {
+    let runs = 0
+    for (const e of (await playerRunsIndex(game)).byPlayer.get(ref.pid) ?? []) if (e.at >= start && e.at < end) runs++
+    if (runs) out.push({ game, runs })
+  }
+  return out
 }
 
 /** The ranked dailies `name` has a run on, any day: what the all-time standings, which leave them out, can't say. */
@@ -1076,9 +1147,9 @@ export async function dailyDays(
     let place: number | null = null
     let you: LeaderboardEntry | null = null
     if (who) {
-      place = line.field.indexOf(who) + 1 || null
+      place = placesOf(line).get(who) ?? null
       // With every run kept, the field is the kept players in the same order.
-      you = keep ? (line.kept.find((e) => e.name === who) ?? null) : place ? line.kept[place - 1]! : null
+      you = keep ? (keptByName(line).get(who) ?? null) : place ? line.kept[place - 1]! : null
     }
     out.push({
       day: day.key,
@@ -1102,6 +1173,29 @@ type DayLine = {
   field: string[]
   /** Each player's first kept run, in board order. */
   kept: LeaderboardEntry[]
+  /** Each player's place in the field, and their kept run, by tag: drawn once asked (placesOf, keptByName). */
+  places?: Map<string, number>
+  keptBy?: Map<string, LeaderboardEntry>
+}
+
+/*
+ * A player's place on a day, by tag, not a walk down the day's field: the home page's /days for each race asks
+ * it of every day, for every visitor, and the field is everyone who played that day.
+ */
+function placesOf(line: DayLine): Map<string, number> {
+  if (!line.places) {
+    line.places = new Map()
+    line.field.forEach((name, i) => line.places!.set(name, i + 1))
+  }
+  return line.places
+}
+
+function keptByName(line: DayLine): Map<string, LeaderboardEntry> {
+  if (!line.keptBy) {
+    line.keptBy = new Map()
+    for (const entry of line.kept) line.keptBy.set(entry.name, entry)
+  }
+  return line.keptBy
 }
 
 /** Board order, best first: a day's first run met is its best, and a player's first their best. */
@@ -1248,28 +1342,58 @@ async function dayIndex(game: GameSlug): Promise<Map<number, DayPlayer[]>> {
  * is drawn from its runs inside it.
  */
 function dayPointsFromBook(game: GameSlug, book: DayBook, from: number, to: number): LeaderboardEntry[] {
+  const parts = pointParts(game, book, from, to)
+  const drawn = parts.length > 1 ? pointsOnKeptDays(game, book, from, to, parts) : foldPoints(game, parts.map((p) => p.part))
+  if (process.env.DAY_POINTS_CHECK === '1') {
+    const whole = foldPoints(game, parts.map((p) => p.part))
+    if (JSON.stringify(whole) !== JSON.stringify(drawn)) {
+      console.warn(`[day points] ${game} ${from}-${to}: drawn on the kept days, not the same as drawn whole`)
+      return whole
+    }
+  }
+  return drawn
+}
+
+/** A day's part in a window's day points: its players best first, and its best run, which sets its turn. */
+type PointsPart = { first: LeaderboardEntry; best: DayPlayer[] }
+type PointsTotal = LeaderboardEntry & { days: number }
+/** Where a row was first met in a fold (its day's turn, its place that day), and the turn it first lost its skin. */
+type FirstMet = { rank: number; idx: number; skinFrom: number }
+
+/** The window's days, in the book's order: a day wholly inside takes its kept players, one cut by it its runs inside. */
+function pointParts(game: GameSlug, book: DayBook, from: number, to: number): { key: number; version: number; part: PointsPart }[] {
   const since = DAILY_SINCE[game] ?? 0
-  const parts: { first: LeaderboardEntry; best: DayPlayer[] }[] = []
+  const parts: { key: number; version: number; part: PointsPart }[] = []
   for (const day of book.days.values()) {
     if (day.key < since) continue
     const [start, end] = (day.span ??= [dayStartMs(day.key), dayStartMs(addDaysToDateKey(day.key, 1))])
     if (end <= from || start >= to) continue
     if (start >= from && end <= to) {
-      parts.push({ first: day.runs[0]!, best: dayPlayersOf(day) })
+      parts.push({ key: day.key, version: day.version, part: { first: day.runs[0]!, best: dayPlayersOf(day) } })
       continue
     }
     const inside = day.runs.filter((run) => run.at >= from && run.at < to)
-    if (inside.length) parts.push({ first: inside[0]!, best: bestsOf(inside) })
+    if (inside.length) parts.push({ key: day.key, version: day.version, part: { first: inside[0]!, best: bestsOf(inside) } })
   }
-  parts.sort((a, b) => boardOrder(a.first, b.first))
-  const totals = new Map<string, LeaderboardEntry & { days: number }>()
-  for (const { best } of parts) {
+  return parts
+}
+
+/**
+ * The days folded into each player's total, the days taken in the order of their best runs. A player's first day
+ * met makes their row, so the order rows are first met in is what a tie on the board falls back on. A row takes
+ * the time, device and skin of the player's latest day's best run.
+ */
+function foldPoints(game: GameSlug, parts: PointsPart[], firsts?: Map<string, FirstMet>): PointsTotal[] {
+  const ordered = [...parts].sort((a, b) => boardOrder(a.first, b.first))
+  const totals = new Map<string, PointsTotal>()
+  ordered.forEach(({ best }, rank) => {
     best.forEach((run, i) => {
       const points = placePoints(i + 1, best.length)
       const had = totals.get(run.name)
       if (!had) {
         // In the skin of their latest day's best run, as the board shows a run's (the site's SkinMark).
-        totals.set(run.name, { id: `days:${game}:${run.name}`, name: run.name, score: points, at: run.at, device: run.device, ...(run.skin ? { skin: run.skin } : {}), days: 1 })
+        totals.set(run.name, withPlayer({ id: `days:${game}:${run.name}`, name: run.name, score: points, at: run.at, device: run.device, ...(run.skin ? { skin: run.skin } : {}), days: 1 }) as PointsTotal)
+        firsts?.set(run.name, { rank, idx: i, skinFrom: run.skin ? Infinity : rank })
         return
       }
       had.score += points
@@ -1278,11 +1402,210 @@ function dayPointsFromBook(game: GameSlug, book: DayBook, from: number, to: numb
         had.at = run.at
         had.device = run.device
         if (run.skin) had.skin = run.skin
-        else delete had.skin
+        else {
+          delete had.skin
+          const first = firsts?.get(run.name)
+          if (first && first.skinFrom === Infinity) first.skinFrom = rank
+        }
       }
     })
-  }
+  })
   return [...totals.values()].sort(boardOrder)
+}
+
+/*
+ * A window's day points, kept for its closed days and folded again for its newest day only. A save to a daily
+ * redrew its week's, month's and season's day points from every day in them, a fold over every player of every
+ * day: 35 ms for a month at 20,000 players, and again for whoever read them next. Only the newest day takes
+ * runs, so the closed days' totals are kept, folded the same way, and the newest day goes onto them.
+ *
+ * It is what a fold of every day gives, to the byte. The days are folded in the order of their best runs, and the
+ * newest day's turn can be anywhere in it. Its runs are the latest of all, so a row in it takes its time, device
+ * and skin from it, whatever its turn. A tie on the board falls back on the order rows were first met, which
+ * `firsts` keeps for the closed days. And a row's skin comes before its `days` in the JSON only when the row was
+ * made with one and never lost it since: `skinFrom` is the closed day's turn where it first went without, so a
+ * row the newest day takes over keeps its skin's place only if it hadn't gone without before the newest day's turn.
+ */
+type PointsBase = {
+  epoch: number
+  /** The newest day they were kept beside. */
+  live: number
+  /** The closed days, in the book's order, with each one's version. */
+  closed: { key: number; version: number }[]
+  /** Their best runs, in the order they're folded. */
+  turns: LeaderboardEntry[]
+  totals: Map<string, PointsTotal>
+  firsts: Map<string, FirstMet>
+  /** The totals in board order, ties in the order first met. */
+  board: PointsTotal[]
+  /** Each player's row in `board`, and where each row was first met (as `firsts`), by row. */
+  rowOf: Map<string, number>
+  metRank: Int32Array
+  metIdx: Int32Array
+}
+const pointsBases = new Map<string, PointsBase>()
+
+/** The kept closed days of a window with its newest day's turn among them, made again if a closed day changed. */
+function keptDaysOf(game: GameSlug, book: DayBook, from: number, to: number, parts: { key: number; version: number; part: PointsPart }[]) {
+  let newest = parts[0]!
+  for (const p of parts) if (p.key > newest.key) newest = p
+  const closed = parts.filter((p) => p !== newest)
+  const cacheKey = `${game}:${from}:${to}`
+  let kept = pointsBases.get(cacheKey)
+  if (
+    !kept ||
+    kept.epoch !== book.epoch ||
+    kept.live !== newest.key ||
+    kept.closed.length !== closed.length ||
+    kept.closed.some((c, i) => c.key !== closed[i]!.key || c.version !== closed[i]!.version)
+  ) {
+    const firsts = new Map<string, FirstMet>()
+    const board = foldPoints(game, closed.map((p) => p.part), firsts)
+    kept = {
+      epoch: book.epoch,
+      live: newest.key,
+      closed: closed.map((p) => ({ key: p.key, version: p.version })),
+      turns: closed.map((p) => p.part.first).sort(boardOrder),
+      totals: new Map(board.map((row) => [row.name, row])),
+      firsts,
+      board,
+      rowOf: new Map(board.map((row, i) => [row.name, i])),
+      metRank: Int32Array.from(board, (row) => firsts.get(row.name)!.rank),
+      metIdx: Int32Array.from(board, (row) => firsts.get(row.name)!.idx),
+    }
+    // Past windows aren't asked again: the ones in use are a few per daily.
+    pointsBases.delete(cacheKey)
+    if (pointsBases.size >= 48) pointsBases.delete(pointsBases.keys().next().value!)
+    pointsBases.set(cacheKey, kept)
+  }
+  // The newest day's turn: how many closed days are folded before it.
+  const { first, best } = newest.part
+  let turn = 0
+  while (turn < kept.turns.length && boardOrder(kept.turns[turn]!, first) < 0) turn++
+  // Where a closed day's row is first met in the fold of every day: its turn, moved one on past the newest day's.
+  const metAt = (f: FirstMet): [number, number] => [f.rank < turn ? f.rank : f.rank + 1, f.idx]
+  return { kept, best, turn, metAt }
+}
+
+function pointsOnKeptDays(
+  game: GameSlug,
+  book: DayBook,
+  from: number,
+  to: number,
+  parts: { key: number; version: number; part: PointsPart }[],
+): PointsTotal[] {
+  const { kept, best, turn, metAt } = keptDaysOf(game, book, from, to, parts)
+  const { totals, firsts } = kept
+  const order = (a: PointsTotal, ma: [number, number], b: PointsTotal, mb: [number, number]) => boardOrder(a, b) || ma[0] - mb[0] || ma[1] - mb[1]
+
+  const today: { row: PointsTotal; met: [number, number] }[] = []
+  const inToday = new Set<string>()
+  best.forEach((run, i) => {
+    inToday.add(run.name)
+    const points = placePoints(i + 1, best.length)
+    const id = `days:${game}:${run.name}`
+    const had = totals.get(run.name)
+    const f = had ? firsts.get(run.name)! : null
+    if (!had || f!.rank >= turn) {
+      // First met on the newest day: its run makes the row, and the closed days after it only add their points.
+      const row: PointsTotal = { id, name: run.name, score: (had?.score ?? 0) + points, at: run.at, device: run.device, ...(run.skin ? { skin: run.skin } : {}), days: (had?.days ?? 0) + 1 }
+      today.push({ row: withPlayer(row) as PointsTotal, met: [turn, i] })
+      return
+    }
+    // First met on a closed day before it: the newest day's run takes over its time, device and skin.
+    const score = had.score + points
+    const days = had.days + 1
+    const row: PointsTotal =
+      run.skin && f!.skinFrom >= turn
+        ? { id, name: run.name, score, at: run.at, device: run.device, skin: run.skin, days }
+        : run.skin
+          ? { id, name: run.name, score, at: run.at, device: run.device, days, skin: run.skin }
+          : { id, name: run.name, score, at: run.at, device: run.device, days }
+    today.push({ row: withPlayer(row) as PointsTotal, met: metAt(f!) })
+  })
+  today.sort((a, b) => order(a.row, a.met, b.row, b.met))
+
+  // The closed days' rows of players with none today, as kept, merged with today's in board order.
+  const out: PointsTotal[] = []
+  let t = 0
+  for (const row of kept.board) {
+    if (inToday.has(row.name)) continue
+    const met = metAt(firsts.get(row.name)!)
+    while (t < today.length && order(today[t]!.row, today[t]!.met, row, met) < 0) out.push(today[t++]!.row)
+    out.push(row)
+  }
+  while (t < today.length) out.push(today[t++]!.row)
+  return out
+}
+
+/**
+ * A player's place in a daily's day points for a window, or null if they have none in it: what their row's place
+ * on the drawn board is, counted without drawing it. A save asks it before and after its run for the week, the
+ * month and the season, and each run moves the board, so a wave of saves drew each of them again for every save.
+ */
+function placeInDayPoints(game: GameSlug, book: DayBook, from: number, to: number, name: string): number | null {
+  const parts = pointParts(game, book, from, to)
+  if (!parts.length) return null
+  // One day alone is all newest day, with nothing kept beside it.
+  const { kept, best, turn } = parts.length > 1 ? keptDaysOf(game, book, from, to, parts) : { kept: null, best: parts[0]!.part.best, turn: 0 }
+  const board = kept?.board ?? []
+  const rowOf = kept?.rowOf
+  // Where a row is first met in the fold of every day: a closed day's turn moves one on past the newest day's.
+  const metTurn = (b: number) => (kept!.metRank[b]! < turn ? kept!.metRank[b]! : kept!.metRank[b]! + 1)
+
+  // The player's row as the board would have it: its score, its time and where it was first met.
+  const todayAt = best.findIndex((run) => run.name === name)
+  const mine = rowOf?.get(name)
+  let score: number, at: number, m0: number, m1: number
+  if (todayAt >= 0) {
+    score = (mine != null ? board[mine]!.score : 0) + placePoints(todayAt + 1, best.length)
+    at = best[todayAt]!.at
+    ;[m0, m1] = mine == null || kept!.metRank[mine]! >= turn ? [turn, todayAt] : [metTurn(mine), kept!.metIdx[mine]!]
+  } else if (mine != null) {
+    ;({ score, at } = board[mine]!)
+    ;[m0, m1] = [metTurn(mine), kept!.metIdx[mine]!]
+  } else return null
+  const ahead = (s: number, a: number, n0: number, n1: number) =>
+    s > score || (s === score && (a < at || (a === at && (n0 < m0 || (n0 === m0 && n1 < m1)))))
+
+  // The kept rows are in board order, met turns and all, so those ahead are the first `cut` of them...
+  let lo = 0
+  let hi = board.length
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1
+    const row = board[mid]!
+    if (ahead(row.score, row.at, metTurn(mid), kept!.metIdx[mid]!)) lo = mid + 1
+    else hi = mid
+  }
+  const cut = lo
+  // ...less any of them in the newest day, whose rows it draws again; those it draws are counted one by one.
+  let place = 1 + cut
+  best.forEach((run, i) => {
+    const b = rowOf?.get(run.name)
+    if (b != null && b < cut) place--
+    if (i === todayAt) return
+    const s = (b != null ? board[b]!.score : 0) + placePoints(i + 1, best.length)
+    const [n0, n1] = b == null || kept!.metRank[b]! >= turn ? [turn, i] : [metTurn(b), kept!.metIdx[b]!]
+    if (ahead(s, run.at, n0, n1)) place++
+  })
+  return place
+}
+
+/**
+ * `name`'s place on a game's board for a period, as bestForName gives it. For a ranked daily's week, month and
+ * season, which are day points, it's counted on the kept days (placeInDayPoints) instead of drawn.
+ */
+async function placeOnBoard(game: GameSlug, name: string, period: Period, now: number): Promise<number | null> {
+  if (!DAILY_GAMES.has(game) || period === 'daily' || period === 'all' || !isRankedGame(game)) {
+    return (await bestForName(game, name, period, now))?.rank ?? null
+  }
+  const book = await dayBook(game)
+  const place = placeInDayPoints(game, book, ...periodSpan(period, now), name)
+  if (process.env.DAY_POINTS_CHECK === '1') {
+    const drawn = (await bestForName(game, name, period, now))?.rank ?? null
+    if (drawn !== place) console.warn(`[day points] ${game} ${period} ${name}: counted ${place}, drawn ${drawn}`)
+  }
+  return place
 }
 
 /**
@@ -2260,8 +2583,8 @@ export async function addScore(
   const now = Date.now()
   const previousBestRanks: Partial<Record<Period, number>> = {}
   for (const period of PERIODS) {
-    const prior = await bestForName(game, cleaned, period, now)
-    if (prior) previousBestRanks[period] = prior.rank
+    const prior = await placeOnBoard(game, cleaned, period, now)
+    if (prior != null) previousBestRanks[period] = prior
   }
 
   const entry: LeaderboardEntry = {
@@ -2310,6 +2633,8 @@ export async function addScore(
 
   const ranks: Partial<Record<Period, number>> = {}
   for (const period of PERIODS) {
+    // A daily's week, month and season are day points, rows of players, never runs: nothing to find the run in.
+    if (DAILY_GAMES.has(game) && period !== 'daily' && period !== 'all') continue
     const { entries } = await poolView(game, period, now)
     const index = indexOfRun(entries, entry)
     if (index !== -1) ranks[period] = index + 1
@@ -2317,8 +2642,8 @@ export async function addScore(
 
   const bestRanks: Partial<Record<Period, number>> = {}
   for (const period of PERIODS) {
-    const best = await bestForName(game, cleaned, period, now)
-    if (best) bestRanks[period] = best.rank
+    const best = await placeOnBoard(game, cleaned, period, now)
+    if (best != null) bestRanks[period] = best
   }
 
   const rank = ranks.daily ?? ranks.weekly ?? ranks.monthly ?? ranks.all ?? null

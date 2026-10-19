@@ -4,7 +4,7 @@ import { z } from 'zod'
 import { pageParams } from './paging.js'
 import { accountFromRequest } from './auth.js'
 import { clientOffset, secretsForRun } from './secrets.js'
-import { settleToday } from './today.js'
+import { settleToday, todayState } from './today.js'
 import { tellBeatenFriends } from './todayBeaten.js'
 import { hasPodium, podiumNames, tellPodiumLost } from './podiumLost.js'
 import { isBanned } from './bans.js'
@@ -15,7 +15,7 @@ import { judgePours, minPourMs, poursSchema } from './halffull/save.js'
 import { judgePlates, minPlatesMs, platesSchema } from './centroid/save.js'
 import { flagIfSuspicious } from './scoreFlags.js'
 import { resolveBoardScope } from './groups.js'
-import { assertCanUseName, withAvatarId, withAvatarIds } from './names.js'
+import { assertCanUseName, cleanPlayerName, heldClaim, withAvatarId, withAvatarIds } from './names.js'
 import { updateCrossRunStreakRecords } from './records.js'
 import { noteDayRun } from './courseRecords.js'
 import { dailyFirstDay, dailyRecords, dayResultKeep, standingOn, type DailyTally } from './dailyRecords.js'
@@ -655,6 +655,18 @@ leaderboardsRouter.post('/:game', async (req, res) => {
   let durationMs: number | null = null
   // The time the score is held to: the server's, plus the late start the site reported (runs.ts runLag).
   let checkedMs: number | null = null
+  /*
+   * The checks that only read go out together, with the run's: Find the Bug's first run, the tag (when the
+   * account holds it already, names.ts heldClaim) and its ban. What the save is told stays in the order below,
+   * the run's problems first. The ban is on the tag the claim resolves to, which is always the submitted one
+   * tidied (cleanPlayerName), and on the account.
+   */
+  const firstRunCheck = firstRunOnly ? firstRunProblem(account.id, game, runId ?? null) : null
+  firstRunCheck?.catch(() => undefined)
+  const held = heldClaim(name, account.id)
+  held.catch(() => undefined)
+  const banCheck = isBanned(cleanPlayerName(name), account.id)
+  banCheck.catch(() => undefined)
   if (runId) {
     const run = await peekRun(runId, account.id, game, firstRunOnly ? FIRST_RUN_TTL_MS : undefined, runLagMs)
     if (!run.ok) {
@@ -692,8 +704,8 @@ leaderboardsRouter.post('/:game', async (req, res) => {
   }
 
   // Find the Bug's board takes an account's first run of the day, and one a day (firstRun.ts).
-  if (firstRunOnly) {
-    const problem = await firstRunProblem(account.id, game, runId ?? null)
+  if (firstRunCheck) {
+    const problem = await firstRunCheck
     if (problem) {
       res.status(409).json({ error: firstRunError(game, problem), code: problem })
       return
@@ -702,10 +714,12 @@ leaderboardsRouter.post('/:game', async (req, res) => {
 
   let claim: { name: string; token: string }
   try {
-    claim = await assertCanUseName(name, {
-      claimToken: token,
-      accountId: account.id,
-    })
+    claim =
+      (await held) ??
+      (await assertCanUseName(name, {
+        claimToken: token,
+        accountId: account.id,
+      }))
   } catch (err) {
     const status = (err as { status?: number }).status ?? 500
     const code = (err as { code?: string }).code
@@ -721,7 +735,7 @@ leaderboardsRouter.post('/:game', async (req, res) => {
    * player cannot get past it by letting the server tidy their tag for them,
    * and on the account too, so a fresh tag is not a way back on.
    */
-  if (await isBanned(claim.name, account.id)) {
+  if (claim.name === cleanPlayerName(name) ? await banCheck : await isBanned(claim.name, account.id)) {
     console.log(`[admin] refused a ${game} score from banned ${claim.name}`)
     res.status(403).json({
       error: 'This tag cannot post scores',
@@ -730,6 +744,22 @@ leaderboardsRouter.post('/:game', async (req, res) => {
     return
   }
 
+  /*
+   * What the save needs from before the write, read while the run is spent: none of it changes with the claim.
+   * - The board, so "was this far past the rest?" has an answer: a daily's today, the others' all time (a daily
+   *   has no board for all time, store.ts ALL_TIME_GAMES, and days' runs can't be measured against each other).
+   * - The player's own best, for its tickets: a new best pays more, and none at all is a first go. A daily's,
+   *   from its runs of any day, says only whether this is a first go (tickets.ts pays it no best).
+   * - A racing daily's top three, to tell whoever it pushes off the podium (podiumLost.ts).
+   * - The skin it was played in, if the account owns it.
+   */
+  const before = Promise.all([
+    getBoard(game, DAILY_GAMES.has(game) ? 'daily' : 'all'),
+    DAILY_GAMES.has(game) ? bestRunEver(game, claim.name) : bestForName(game, claim.name, 'all').then((best) => best?.score ?? null),
+    hasPodium(game) ? podiumNames(game).catch(() => []) : [],
+    runSkin(account.id, game, skin),
+  ])
+  before.catch(() => undefined)
   // Last thing before the write: everything that could reject this score has
   // already had its say, so spending the run here cannot strand a retry.
   if (runId && !(await claimRun(runId, 'leaderboard'))) {
@@ -741,38 +771,35 @@ leaderboardsRouter.post('/:game', async (req, res) => {
     res.status(409).json({ error: firstRunError(game, 'DAILY_DONE'), code: 'DAILY_DONE' })
     return
   }
-
-  // Read before the write, so "was this far past the rest?" has an answer: a daily's today, the others' all time
-  // (a daily has no board for all time, store.ts ALL_TIME_GAMES, and days' runs can't be measured against each other).
-  const boardBefore = await getBoard(game, DAILY_GAMES.has(game) ? 'daily' : 'all')
+  const [boardBefore, priorBest, podium, runSkinId] = await before
   const bestBefore = boardBefore[0]?.score ?? 0
-  // The player's own best before this run, for its tickets: a new best pays more, and none at all is a first go.
-  // A daily's, from its runs of any day, says only whether this is a first go (tickets.ts pays it no best).
-  const priorBest = DAILY_GAMES.has(game)
-    ? await bestRunEver(game, claim.name)
-    : ((await bestForName(game, claim.name, 'all'))?.score ?? null)
-  // A racing daily's top three before this run, to tell whoever it pushes off the podium (podiumLost.ts).
-  const podium = hasPodium(game) ? await podiumNames(game).catch(() => []) : []
 
   const result = await addScore(game, claim.name, score, device ?? 'desktop', {
     runId: runId ?? null,
     durationMs,
     ipHash: hashIp(clientIp(req)),
     userAgent: req.get('user-agent') ?? null,
-    skin: await runSkin(account.id, game, skin),
+    skin: runSkinId,
   })
   // A daily just for fun keeps no record book (store.ts UNRANKED_GAMES).
   const ranked = isRankedGame(game)
-  const streakRecords = ranked ? await updateCrossRunStreakRecords(game, claim.name, score, device ?? 'desktop') : []
+  const at = result.entry.at
+
+  /*
+   * What follows the write runs side by side: each part reads or writes its own things. Only the ticket wallet
+   * is shared, so its parts keep their order: the run's tickets, then a Today streak's (settleToday), then the
+   * season's pass, which counts every ticket before it.
+   */
+  const streaksDone = ranked ? updateCrossRunStreakRecords(game, claim.name, score, device ?? 'desktop') : Promise.resolve([])
   // A lap of today's Hot Lap track goes in its track's record book too (courseRecords.ts).
-  if (ranked && DAILY_GAMES.has(game)) await noteDayRun(game, claim.name, score, device ?? 'desktop', result.entry.at)
+  const courseDone = ranked && DAILY_GAMES.has(game) ? noteDayRun(game, claim.name, score, device ?? 'desktop', at) : null
 
   // The site's records (streaks, busiest day) catch up within their minute
   // (siteRecords.ts). Clearing them on every save made nearly every home page
   // visit under steady play read the whole score table again.
 
   // After the save, never in its way: a suspicion is a note for a person.
-  await flagIfSuspicious(
+  const flagged = flagIfSuspicious(
     {
       scoreId: result.entry.id,
       game,
@@ -787,8 +814,8 @@ leaderboardsRouter.post('/:game', async (req, res) => {
   )
 
   // A run from a friend's link: kept against the challenge, and its sender told.
-  const challenge = challengeId
-    ? await recordChallengeRun({
+  const challengeDone = challengeId
+    ? recordChallengeRun({
         challengeId,
         game,
         name: claim.name,
@@ -801,60 +828,79 @@ leaderboardsRouter.post('/:game', async (req, res) => {
       })
     : null
 
-  // Tickets for a run the server timed; one saved without a run id pays none, but for a Half Full day, whose
-  // score the server worked out itself and which saves once a day: it's paid under the day.
-  const payRef = runId ?? (game === 'halffull' || game === 'centroid' ? `${game}-${boardDateKey(result.entry.at)}` : null)
-  const tickets: RunTickets | null = payRef
-    ? await payRun({
-        accountId: account.id,
-        game,
-        runId: payRef,
-        entry: result.entry,
-        score,
-        priorBest,
-        pickups: game === 'crosswalk' ? plausiblePickups(score, pickups) : 0,
-        paceMs: game === 'hotlap' || game === 'marblerun' || game === 'lander' || game === 'swoop' || game === 'wobblerun' || game === 'sling' ? pace : null,
-      }).catch((err: unknown) => {
-        console.warn(`[tickets] ${game} run ${payRef}:`, err)
-        return null
-      })
-    : null
-
   // Any secrets the run found (secrets.ts), once it's on the board.
-  const secrets = await secretsForRun({
+  const secretsDone = secretsForRun({
     accountId: account.id,
     name: claim.name,
     offset: clientOffset(req),
-    at: result.entry.at,
+    at,
   }).catch((err: unknown) => {
     console.warn(`[secrets] ${game} run for ${claim.name}:`, err)
     return []
   })
 
   // A daily of the Today set (today.ts) may keep the day, or make it a Full ticket, and reach a streak reward.
-  if (game === 'hotlap' || game === 'findbug' || game === 'halffull' || game === 'centroid' || game === 'marblerun' || game === 'lander' || game === 'swoop' || game === 'wobblerun' || game === 'sling') {
-    await settleToday(account.id, result.entry.at).catch((err: unknown) => {
-      console.warn(`[today] ${game} run for ${claim.name}:`, err)
-    })
-    // And it may beat a friend's result on it today (todayBeaten.ts). The save doesn't wait: a push can take a moment.
-    void tellBeatenFriends({ accountId: account.id, game, now: result.entry.at }).catch((err: unknown) => {
-      console.warn(`[today] telling ${claim.name}'s friends:`, err)
-    })
-    // And it may push someone off today's podium, who can still win it back.
-    if (podium.length && hasPodium(game)) {
-      void tellPodiumLost({ game, before: podium, name: claim.name, accountId: account.id, now: result.entry.at }).catch((err: unknown) => {
-        console.warn(`[today] podium after ${claim.name}'s run:`, err)
-      })
-    }
-  }
+  const todayGame = game === 'hotlap' || game === 'findbug' || game === 'halffull' || game === 'centroid' || game === 'marblerun' || game === 'lander' || game === 'swoop' || game === 'wobblerun' || game === 'sling'
+  // Its day is read while the run's tickets are paid: only what the day pays waits for them.
+  const dayRead = todayGame ? todayState(account.id, at) : null
+  dayRead?.catch(() => undefined)
 
-  // The season's pass (seasons.ts), after every ticket the run brought: what it added, and any level it reached.
-  const season = tickets
-    ? await seasonAfterRun(account.id, result.entry.at).catch((err: unknown) => {
-        console.warn(`[season] ${game} run for ${claim.name}:`, err)
-        return null
+  const wallet = (async () => {
+    // Tickets for a run the server timed; one saved without a run id pays none, but for a Half Full day, whose
+    // score the server worked out itself and which saves once a day: it's paid under the day.
+    const payRef = runId ?? (game === 'halffull' || game === 'centroid' ? `${game}-${boardDateKey(at)}` : null)
+    const tickets: RunTickets | null = payRef
+      ? await payRun({
+          accountId: account.id,
+          game,
+          runId: payRef,
+          entry: result.entry,
+          score,
+          priorBest,
+          pickups: game === 'crosswalk' ? plausiblePickups(score, pickups) : 0,
+          paceMs: game === 'hotlap' || game === 'marblerun' || game === 'lander' || game === 'swoop' || game === 'wobblerun' || game === 'sling' ? pace : null,
+        }).catch((err: unknown) => {
+          console.warn(`[tickets] ${game} run ${payRef}:`, err)
+          return null
+        })
+      : null
+
+    if (todayGame && dayRead) {
+      await dayRead.then((day) => settleToday(account.id, at, day)).catch((err: unknown) => {
+        console.warn(`[today] ${game} run for ${claim.name}:`, err)
       })
-    : null
+      // And it may beat a friend's result on it today (todayBeaten.ts). The save doesn't wait: a push can take a moment.
+      void tellBeatenFriends({ accountId: account.id, game, now: at }).catch((err: unknown) => {
+        console.warn(`[today] telling ${claim.name}'s friends:`, err)
+      })
+      // And it may push someone off today's podium, who can still win it back.
+      if (podium.length && hasPodium(game)) {
+        void tellPodiumLost({ game, before: podium, name: claim.name, accountId: account.id, now: at }).catch((err: unknown) => {
+          console.warn(`[today] podium after ${claim.name}'s run:`, err)
+        })
+      }
+    }
+
+    // The season's pass (seasons.ts), after every ticket the run brought: what it added, and any level it reached.
+    const season = tickets
+      ? await seasonAfterRun(account.id, at).catch((err: unknown) => {
+          console.warn(`[season] ${game} run for ${claim.name}:`, err)
+          return null
+        })
+      : null
+    return { tickets, season }
+  })()
+
+  const [streakRecords, , , challenge, secrets, { tickets, season }, entry, entries] = await Promise.all([
+    streaksDone,
+    courseDone,
+    flagged,
+    challengeDone,
+    secretsDone,
+    wallet,
+    withAvatarId(result.entry),
+    ranked ? withAvatarIds(result.board) : [],
+  ])
 
   res.status(201).json({
     game,
@@ -862,7 +908,7 @@ leaderboardsRouter.post('/:game', async (req, res) => {
     tickets,
     ...(season ? { season } : {}),
     ...(secrets.length ? { secrets } : {}),
-    entry: await withAvatarId(result.entry),
+    entry,
     // A daily just for fun places the run nowhere, and its board is no one's to see.
     rank: ranked ? result.rank : null,
     ranks: ranked ? result.ranks : {},
@@ -870,7 +916,7 @@ leaderboardsRouter.post('/:game', async (req, res) => {
     bestRanks: ranked ? result.bestRanks : {},
     streakRecords,
     period: 'daily',
-    entries: ranked ? await withAvatarIds(result.board) : [],
+    entries,
     name: claim.name,
     token: claim.token,
   })

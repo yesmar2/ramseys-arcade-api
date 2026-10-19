@@ -19,6 +19,7 @@ backups/
 # Throwaway sessions the load test makes on its own database (scripts/loadtest).
 scripts/loadtest/accounts.json
 scripts/loadtest/site-accounts.json
+scripts/loadtest/seeded-accounts.json
 # CPU profiles and their triggers (scripts/loadtest/profile-hook.mjs).
 scripts/loadtest/*.cpuprofile
 scripts/loadtest/profile.start

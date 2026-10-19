@@ -1,9 +1,9 @@
 import type { Request } from 'express'
-import { and, count, eq, gte, lt } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 import { db } from './db/client.js'
-import { leaderboardScores, trophyAwards } from './db/schema.js'
+import { trophyAwards } from './db/schema.js'
 import { notify } from './notifications.js'
-import { ALLOWED_GAMES, boardDateKey, dayStartMs, type GameSlug } from './store.js'
+import { ALLOWED_GAMES, boardDateKey, dayStartMs, runsByGameBetween, type GameSlug } from './store.js'
 
 /*
  * Secret trophies: odd things a player can do that nothing on the site mentions until they've done them.
@@ -159,11 +159,8 @@ async function dayOfPlay(name: string, at: number): Promise<{ everyGame: boolean
   const start = dayStartMs(boardDateKey(at))
   // Thirty hours on is always the next day, however long a day is when the clocks change.
   const end = dayStartMs(boardDateKey(start + 30 * 3_600_000))
-  const rows = await db()
-    .select({ game: leaderboardScores.game, runs: count() })
-    .from(leaderboardScores)
-    .where(and(eq(leaderboardScores.name, name), gte(leaderboardScores.at, start), lt(leaderboardScores.at, end)))
-    .groupBy(leaderboardScores.game)
+  // From the history the boards keep, which has every run in the table, this one included.
+  const rows = await runsByGameBetween(name, start, end)
   const played = new Set(rows.map((r) => r.game))
   return { everyGame: TOUR_GAMES.every((g) => played.has(g)), runs: rows.reduce((sum, r) => sum + Number(r.runs), 0) }
 }
@@ -174,11 +171,13 @@ async function dayFinds(
   name: string,
   at: number,
   award: (key: SecretKey, extra?: { games?: number }) => Promise<void>,
+  /** The day's play, if it's being read already. */
+  dayRead?: Promise<{ everyGame: boolean; runs: number }>,
 ) {
   const tour = !had.has(SECRETS.grandtour.n)
   const marathon = !had.has(SECRETS.marathon.n)
   if (!tour && !marathon) return
-  const day = await dayOfPlay(name, at)
+  const day = await (dayRead ?? dayOfPlay(name, at))
   if (tour && day.everyGame) await award('grandtour', { games: TOUR_GAMES.length })
   if (marathon && day.runs >= MARATHON_RUNS) await award('marathon', { games: day.runs })
 }
@@ -188,6 +187,9 @@ async function dayFinds(
  * Grand Tour or Marathon by the day's play.
  */
 export async function secretsForRun(opts: { accountId: string; name: string; offset: number | null; at: number }): Promise<SecretFound[]> {
+  // The day's play is read beside what's been found, not after it: few have found both it could award.
+  const dayRead = dayOfPlay(opts.name, opts.at)
+  dayRead.catch(() => undefined)
   const had = await foundBefore(opts.accountId)
   const found: SecretFound[] = []
   const award = async (key: SecretKey, extra: { games?: number } = {}) => {
@@ -196,7 +198,7 @@ export async function secretsForRun(opts: { accountId: string; name: string; off
     if (secret) found.push(secret)
   }
   if (opts.offset != null && localHour(opts.at, opts.offset) === 3) await award('nightowl')
-  await dayFinds(had, opts.name, opts.at, award)
+  await dayFinds(had, opts.name, opts.at, award, dayRead)
   return found
 }
 

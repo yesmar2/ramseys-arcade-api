@@ -189,7 +189,7 @@ const TYPICAL_PACE_MS = 53_000
  * in both: his best Hot Lap laps had landed 13 to 25% under the blue car (17% the middle day, 12.8% that day, short of
  * gold at 14%), and no one's Marble Run had reached platinum's 36% (the best 34.5%; his 30.8% that day was gold).
  */
-export const RACE_MEDAL_STEP = { hotlap: 0.05, marblerun: 0.1, lander: 0.1, swoop: 0.13, wobblerun: 0.12, sling: 0.13 } as const
+export const RACE_MEDAL_STEP = { hotlap: 0.05, marblerun: 0.1, lander: 0.1, swoop: 0.13, wobblerun: 0.12, sling: 0.1 } as const
 
 /**
  * How many steps faster than the blue each medal is, bronze to platinum. Platinum stays three; the others sit
@@ -339,13 +339,13 @@ export function slingPlannedPace(now = Date.now()): number | null {
   return paceOnDay(SLING_FIRST_DAY, SLING_PACE_MS, now)
 }
 
-/** Where a blue blip can climb: the plan's towers pace 48–63 s, with room either side. */
+/** Where a blue blip can climb: the plan's towers pace 76–82 s, with room either side. */
 const PEG_MIN_MS = 30_000
 const PEG_MAX_MS = 120_000
 
 /**
- * Sling, on a day whose blue blip reaches the top in `paceMs`: under 16% faster than it 3, by 16% 5, by 23% 8,
- * by 31% 11, by 39% 15, as the other racing dailies pay against their blues. Without a blue blip, a run pays the
+ * Sling, on a day whose blue blip reaches the top in `paceMs`: under 12% faster than it 3, by 12% 5, by 18% 8,
+ * by 24% 11, by 30% 15, as the other racing dailies pay against their blues. Without a blue blip, a run pays the
  * 3 alone.
  */
 export function slingLadder(paceMs: number | null | undefined): Ladder {

@@ -59,11 +59,11 @@ const PLANS: Partial<Record<GameSlug, CoursePlan>> = {
   // plan's quickest day (#17). The floor is under that, with room for a line the search missed.
   swoop: { firstDay: SWOOP_FIRST_DAY, pace: SWOOP_PACE_MS, repeats: false, floor: 0.3 },
   wobblerun: { firstDay: WOBBLERUN_FIRST_DAY, pace: WOBBLERUN_PACE_MS, repeats: false, floor: WOBBLERUN_FLOOR },
-  // The blue blip lines up each fling for 1.6 s, as a careful phone player does, and never skips a peg. Hands
-  // that aim in an eighth of a second and take every skip that's safe climbed the plan's towers in 19 to 21% of
-  // its time (the site's sling sim.ts makeHands, 2026-10-19, once pegs got easier to grab); the floor is under
+  // The blue blip lines up each fling for 2.4 s, slower than most players (Ramsey, 2026-10-19: "blue guy is way
+  // too fast"), and never skips a peg. Hands that aim in an eighth of a second and take every skip that's safe
+  // climbed the plan's towers in about 14% of its time (the site's sling sim.ts makeHands); the floor is under
   // that, with room for bolder skips.
-  sling: { firstDay: SLING_FIRST_DAY, pace: SLING_PACE_MS, repeats: false, floor: 0.12 },
+  sling: { firstDay: SLING_FIRST_DAY, pace: SLING_PACE_MS, repeats: false, floor: 0.08 },
 }
 
 /**

@@ -196,6 +196,16 @@ const REPAIRS: Repair[] = [
       return `counted the streak books again (${counted.join(', ')}); ${retired.length} rows of retired wave and length books gone`
     },
   },
+  {
+    // High Rise's "Scores over … in a row" line went from 25 to 80 (records.ts SCORE_STREAK_THRESHOLDS, Ramsey,
+    // 2026-10-19), so its book is counted again at it.
+    id: '2026-10-19-high-rise-streak-80',
+    run: async () => {
+      const { line, gone, kept } = await recountStreakBook('stacker')
+      invalidateRecordHistoryCache()
+      return `counted High Rise's streaks again at ${line.toLocaleString()}: ${gone} rows out, ${kept} in`
+    },
+  },
 ]
 
 /**

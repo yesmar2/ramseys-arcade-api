@@ -415,7 +415,9 @@ export const SCORE_STREAK_THRESHOLDS: Record<GameSlug, number> = {
   patriot: 5000,
   snake: 600,
   crosswalk: 75,
-  stacker: 25,
+  // Ramsey, 2026-10-19: "for scores over in a row on high rise, it should be like 80". The book was counted again
+  // at this line (repairs.ts).
+  stacker: 80,
   centroid: 0,
   pop: 1500,
   simon: 10,

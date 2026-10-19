@@ -21,6 +21,34 @@ A crowd on a throwaway database, to see where the API gives out before real play
 
 Stop with `pg_ctl -D <scratch>/pgdata stop -m fast` and delete the folder.
 
+## The site's crowd (October 2026)
+
+`load.mjs` is September's crowd: boards, record books and events. `site.mjs` follows the site as it is now. It makes the requests the header, the home page, the Dailies, the game pages and their Past and Records tabs make. Its players play runs the way the games do: `/runs/start`, then the run's own length, then records, the save, the end card's reads, course bests and a race's ghost. Each person comes from an address of their own (`X-Forwarded-For`), so the per-address limits apply as they do for people.
+
+- **The world:** seed it with the real seed, which plays every daily up to today. A copy of an older world has empty day boards. Use the steps in [The world, seeded](#the-world-seeded) below.
+- **Matching production:** start the API with `REQUIRE_RUN_TOKEN=1`, as production runs.
+- **The command:** `node scripts/loadtest/site.mjs --visitors 300 --guests 100 --players 150 --seconds 120 [--base http://127.0.0.1:8806] [--ramp 10]`.
+  - `--visitors` are signed in and look around.
+  - `--guests` are signed out.
+  - `--players` play.
+  - Accounts are kept in `site-accounts.json`, made on the first run through `/auth/magic-link`.
+- **The report:** a failure says its status and code, so a refused save says why.
+
+### The world, seeded
+1. Create the database, then with `DATABASE_URL` and `NEON_BRANCH=loadtest` exported, run `npm run db:migrate`.
+2. Run `applySeedRevision()` and `applyDataRepairs()` once, as a first boot would. Otherwise the API's real first boot clears the seeded boards.
+3. Run `NODE_OPTIONS=--max-old-space-size=8192 npx tsx src/seedWorld.ts --players 20000`. That took 6 minutes for 20,000 accounts, 2.27M runs (131k of them today's) and 1.78M record entries.
+
+**Measured 2026-10-19 (91bc9e2) on that world, laptop, local Postgres:**
+- **40 people** (20 visitors, 5 guests, 15 players): p50 0.5 s, p99 5.6 s, with the server stalled 0.5–1 s at a time throughout.
+  - The home page asks `/leaderboards/<race>/days` for each of the four races. Each call walks every run of that game (`dailyDays`), uncached: 80–470 ms each, for any player. One home page view costs about 0.6 s of the server's time.
+  - `/tracks/<game>/records` (the Past and Records tabs) takes 200–400 ms a call.
+- **80 players only**, with no home pages: about 0.6 saves a second.
+  - Saves took 260–320 ms at p50, 1–2.8 s at p95, and up to 11 s.
+  - The profile is mostly `poolView`, `dayPointsBoard` and `dayIndex` (store.ts), redrawn after each daily's save.
+- **Fast:** every other request takes 2–25 ms alone.
+- **After a boot:** the first `/records/site` takes 2–10 s, and the boot itself stalls about 6.5 s.
+
 ## Where the time goes
 
 An "error" in `load.mjs` is a connection dropped, not a status: the server stalled long enough for idle sockets to close under the client. To find the stall, start the API with `NODE_OPTIONS="--import file:///<repo>/scripts/loadtest/profile-hook.mjs"` (next to the memory flag). It logs `[stall]` and `[lag]` lines when the event loop runs late, and records a CPU profile between `touch scripts/loadtest/profile.start` and `touch scripts/loadtest/profile.stop`. Then:

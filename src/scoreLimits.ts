@@ -8,7 +8,7 @@ import type { GameSlug } from './store.js'
  */
 export const TIME_SCORE_BASE = 1_000_000
 
-export const TIME_SCORED_GAMES: ReadonlySet<GameSlug> = new Set<GameSlug>(['findbug', 'spotter', 'hotlap', 'marblerun', 'lander', 'swoop', 'wobblerun'])
+export const TIME_SCORED_GAMES: ReadonlySet<GameSlug> = new Set<GameSlug>(['findbug', 'spotter', 'hotlap', 'marblerun', 'lander', 'swoop', 'wobblerun', 'sling'])
 
 /**
  * Tries-scored boards keep "higher is better" the same way, as the base less
@@ -138,6 +138,7 @@ const SCORE_RULES: Record<GameSlug, ScoreRule> = {
   lander: { kind: 'time' },
   swoop: { kind: 'time' },
   wobblerun: { kind: 'time' },
+  sling: { kind: 'time' },
 }
 
 /**

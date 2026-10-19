@@ -35,7 +35,7 @@ import { trackBoard, trackState } from './trackLaps.js'
  * The games whose #1 races as a ghost: Hot Lap's tracks, Marble Run's courses, Lander's caves, Swoop's hills and
  * Wobble Run's gauntlets.
  */
-export const GHOST_GAMES: ReadonlySet<GameSlug> = new Set<GameSlug>(['hotlap', 'marblerun', 'lander', 'swoop', 'wobblerun'])
+export const GHOST_GAMES: ReadonlySet<GameSlug> = new Set<GameSlug>(['hotlap', 'marblerun', 'lander', 'swoop', 'wobblerun', 'sling'])
 
 /** Where a game's track, course or cave stands today (trackLaps.ts trackState). */
 export function ghostState(game: GameSlug, n: number, now = Date.now()): 'past' | 'today' | 'ahead' | 'none' {
@@ -65,6 +65,13 @@ const SHIP_STEP = 8
 const MOST_CRASHES = 200
 /** Metres a bird can go between two samples: a tenth of a second at far more than it ever flies (about 100 m/s at best, on a streak). */
 const BIRD_STEP = 15
+/** Units Blip can go up a Sling tower between two samples: a tenth of a second at far more than a boosted fling (about 1500 a second). */
+const PEG_STEP = 220
+/** Where a Sling tower can be: across its shaft (x, 360 wide) and up it (y). */
+const TOWER_X_MIN = -20
+const TOWER_X_MAX = 380
+const TOWER_Y_MIN = -200
+const TOWER_Y_MAX = 20_000
 /** Metres Blip can go between two samples: a tenth of a second at far more than it ever moves, launch pads and flings included. */
 const BEAN_STEP = 8
 /** Farther than that is a respawn at a checkpoint, after a fall: a run with more than this many isn't one. */
@@ -84,6 +91,7 @@ export function ghostProblem(game: GameSlug, timeMs: number, splits: unknown, pa
   if (game === 'lander') return flightProblem(timeMs, splits, path)
   if (game === 'swoop') return swoopProblem(timeMs, splits, path)
   if (game === 'wobblerun') return wobblerunProblem(timeMs, splits, path)
+  if (game === 'sling') return slingProblem(timeMs, splits, path)
   const time = timeMs / 1000
   if (!Array.isArray(splits) || splits.length !== 3 || !splits.every((s) => typeof s === 'number' && Number.isFinite(s))) {
     return 'splits'
@@ -206,6 +214,42 @@ function swoopProblem(timeMs: number, splits: unknown, path: unknown): string | 
     const hold = p[k * 3 + 2]!
     if (Math.abs(p[k * 3]!) > 5_000 || Math.abs(p[k * 3 + 1]!) > 5_000 || (hold !== 0 && hold !== 1)) return 'range'
     if (k > 0 && Math.hypot(p[k * 3]! - p[k * 3 - 3]!, p[k * 3 + 1]! - p[k * 3 - 2]!) > BIRD_STEP) return 'step'
+  }
+  return null
+}
+
+/**
+ * Why a Sling climb's splits and path can't be a run of `timeMs`, or null if they can. Its splits are the moment
+ * it passed each flag peg and reached the top peg, in order; its path is ten samples a second from the go of x, y
+ * and what Blip was doing (0 hanging, 1 flying, 2 floating back after a miss), and the top's moment last. Blip
+ * never jumps: a miss floats him back down smoothly.
+ */
+function slingProblem(timeMs: number, splits: unknown, path: unknown): string | null {
+  const time = timeMs / 1000
+  if (
+    !Array.isArray(splits) ||
+    splits.length < 1 ||
+    splits.length > MOST_LINES ||
+    !splits.every((s) => typeof s === 'number' && Number.isFinite(s))
+  ) {
+    return 'splits'
+  }
+  const at = splits as number[]
+  if (!(at[0]! > 0) || at.some((s, k) => k > 0 && s < at[k - 1]!) || Math.abs(at.at(-1)! - time) > 0.05) return 'splits'
+  if (!Array.isArray(path) || path.length % 3 !== 0 || !path.every((v) => typeof v === 'number' && Number.isFinite(v))) {
+    return 'path'
+  }
+  const samples = path.length / 3
+  if (samples > MOST_SAMPLES || samples < Math.floor(time * GHOST_RATE) || samples > Math.ceil(time * GHOST_RATE) + 2) {
+    return 'length'
+  }
+  const p = path as number[]
+  for (let k = 0; k < samples; k++) {
+    const x = p[k * 3]!
+    const y = p[k * 3 + 1]!
+    const doing = p[k * 3 + 2]!
+    if (x < TOWER_X_MIN || x > TOWER_X_MAX || y < TOWER_Y_MIN || y > TOWER_Y_MAX || (doing !== 0 && doing !== 1 && doing !== 2)) return 'range'
+    if (k > 0 && Math.hypot(x - p[k * 3 - 3]!, y - p[k * 3 - 2]!) > PEG_STEP) return 'step'
   }
   return null
 }

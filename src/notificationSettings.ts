@@ -64,7 +64,7 @@ export function isLevel(value: unknown): value is NotificationLevel {
  */
 export function topicOf(kind: NotificationKind, meta?: NotificationMeta | null): NotificationTopic {
   const racing =
-    meta?.game === 'hotlap' || meta?.game === 'marblerun' || meta?.game === 'lander' || meta?.game === 'swoop' || meta?.game === 'wobblerun'
+    meta?.game === 'hotlap' || meta?.game === 'marblerun' || meta?.game === 'lander' || meta?.game === 'swoop' || meta?.game === 'wobblerun' || meta?.game === 'sling'
   return kind === 'today-beaten' && racing ? 'today-lap' : kind
 }
 

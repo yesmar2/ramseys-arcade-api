@@ -813,7 +813,7 @@ leaderboardsRouter.post('/:game', async (req, res) => {
         score,
         priorBest,
         pickups: game === 'crosswalk' ? plausiblePickups(score, pickups) : 0,
-        paceMs: game === 'hotlap' || game === 'marblerun' || game === 'lander' || game === 'swoop' || game === 'wobblerun' ? pace : null,
+        paceMs: game === 'hotlap' || game === 'marblerun' || game === 'lander' || game === 'swoop' || game === 'wobblerun' || game === 'sling' ? pace : null,
       }).catch((err: unknown) => {
         console.warn(`[tickets] ${game} run ${payRef}:`, err)
         return null
@@ -832,7 +832,7 @@ leaderboardsRouter.post('/:game', async (req, res) => {
   })
 
   // A daily of the Today set (today.ts) may keep the day, or make it a Full ticket, and reach a streak reward.
-  if (game === 'hotlap' || game === 'findbug' || game === 'halffull' || game === 'centroid' || game === 'marblerun' || game === 'lander' || game === 'swoop' || game === 'wobblerun') {
+  if (game === 'hotlap' || game === 'findbug' || game === 'halffull' || game === 'centroid' || game === 'marblerun' || game === 'lander' || game === 'swoop' || game === 'wobblerun' || game === 'sling') {
     await settleToday(account.id, result.entry.at).catch((err: unknown) => {
       console.warn(`[today] ${game} run for ${claim.name}:`, err)
     })

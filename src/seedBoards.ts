@@ -77,6 +77,8 @@ export const GAME_BANDS: Record<GameSlug, ScoreProfile> = {
   swoop: { min: 890_000, max: 940_000, step: 100 },
   // A run of the day's gauntlet: 120 seconds to 55, a first run to beating the blue blip by about 36%.
   wobblerun: { min: 880_000, max: 945_000, step: 100 },
+  // A climb of the day's tower: 70 seconds to 32, a first climb to beating the blue blip by about 35%.
+  sling: { min: 930_000, max: 968_000, step: 100 },
 }
 
 function lerp(a: number, b: number, t: number) {
@@ -186,6 +188,7 @@ export function buildSeed(seed = 20260904) {
     lander: [],
     swoop: [],
     wobblerun: [],
+    sling: [],
   }
 
   NAMES.forEach((name, i) => {

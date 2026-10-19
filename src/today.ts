@@ -32,7 +32,7 @@ import { awardTickets } from './tickets.js'
  * milestones (its lib/today.ts).
  */
 
-export type TodayKey = 'hole' | 'track' | 'wanted' | 'pour' | 'course' | 'cave' | 'hills' | 'gauntlet' | 'plates'
+export type TodayKey = 'hole' | 'track' | 'wanted' | 'pour' | 'course' | 'cave' | 'hills' | 'gauntlet' | 'tower' | 'plates'
 
 /** How many of a day's dailies kept it, before RACES_ONLY_FROM. A day with this many or fewer on the card needs every one. */
 export const TODAY_KEEP = 3
@@ -81,6 +81,14 @@ export const SWOOP_TODAY_FROM: string | null = '2026-10-06'
 export const WOBBLERUN_TODAY_FROM: string | null = '2026-10-09'
 
 /**
+ * The first day Sling's Today's Tower is on the card: the day the game came to staging (the site's
+ * games/sling/daily.ts TODAY_FROM says the same). On the live API it's on deck (store.ts LIVE_ON_DECK_GAMES), so
+ * off the card there; move this to the release day when it's released, or todayRule puts it back on every day
+ * since.
+ */
+export const SLING_TODAY_FROM: string | null = '2026-10-19'
+
+/**
  * The Today set's dailies, in the card's order, the first board day (YYYYMMDD) each is on the card (0 for
  * from the start, null for not yet) and, for one that came off it, the last. The order is the site's (its
  * lib/today.ts): the races, then the three puzzles, just for fun (Ramsey, 2026-10-04). The hole, the track and
@@ -93,6 +101,7 @@ export const TODAY_DAILIES: readonly { key: TodayKey; game: GameSlug; from: numb
   { key: 'track', game: 'hotlap', from: 0 },
   { key: 'course', game: 'marblerun', from: MARBLERUN_TODAY_FROM ? keyOf(MARBLERUN_TODAY_FROM) : null },
   { key: 'gauntlet', game: 'wobblerun', from: WOBBLERUN_TODAY_FROM ? keyOf(WOBBLERUN_TODAY_FROM) : null },
+  { key: 'tower', game: 'sling', from: SLING_TODAY_FROM ? keyOf(SLING_TODAY_FROM) : null },
   { key: 'hole', game: 'acechase', from: 0, until: PUZZLES_UNTIL },
   { key: 'wanted', game: 'findbug', from: 0, until: PUZZLES_UNTIL },
   { key: 'pour', game: 'halffull', from: HALFFULL_TODAY_FROM ? keyOf(HALFFULL_TODAY_FROM) : null, until: PUZZLES_UNTIL },
@@ -306,6 +315,7 @@ export type TodayState = {
     cave: { score: number } | null
     hills: { score: number } | null
     gauntlet: { score: number } | null
+    tower: { score: number } | null
   }
   /** Today's card (todayRule): its dailies in order, how many of them keep the day, and how many there are. */
   live: TodayKey[]
@@ -334,14 +344,14 @@ async function playedDays(accountId: string, now: number): Promise<Record<TodayK
   const fromMs = now - LOOKBACK_DAYS * 86_400_000
   const fromDay = dayOf(boardDateKey(fromMs))
   const tags = (await namesOwnedByAccount(accountId)).map((t) => t.name)
-  const runs = (game: 'hotlap' | 'findbug' | 'halffull' | 'centroid' | 'marblerun' | 'lander' | 'swoop' | 'wobblerun') =>
+  const runs = (game: 'hotlap' | 'findbug' | 'halffull' | 'centroid' | 'marblerun' | 'lander' | 'swoop' | 'wobblerun' | 'sling') =>
     tags.length
       ? db()
           .select({ score: leaderboardScores.score, at: leaderboardScores.at })
           .from(leaderboardScores)
           .where(and(eq(leaderboardScores.game, game), inArray(leaderboardScores.name, tags), gte(leaderboardScores.at, fromMs)))
       : Promise.resolve([] as { score: number; at: number }[])
-  const [holes, laps, finds, pours, courses, caves, flights, gauntlets, plateDays] = await Promise.all([
+  const [holes, laps, finds, pours, courses, caves, flights, gauntlets, plateDays, climbs] = await Promise.all([
     db()
       .select({ day: dailyHoleResults.day, tries: dailyHoleResults.tries })
       .from(dailyHoleResults)
@@ -354,6 +364,7 @@ async function playedDays(accountId: string, now: number): Promise<Record<TodayK
     runs('swoop'),
     runs('wobblerun'),
     runs('centroid'),
+    runs('sling'),
   ])
   const played: Record<TodayKey, Map<number, number>> = {
     hole: new Map(),
@@ -364,6 +375,7 @@ async function playedDays(accountId: string, now: number): Promise<Record<TodayK
     cave: new Map(),
     hills: new Map(),
     gauntlet: new Map(),
+    tower: new Map(),
     plates: new Map(),
   }
   for (const h of holes) played.hole.set(keyOf(h.day), h.tries)
@@ -415,6 +427,12 @@ async function playedDays(accountId: string, now: number): Promise<Record<TodayK
     if (key < (DAILY_SINCE.wobblerun ?? 0)) continue
     played.gauntlet.set(key, Math.max(played.gauntlet.get(key) ?? 0, run.score))
   }
+  // A climb of the day's tower, the same way, from tower #1.
+  for (const run of climbs) {
+    const key = boardDateKey(run.at)
+    if (key < (DAILY_SINCE.sling ?? 0)) continue
+    played.tower.set(key, Math.max(played.tower.get(key) ?? 0, run.score))
+  }
   return played
 }
 
@@ -435,6 +453,7 @@ export async function todayState(accountId: string, now = Date.now()): Promise<T
   const cave = played.cave.get(today)
   const hills = played.hills.get(today)
   const gauntlet = played.gauntlet.get(today)
+  const tower = played.tower.get(today)
   const plates = played.plates.get(today)
   return {
     day: dayOf(today),
@@ -447,6 +466,7 @@ export async function todayState(accountId: string, now = Date.now()): Promise<T
       cave: played.cave.has(today),
       hills: played.hills.has(today),
       gauntlet: played.gauntlet.has(today),
+      tower: played.tower.has(today),
       plates: played.plates.has(today),
     },
     results: {
@@ -458,6 +478,7 @@ export async function todayState(accountId: string, now = Date.now()): Promise<T
       cave: cave != null ? { score: cave } : null,
       hills: hills != null ? { score: hills } : null,
       gauntlet: gauntlet != null ? { score: gauntlet } : null,
+      tower: tower != null ? { score: tower } : null,
       plates: plates != null ? { score: plates } : null,
     },
     live,

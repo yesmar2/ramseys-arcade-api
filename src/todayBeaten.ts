@@ -21,7 +21,7 @@ import { scoreFigure } from './words.js'
  * moment.
  */
 
-export type TodayGame = 'acechase' | 'hotlap' | 'findbug' | 'halffull' | 'centroid' | 'marblerun' | 'lander' | 'swoop' | 'wobblerun'
+export type TodayGame = 'acechase' | 'hotlap' | 'findbug' | 'halffull' | 'centroid' | 'marblerun' | 'lander' | 'swoop' | 'wobblerun' | 'sling'
 
 const WHAT: Record<TodayGame, { daily: string; mine: string }> = {
   acechase: { daily: 'Today’s Hole', mine: 'you on' },
@@ -33,6 +33,7 @@ const WHAT: Record<TodayGame, { daily: string; mine: string }> = {
   lander: { daily: 'Today’s Cave', mine: 'your run in' },
   swoop: { daily: 'Today’s Hills', mine: 'your run over' },
   wobblerun: { daily: 'Today’s Gauntlet', mine: 'your run on' },
+  sling: { daily: 'Today’s Tower', mine: 'your run up' },
 }
 
 const tries = (n: number) => `${n} ${n === 1 ? 'try' : 'tries'}`
@@ -102,7 +103,7 @@ export async function tellBeatenFriends(opts: { accountId: string; game: TodayGa
     if (theirResult == null || !beats(opts.game, yours, theirResult)) continue
     // A lap or a run can be had again the same day; the rest count once.
     const again =
-      opts.game === 'hotlap' || opts.game === 'marblerun' || opts.game === 'lander' || opts.game === 'swoop' || opts.game === 'wobblerun'
+      opts.game === 'hotlap' || opts.game === 'marblerun' || opts.game === 'lander' || opts.game === 'swoop' || opts.game === 'wobblerun' || opts.game === 'sling'
         ? ' There’s still time to take it back today.'
         : ''
     const filed = await notify({

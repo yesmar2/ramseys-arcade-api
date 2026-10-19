@@ -1,6 +1,7 @@
 import { HOTLAP_FIRST_DAY, HOTLAP_PACE_MS } from './hotlapPace.js'
 import { LANDER_FIRST_DAY, LANDER_PACE_MS } from './landerPace.js'
 import { MARBLERUN_FIRST_DAY, MARBLERUN_PACE_MS } from './marblerunPace.js'
+import { SLING_FIRST_DAY, SLING_PACE_MS } from './slingPace.js'
 import { SWOOP_FIRST_DAY, SWOOP_PACE_MS } from './swoopPace.js'
 import { WOBBLERUN_FIRST_DAY, WOBBLERUN_PACE_MS } from './wobblerunPace.js'
 import { TIME_SCORE_BASE, TIME_SCORED_GAMES, TRIES_SCORE_BASE } from './scoreLimits.js'
@@ -188,7 +189,7 @@ const TYPICAL_PACE_MS = 53_000
  * in both: his best Hot Lap laps had landed 13 to 25% under the blue car (17% the middle day, 12.8% that day, short of
  * gold at 14%), and no one's Marble Run had reached platinum's 36% (the best 34.5%; his 30.8% that day was gold).
  */
-export const RACE_MEDAL_STEP = { hotlap: 0.05, marblerun: 0.1, lander: 0.1, swoop: 0.13, wobblerun: 0.12 } as const
+export const RACE_MEDAL_STEP = { hotlap: 0.05, marblerun: 0.1, lander: 0.1, swoop: 0.13, wobblerun: 0.12, sling: 0.1 } as const
 
 /**
  * How many steps faster than the blue each medal is, bronze to platinum. Platinum stays three; the others sit
@@ -333,6 +334,28 @@ export function wobblerunLadder(paceMs: number | null | undefined): Ladder {
   return { ...base, steps: raceSteps(pace, RACE_MEDAL_STEP.wobblerun, 'blue blip', run) }
 }
 
+/** The day's blue blip from Sling's plan. */
+export function slingPlannedPace(now = Date.now()): number | null {
+  return paceOnDay(SLING_FIRST_DAY, SLING_PACE_MS, now)
+}
+
+/** Where a blue blip can climb: the plan's towers pace 48–63 s, with room either side. */
+const PEG_MIN_MS = 30_000
+const PEG_MAX_MS = 120_000
+
+/**
+ * Sling, on a day whose blue blip reaches the top in `paceMs`: under 12% faster than it 3, by 12% 5, by 18% 8,
+ * by 24% 11, by 30% 15, as the other racing dailies pay against their blues. Without a blue blip, a run pays the
+ * 3 alone.
+ */
+export function slingLadder(paceMs: number | null | undefined): Ladder {
+  const base = { base: 3, baseLabel: 'a run today' }
+  if (!paceMs) return { ...base, steps: [] }
+  const pace = Math.min(PEG_MAX_MS, Math.max(PEG_MIN_MS, Math.round(paceMs)))
+  const run = (ms: number) => TIME_SCORE_BASE - Math.round(ms)
+  return { ...base, steps: raceSteps(pace, RACE_MEDAL_STEP.sling, 'blue blip', run) }
+}
+
 /** A game's ladder today. Hot Lap's goes by the plan's blue car for the day, or else the one the site says. */
 export async function ladderFor(game: GameSlug, now = Date.now(), paceMs?: number | null): Promise<Ladder> {
   if (game === 'acechase') return ACECHASE_LADDER
@@ -344,6 +367,7 @@ export async function ladderFor(game: GameSlug, now = Date.now(), paceMs?: numbe
   if (game === 'lander') return landerLadder(landerPlannedPace(now) ?? paceMs)
   if (game === 'swoop') return swoopLadder(swoopPlannedPace(now) ?? paceMs)
   if (game === 'wobblerun') return wobblerunLadder(wobblerunPlannedPace(now) ?? paceMs)
+  if (game === 'sling') return slingLadder(slingPlannedPace(now) ?? paceMs)
   return drawnLadder(game, now)
 }
 

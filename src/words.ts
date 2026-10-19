@@ -33,6 +33,7 @@ export const GAME_LABELS: Record<GameSlug, string> = {
   lander: 'Lander',
   swoop: 'Swoop',
   wobblerun: 'Wobble Run',
+  sling: 'Sling',
 }
 
 export function gameLabel(game: string): string {
@@ -74,7 +75,7 @@ export function isTime(game: GameSlug) {
  * show them; the other clocks to tenths.
  */
 function places(game: GameSlug) {
-  return game === 'hotlap' || game === 'marblerun' || game === 'lander' || game === 'swoop' || game === 'wobblerun' ? 3 : 1
+  return game === 'hotlap' || game === 'marblerun' || game === 'lander' || game === 'swoop' || game === 'wobblerun' || game === 'sling' ? 3 : 1
 }
 
 /** A time the way the site prints one: 47.5s, or 1:02.3 past a minute; to the thousandth, 53.362s. */

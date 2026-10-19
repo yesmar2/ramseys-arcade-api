@@ -438,6 +438,7 @@ export const SCORE_STREAK_THRESHOLDS: Record<GameSlug, number> = {
   lander: 0,
   swoop: 0,
   wobblerun: 0,
+  sling: 0,
 }
 
 function thresholdStreakLabel(game: GameSlug, threshold: number): string {

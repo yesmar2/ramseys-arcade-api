@@ -5,6 +5,7 @@ import { trackLaps } from './db/schema.js'
 import { HOTLAP_FIRST_DAY, HOTLAP_PACE_MS } from './hotlapPace.js'
 import { LANDER_FIRST_DAY, LANDER_PACE_MS } from './landerPace.js'
 import { MARBLERUN_FIRST_DAY, MARBLERUN_PACE_MS } from './marblerunPace.js'
+import { SLING_FIRST_DAY, SLING_PACE_MS } from './slingPace.js'
 import { SWOOP_FIRST_DAY, SWOOP_PACE_MS } from './swoopPace.js'
 import { WOBBLERUN_FIRST_DAY, WOBBLERUN_PACE_MS } from './wobblerunPace.js'
 import { boardDateKey, dayPlayers, isDeviceType, type DeviceType, type GameSlug } from './store.js'
@@ -58,6 +59,10 @@ const PLANS: Partial<Record<GameSlug, CoursePlan>> = {
   // plan's quickest day (#17). The floor is under that, with room for a line the search missed.
   swoop: { firstDay: SWOOP_FIRST_DAY, pace: SWOOP_PACE_MS, repeats: false, floor: 0.3 },
   wobblerun: { firstDay: WOBBLERUN_FIRST_DAY, pace: WOBBLERUN_PACE_MS, repeats: false, floor: WOBBLERUN_FLOOR },
+  // The blue blip lines up each fling for a second and never skips a peg. Hands that aim in an eighth of a
+  // second and take every skip that's safe climbed the plan's towers in 45 to 56% of its time (the site's sling
+  // sim.ts makeHands, 2026-10-19); the floor is well under that, with room for bolder skips.
+  sling: { firstDay: SLING_FIRST_DAY, pace: SLING_PACE_MS, repeats: false, floor: 0.3 },
 }
 
 /**

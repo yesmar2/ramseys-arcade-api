@@ -31,6 +31,7 @@ export const ALLOWED_GAMES = [
   'pileup',
   'swoop',
   'wobblerun',
+  'sling',
 ] as const
 export type GameSlug = (typeof ALLOWED_GAMES)[number]
 
@@ -122,6 +123,7 @@ function emptyStore(): Store {
     lander: [],
     swoop: [],
     wobblerun: [],
+    sling: [],
   }
 }
 
@@ -182,6 +184,7 @@ export async function replaceAllBoards(next: Store) {
     lander: Array.isArray(next.lander) ? next.lander : [],
     swoop: Array.isArray(next.swoop) ? next.swoop : [],
     wobblerun: Array.isArray(next.wobblerun) ? next.wobblerun : [],
+    sling: Array.isArray(next.sling) ? next.sling : [],
   }
   await db().transaction(async (tx) => {
     await tx.delete(leaderboardScores)
@@ -477,7 +480,7 @@ export type ClosedPeriod = 'weekly' | 'monthly'
  * site marks these games `daily` in its data/games.ts, and prints a daily's board for longer than a day in
  * points. Find the Bug's and Half Full's boards take only a day's first run (firstRun.ts).
  */
-export const DAILY_GAMES: ReadonlySet<GameSlug> = new Set<GameSlug>(['hotlap', 'acechase', 'findbug', 'halffull', 'centroid', 'marblerun', 'lander', 'swoop', 'wobblerun'])
+export const DAILY_GAMES: ReadonlySet<GameSlug> = new Set<GameSlug>(['hotlap', 'acechase', 'findbug', 'halffull', 'centroid', 'marblerun', 'lander', 'swoop', 'wobblerun', 'sling'])
 
 /**
  * The first day (YYYYMMDD) each daily's board was a day's: Ace Chase's held rounds of three holes before
@@ -499,6 +502,8 @@ export const DAILY_SINCE: Partial<Record<GameSlug, number>> = {
   swoop: 20261006,
   // Wobble Run's gauntlet #1 (wobblerunPace.ts WOBBLERUN_FIRST_DAY).
   wobblerun: 20261009,
+  // Sling's tower #1 (slingPace.ts SLING_FIRST_DAY).
+  sling: 20261019,
 }
 
 /**
@@ -524,10 +529,12 @@ export const RETIRED_GAMES: ReadonlySet<GameSlug> = new Set<GameSlug>(['simon', 
 
 /**
  * Games held back on the live site only, while staging keeps them to try (the web's lib/liveSite.ts): on deck
- * on the live API, and off its Dailies (today.ts todayRule). None now: Wobble Run was, from 2026-10-09, until it
- * went on deck everywhere (below).
+ * on the live API, and off its Dailies (today.ts todayRule). Wobble Run was, from 2026-10-09, until it went on
+ * deck everywhere (below). Sling is from 2026-10-19, the day it came to staging ("i think i like sling the best so
+ * far so let's implement that"), until Ramsey releases it: then take it off here and move its Dailies `from`
+ * (today.ts SLING_TODAY_FROM) to the release day.
  */
-const LIVE_ON_DECK_GAMES: readonly GameSlug[] = []
+const LIVE_ON_DECK_GAMES: readonly GameSlug[] = ['sling']
 
 /**
  * Games the site is holding back to release after launch, one at a time (the web's onDeck flag): listed

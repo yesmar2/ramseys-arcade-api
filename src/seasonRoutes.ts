@@ -10,7 +10,9 @@ import {
   plusOf,
   rewardView,
   seasonGoals,
+  nextSeasonView,
   seasonInfo,
+  seasonWrap,
   seasonNow,
   seasonStandingsView,
   syncSeason,
@@ -62,6 +64,8 @@ seasonRouter.get('/', async (req, res) => {
       plus = await hasPlus(account.id, season.def.id)
     }
     if (plus && account) via = await plusOf(account.id, season.def.id)
+    // The season before, for the changeover card, in the new one's first month; never holds the answer up on failure.
+    const wrap = account && season.status === 'live' ? await seasonWrap(account.id, season, now).catch(() => null) : null
     let standings: SeasonStandingsView | undefined
     if (page && season.status !== 'upcoming') standings = await seasonStandingsView(season, account?.id ?? null, now)
     res.json({
@@ -82,6 +86,9 @@ seasonRouter.get('/', async (req, res) => {
           }
         : null,
       you,
+      // The season after this one, to show ahead of it (seasons.ts nextSeasonView).
+      next: nextSeasonView(season, now),
+      ...(wrap ? { wrap } : {}),
       ...(goals ? { goals } : {}),
       ...(standings ? { standings } : {}),
     })

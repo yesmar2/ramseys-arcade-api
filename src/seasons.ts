@@ -4,8 +4,8 @@ import { accounts, appMeta, memberships, prizesOwned, seasonPlus, seasonProgress
 import { getClaim, namesOwnedByAccount, resolveAvatarId } from './names.js'
 import { notify } from './notifications.js'
 import { prizeById } from './prizes.js'
-import { boardDateKey, dayStartMs, globalRanks, globalRanksForWindow, setSeasonSpan } from './store.js'
-import { awardTickets } from './tickets.js'
+import { boardDateKey, dayStartMs, globalRanks, globalRanksForWindow, setSeasonSpan, type GlobalRankEntry } from './store.js'
+import { awardTickets, ownedPrizes } from './tickets.js'
 import { keptDaysFor } from './today.js'
 import { ordinal } from './words.js'
 
@@ -752,6 +752,115 @@ export async function seasonAfterRun(accountId: string, now = Date.now()): Promi
     nextAt,
     next: next ? rewardView(next) : null,
     levelUp: sync.reached.map(rewardView),
+  }
+}
+
+/* ---------- the season after, and the one before ---------- */
+
+/*
+ * Seasons run back to back, so the site says what comes next (Ramsey picked my recommendations, 2026-10-19:
+ * a "Coming next" card on the Season page, the next season's name on the home banner in the last week, and a
+ * changeover card the first time a player comes back once a season has ended).
+ */
+
+/** The season that starts after this one ends, if one is planned. */
+export function seasonAfter(def: SeasonDef): SeasonDef | null {
+  return [...SEASONS].filter((s) => s.firstDay > def.lastDay).sort((a, b) => a.firstDay - b.firstDay)[0] ?? null
+}
+
+/** The season that ended before this one started, if any. */
+export function seasonBefore(def: SeasonDef): SeasonDef | null {
+  return [...SEASONS].filter((s) => s.lastDay < def.firstDay).sort((a, b) => b.lastDay - a.lastDay)[0] ?? null
+}
+
+/** The next season, for the site to show ahead of it: its name and days, and its skins, free row and Pass+. */
+export type SeasonNextView = {
+  id: number
+  slug: string
+  name: string
+  firstDay: string
+  lastDay: string
+  startsAt: number
+  /** Days until its first day starts. */
+  daysUntil: number
+  skins: SeasonRewardView[]
+  plusSkins: SeasonRewardView[]
+}
+
+export function nextSeasonView(season: SeasonNow, now = Date.now()): SeasonNextView | null {
+  if (season.status === 'over') return null
+  const def = seasonAfter(season.def)
+  if (!def) return null
+  const startsAt = dayStartMs(def.firstDay)
+  const skin = (r: SeasonReward) => r.kind === 'skin'
+  return {
+    id: def.id,
+    slug: def.slug,
+    name: def.name,
+    firstDay: dayLabel(def.firstDay),
+    lastDay: dayLabel(def.lastDay),
+    startsAt,
+    daysUntil: Math.max(0, Math.ceil((startsAt - now) / DAY_MS)),
+    skins: def.rewards.filter(skin).map(rewardView),
+    plusSkins: (def.plus?.rewards ?? []).filter(skin).map(rewardView),
+  }
+}
+
+/** How a player's last season went, for the changeover card: shown for this long into the new one. */
+const WRAP_FOR_MS = 30 * DAY_MS
+
+/** A player's last season: the level they reached, their place in its standings of how many, and the looks they keep. */
+export type SeasonWrap = {
+  id: number
+  slug: string
+  name: string
+  level: number
+  place: number | null
+  field: number
+  kept: number
+}
+
+/** The ended season's standings, read once: they don't change after (while a preview runs it, every ten minutes). */
+const wrapRanks = new Map<number, { at: number; rows: Promise<GlobalRankEntry[]> }>()
+
+function wrapStandings(id: number, startsAt: number, endsAt: number, now: number): Promise<GlobalRankEntry[]> {
+  const kept = wrapRanks.get(id)
+  if (kept && (now >= endsAt || now - kept.at < 10 * 60_000)) return kept.rows
+  const rows = globalRanksForWindow(startsAt, Math.min(endsAt, now + 1))
+  rows.catch(() => wrapRanks.delete(id))
+  wrapRanks.set(id, { at: now, rows })
+  return rows
+}
+
+/**
+ * The season before the live one, for a player who played it, in the live one's first month; else null. Counted
+ * over its real days. Under a preview of the next season, it's the one still running, so far.
+ */
+export async function seasonWrap(accountId: string, season: SeasonNow, now = Date.now()): Promise<SeasonWrap | null> {
+  if (season.status !== 'live' || now >= season.startsAt + WRAP_FOR_MS) return null
+  const def = seasonBefore(season.def)
+  if (!def) return null
+  const startsAt = dayStartMs(def.firstDay)
+  const endsAt = dayStartMs(nextDayKey(def.lastDay))
+  const earned = await seasonEarned(accountId, startsAt, endsAt)
+  if (earned <= 0) return null
+  const [rows, tags, owned] = await Promise.all([wrapStandings(def.id, startsAt, endsAt, now), namesOwnedByAccount(accountId), ownedPrizes(accountId)])
+  const names = new Set(tags.map((t) => t.name))
+  const mine = rows.find((row) => names.has(row.name))
+  const looks = new Set(
+    [...def.rewards, ...(def.plus?.rewards ?? [])]
+      .filter((r) => r.kind === 'prize' || r.kind === 'skin')
+      .map((r) => r.id)
+      .concat(def.goals.flatMap((g) => (g.reward.kind === 'prize' ? [g.reward.id] : []))),
+  )
+  return {
+    id: def.id,
+    slug: def.slug,
+    name: def.name,
+    level: levelFor(def, earned),
+    place: mine?.rank ?? null,
+    field: rows.length,
+    kept: [...looks].filter((id) => owned.has(id)).length,
   }
 }
 

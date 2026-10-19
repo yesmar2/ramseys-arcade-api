@@ -15,6 +15,7 @@ import {
   signInWithGoogleIdToken,
   verifyMagicLink,
 } from './auth.js'
+import { accountTags, confirmsDelete, deleteAccount } from './deleteAccount.js'
 import { dbTarget } from './env.js'
 import { linkNameToAccount, namesOwnedByAccount } from './names.js'
 import { planLimits } from './plans.js'
@@ -295,6 +296,38 @@ authRouter.get('/me', async (req, res) => {
 authRouter.post('/logout', async (req, res) => {
   await logoutSession(bearerFromRequest(req))
   res.json({ ok: true })
+})
+
+const deleteSchema = z.object({ confirm: z.string().max(40) })
+
+/**
+ * Delete my account, for good (deleteAccount.ts). The player types their tag to confirm, or DELETE when the
+ * account has none; anything else is refused before anything is touched.
+ */
+authRouter.post('/delete-account', async (req, res) => {
+  const account = await accountFromRequest(req)
+  if (!account) {
+    res.status(401).json({ error: 'Not signed in', code: 'AUTH_REQUIRED' })
+    return
+  }
+  const parsed = deleteSchema.safeParse(req.body)
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Invalid body', code: 'CONFIRM' })
+    return
+  }
+  try {
+    const tags = await accountTags(account.id)
+    if (!confirmsDelete(parsed.data.confirm, tags)) {
+      res.status(400).json({ error: tags.length ? `Type ${tags[0]} to confirm.` : 'Type DELETE to confirm.', code: 'CONFIRM' })
+      return
+    }
+    const done = await deleteAccount(account.id)
+    res.json({ deleted: true, groupsPassed: done.groupsPassed, groupsGone: done.groupsGone })
+  } catch (err) {
+    const status = (err as { status?: number }).status ?? 500
+    const code = (err as { code?: string }).code ?? 'ERROR'
+    res.status(status).json({ error: err instanceof Error ? err.message : 'Failed', code })
+  }
 })
 
 authRouter.post('/link-name', async (req, res) => {

@@ -134,6 +134,15 @@ export async function announceRewrite(
   }
 }
 
+/**
+ * Tables rewritten by this server outside the modules that own them (a deleted account, deleteAccount.ts): read
+ * them again here, as the other servers do when told, then tell those.
+ */
+export async function rewrittenHere(tables: ('scores' | 'records' | 'events' | 'claims' | 'groups' | 'site-records')[]): Promise<void> {
+  for (const table of tables) rewriteHandlers.get(table)?.()
+  await announceRewrite(tables)
+}
+
 /** A change other servers must hear of whose own write is already done: logged, never thrown. */
 export async function announce(kind: string, payload: unknown = {}): Promise<void> {
   try {

@@ -21,8 +21,8 @@ import { isFinishBadge } from './prizes.js'
  * lib/dataReset.ts).
  */
 
-/** The end of launch day in New York (Nov 15, 00:00 EST): after this, the reset refuses. */
-export const RESET_UNTIL = Date.UTC(2026, 10, 15, 5, 0, 0)
+/** The end of launch day, Oct 31, in New York (Nov 1, 00:00 EDT): after this, the reset refuses. */
+export const RESET_UNTIL = Date.UTC(2026, 10, 1, 4, 0, 0)
 
 /** Every table that holds play. Emptied in one statement, so the links among them don't need an order. */
 const PLAY_TABLES = [

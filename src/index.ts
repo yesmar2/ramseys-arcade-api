@@ -108,6 +108,20 @@ async function main() {
    */
   app.set('trust proxy', 1)
 
+  /*
+   * Every answer is JSON or a redirect: nothing in one loads anything, gets framed, or needs saying what serves it.
+   * The site's own security headers are in its vercel.json.
+   */
+  app.disable('x-powered-by')
+  app.use((_req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff')
+    res.setHeader('X-Frame-Options', 'DENY')
+    res.setHeader('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'")
+    res.setHeader('Referrer-Policy', 'no-referrer')
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000')
+    next()
+  })
+
   app.use(
     cors({
       origin: CORS_ORIGIN

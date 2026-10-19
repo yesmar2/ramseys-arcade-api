@@ -36,6 +36,7 @@ const between = (lo, hi) => lo + Math.random() * (hi - lo)
 
 const samples = new Map() // label -> [ms]
 const failures = new Map() // "label status code" -> count
+const queries = new Map() // label -> database queries, summed (the API says each request's in X-Db-Queries)
 let inFlight = 0
 let peakInFlight = 0
 let measuring = false
@@ -62,6 +63,7 @@ async function call(who, label, path, init = {}) {
       return null
     }
     if (measuring) {
+      queries.set(label, (queries.get(label) ?? 0) + Number(res.headers.get('x-db-queries') ?? 0))
       if (!samples.has(label)) samples.set(label, [])
       samples.get(label).push(ms)
     }
@@ -479,7 +481,7 @@ let total = 0
 const rows = [...samples.entries()].sort().map(([label, list]) => {
   const s = list.slice().sort((a, b) => a - b)
   total += s.length
-  return { request: label, ok: s.length, 'per s': (s.length / wall).toFixed(1), p50: Math.round(pct(s, 50)), p95: Math.round(pct(s, 95)), p99: Math.round(pct(s, 99)), max: Math.round(s[s.length - 1]) }
+  return { request: label, ok: s.length, 'per s': (s.length / wall).toFixed(1), q: +((queries.get(label) ?? 0) / s.length).toFixed(1), p50: Math.round(pct(s, 50)), p95: Math.round(pct(s, 95)), p99: Math.round(pct(s, 99)), max: Math.round(s[s.length - 1]) }
 })
 const all = [...samples.values()].flat().sort((a, b) => a - b)
 console.table(rows)

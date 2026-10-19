@@ -1,4 +1,4 @@
-import { addRecord, courseRecordId, seedRecordEntry } from './records.js'
+import { addRecord, courseRecordId, seedRecordEntries } from './records.js'
 import { TIME_SCORE_BASE } from './scoreLimits.js'
 import { boardDateKey, type DeviceType, type GameSlug } from './store.js'
 import { dayNumberOf, trackBoard, trackCount, trackOfDay } from './trackLaps.js'
@@ -42,9 +42,10 @@ export async function syncCourseRecords(now = Date.now()): Promise<number> {
   for (let n = 1; n <= days; n++) {
     const id = courseRecordId('hotlap', n)
     if (!id) continue
-    for (const e of await trackBoard('hotlap', n, now)) {
-      if (await seedRecordEntry('hotlap', id, { name: e.name, score: TIME_SCORE_BASE - e.score, at: e.at, device: e.device })) added++
-    }
+    const board = await trackBoard('hotlap', n, now)
+    added += await seedRecordEntries('hotlap', id, board.map((e) => ({ name: e.name, score: TIME_SCORE_BASE - e.score, at: e.at, device: e.device })))
+    // A track at a time, with the requests that came in meanwhile answered between them.
+    await new Promise((resolve) => setImmediate(resolve))
   }
   return added
 }

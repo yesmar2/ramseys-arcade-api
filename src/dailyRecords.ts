@@ -28,8 +28,11 @@ import { dayNumberOf, trackOfDay, trackRecords } from './trackLaps.js'
 
 /** Which of a daily's runs are a day's result: not a round of Ace Chase's old three holes, from before it counted tries. */
 export function dayResultKeep(game: GameSlug): ((score: number) => boolean) | undefined {
-  return TRIES_SCORED_GAMES.has(game) ? (score: number) => score > TRIES_SCORE_BASE - 1000 : undefined
+  return TRIES_SCORED_GAMES.has(game) ? keepTriesResult : undefined
 }
+
+// One function, not one a call: a day's lines are kept per `keep` (store.ts dayLine).
+const keepTriesResult = (score: number) => score > TRIES_SCORE_BASE - 1000
 
 /** A player's count on one of these records, and when they got there: their latest day won or record set. */
 export type DailyTally = { name: string; count: number; reached: number; courses: number[] }

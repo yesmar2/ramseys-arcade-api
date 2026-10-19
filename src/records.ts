@@ -1372,6 +1372,36 @@ export async function seedRecordEntry(
   return true
 }
 
+/**
+ * Several entries into one book, each as seedRecordEntry puts one, with each player's best in the book looked up
+ * once rather than by a walk down the book for every entry. How many went in. At every start the course records
+ * offer every best on every Hot Lap track (courseRecords.ts): one walk an entry was two and a half minutes without
+ * a break at 20,000 players (load test, 2026-10-19).
+ */
+export async function seedRecordEntries(
+  game: GameSlug,
+  recordId: string,
+  inputs: readonly { name: string; score: number; at: number; device: DeviceType }[],
+): Promise<number> {
+  const def = getRecordDef(game, recordId)
+  if (!def) return 0
+  const best = new Map<string, number>()
+  // Best first, so a player's first row is their best.
+  for (const e of (await bookView(game, recordId, def)).sorted) if (!best.has(e.name)) best.set(e.name, e.score)
+  let added = 0
+  for (const input of inputs) {
+    const name = input.name.trim().slice(0, 12).toUpperCase()
+    const had = best.get(name)
+    // Only one the book may take goes on to seedRecordEntry, which checks it as ever.
+    if (had !== undefined && Number.isFinite(input.score) && !isBetter(Math.floor(input.score), had, def.direction)) continue
+    if (await seedRecordEntry(game, recordId, input)) {
+      added++
+      best.set(name, Math.floor(input.score))
+    }
+  }
+  return added
+}
+
 export type CrossRunStreakHit = {
   recordId: string
   label: string

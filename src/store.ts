@@ -827,6 +827,9 @@ function rememberScore(game: string, entry: LeaderboardEntry) {
     historyCache.rows++
     historyCache.scoreSum += entry.score
     if (entry.at > historyCache.lastAt) historyCache.lastAt = entry.at
+    // Into its day too, if the game's days are kept from this copy (dayBook); otherwise they're drawn afresh.
+    const book = dayBooks.get(game)
+    if (book && book.epoch === historyCache.epoch) addToDayBook(book, entry)
   }
   gameVersions.set(game, (gameVersions.get(game) ?? 0) + 1)
 }
@@ -1006,16 +1009,13 @@ async function poolView(game: GameSlug, period: Period, now = Date.now()): Promi
   const hit = poolViews.get(key)
   if (hit && hit.epoch === epoch && hit.version === version && hit.window === window) return hit
   // A daily's board for a day is the day's runs; for the week or the month, its days' points (see DAILY_GAMES),
-  // and none for all time (ALL_TIME_GAMES) or for one just for fun (UNRANKED_GAMES).
-  const runs = period === 'all' ? history : filterByPeriod(history, period, now)
-  const longer = DAILY_GAMES.has(game) && period !== 'daily'
-  const entries = longer
-    ? isRankedGame(game) && period !== 'all'
-      ? dayPointsBoard(game, runs)
-      : []
-    : period === 'all'
-      ? history.slice()
-      : runs
+  // and none for all time (ALL_TIME_GAMES) or for one just for fun (UNRANKED_GAMES). A daily's are drawn from its
+  // days (dayBook), where a save redraws only its own day, not from a walk over all its runs.
+  let entries: LeaderboardEntry[]
+  if (!DAILY_GAMES.has(game)) entries = period === 'all' ? history.slice() : filterByPeriod(history, period, now)
+  else if (period === 'daily') entries = ((await dayBook(game, copy)).days.get(keyOf(now))?.runs ?? []).slice()
+  else if (period === 'all' || !isRankedGame(game)) entries = []
+  else entries = dayPointsFromBook(game, await dayBook(game, copy), ...periodSpan(period, now))
   // Board order, so a player's first run here is their best.
   const stamp = ++viewStamp
   let bestIndex = new Int32Array(playerRefs.size)
@@ -1065,59 +1065,79 @@ export type DailyDayYou = LeaderboardEntry & { place: number | null; points: num
 export async function dailyDays(
   game: GameSlug,
   name?: string | null,
-  keep: (score: number) => boolean = () => true,
+  keep?: (score: number) => boolean,
 ): Promise<{ day: number; runs: number; players: number; top: LeaderboardEntry; you: DailyDayYou | null }[]> {
-  const copy = await loadCopy()
+  const book = await dayBook(game)
   const who = name ? name.trim().slice(0, 12).toUpperCase() : null
   const since = DAILY_SINCE[game] ?? 0
-  const days = new Map<
-    number,
-    {
-      runs: number
-      names: Set<string>
-      top: LeaderboardEntry | null
-      you: LeaderboardEntry | null
-      /** The day's players as the day points count them, and where `who` came among them. */
-      field: Set<string>
-      place: number
-    }
-  >()
-  // Board order, best first: a day's first run met is its best, and a player's first their best.
-  for (const entry of copy.byGame.get(game) ?? []) {
-    const key = keyOf(entry.at)
-    let day = days.get(key)
-    if (!day) {
-      day = { runs: 0, names: new Set(), top: null, you: null, field: new Set(), place: 0 }
-      days.set(key, day)
-    }
-    if (key >= since && !day.field.has(entry.name)) {
-      day.field.add(entry.name)
-      if (entry.name === who) day.place = day.field.size
-    }
-    if (!keep(entry.score)) continue
-    // A day before day points still has places, among its kept runs (Ace Chase's holes #1 and #2), but pays none.
-    if (key < since && !day.field.has(entry.name)) {
-      day.field.add(entry.name)
-      if (entry.name === who) day.place = day.field.size
-    }
-    day.runs++
-    day.names.add(entry.name)
-    day.top ??= entry
-    if (who && !day.you && entry.name === who) day.you = entry
-  }
   const out: { day: number; runs: number; players: number; top: LeaderboardEntry; you: DailyDayYou | null }[] = []
-  for (const [day, d] of days) {
-    if (!d.top) continue
-    const place = d.place || null
+  for (const day of book.days.values()) {
+    const line = dayLine(day, since, keep)
+    if (!line.top) continue
+    let place: number | null = null
+    let you: LeaderboardEntry | null = null
+    if (who) {
+      place = line.field.indexOf(who) + 1 || null
+      // With every run kept, the field is the kept players in the same order.
+      you = keep ? (line.kept.find((e) => e.name === who) ?? null) : place ? line.kept[place - 1]! : null
+    }
     out.push({
-      day,
-      runs: d.runs,
-      players: d.names.size,
-      top: d.top,
-      you: d.you ? { ...d.you, place, points: place && day >= since ? placePoints(place, d.field.size) : null } : null,
+      day: day.key,
+      runs: line.runs,
+      players: line.kept.length,
+      top: line.top,
+      you: you ? { ...you, place, points: place && day.key >= since ? placePoints(place, line.field.length) : null } : null,
     })
   }
   return out.sort((a, b) => b.day - a.day)
+}
+
+/** A day's line in dailyDays for one `keep`: drawn from the day's runs once a version. */
+type DayLine = {
+  version: number
+  /** The day's kept runs. */
+  runs: number
+  /** Its best kept run. */
+  top: LeaderboardEntry | null
+  /** The day's players as the day points count them, in order: every run's from DAILY_SINCE, kept runs' before it. */
+  field: string[]
+  /** Each player's first kept run, in board order. */
+  kept: LeaderboardEntry[]
+}
+
+/** Board order, best first: a day's first run met is its best, and a player's first their best. */
+function dayLine(day: BookDay, since: number, keep: ((score: number) => boolean) | undefined): DayLine {
+  const had = day.lines.get(keep)
+  if (had && had.version === day.version) return had
+  const counted = day.key >= since
+  const inField = new Set<string>()
+  const field: string[] = []
+  const hasKept = new Set<string>()
+  const kept: LeaderboardEntry[] = []
+  let runs = 0
+  let top: LeaderboardEntry | null = null
+  for (const entry of day.runs) {
+    if (counted && !inField.has(entry.name)) {
+      inField.add(entry.name)
+      field.push(entry.name)
+    }
+    if (keep && !keep(entry.score)) continue
+    // A day before day points still has places, among its kept runs (Ace Chase's holes #1 and #2), but pays none.
+    if (!counted && !inField.has(entry.name)) {
+      inField.add(entry.name)
+      field.push(entry.name)
+    }
+    runs++
+    top ??= entry
+    if (!hasKept.has(entry.name)) {
+      hasKept.add(entry.name)
+      kept.push(entry)
+    }
+  }
+  const line: DayLine = { version: day.version, runs, top, field, kept }
+  if (day.lines.size >= 4) day.lines.clear()
+  day.lines.set(keep, line)
+  return line
 }
 
 /** Every run's score on a game, best first, all time: what its ticket ladder is drawn from (ticketLadders.ts). */
@@ -1129,34 +1149,141 @@ export async function runScores(game: GameSlug): Promise<number[]> {
 type DayPlayer = { name: string; score: number; at: number; device: DeviceType; skin?: string }
 
 /*
- * Each day's players on a game, drawn from the history once and kept until the game takes a score or the
- * history is read again. A Hot Lap track's board reads a day for each time it was driven, and the list of
- * tracks reads every day there has been: each of those was a walk over every run of the game.
+ * A game's runs by day, each day's in board order, kept in step with the history: a save goes into its day in
+ * place (rememberScore) and moves only that day's version, so what's drawn from a day (its players, its points,
+ * its line in dailyDays) is drawn again only for the day that changed. Read again whole when the history is (a
+ * new epoch). Before this, each save to a daily sent its day boards, its week's and month's day points and its
+ * list of days back to a walk over every run it has had: 100 to 500 ms at 20,000 players (load test, 2026-10-19).
  */
-const dayIndexes = new Map<string, { epoch: number; version: number; byDay: Map<number, DayPlayer[]> }>()
+type BookDay = {
+  key: number
+  /** The day's runs, best first. */
+  runs: LeaderboardEntry[]
+  /** Moves each time a run comes in. */
+  version: number
+  /** Each tag's best that day, best first, as drawn for `playersVersion`. */
+  players: DayPlayer[]
+  playersVersion: number
+  /** Its lines in dailyDays, by `keep`. */
+  lines: Map<((score: number) => boolean) | undefined, DayLine>
+  /** When the day begins and the next one does, once asked. */
+  span: [number, number] | null
+}
+type DayBook = {
+  epoch: number
+  days: Map<number, BookDay>
+  /** Moves each time any day takes a run. */
+  version: number
+  /** Each day's players by day key, as dayIndex hands them out, drawn for `version`. */
+  index: { version: number; byDay: Map<number, DayPlayer[]> } | null
+}
 
-async function dayIndex(game: GameSlug): Promise<Map<number, DayPlayer[]>> {
-  const copy = await loadCopy()
-  const version = gameVersions.get(game) ?? 0
-  const hit = dayIndexes.get(game)
-  if (hit && hit.epoch === copy.epoch && hit.version === version) return hit.byDay
-  const byDay = new Map<number, DayPlayer[]>()
-  const seen = new Map<number, Set<string>>()
-  // Board order: best first, and the earlier of two the same.
+const dayBooks = new Map<string, DayBook>()
+
+const newBookDay = (key: number): BookDay => ({ key, runs: [], version: 0, players: [], playersVersion: -1, lines: new Map(), span: null })
+
+async function dayBook(game: GameSlug, copy?: HistoryCopy): Promise<DayBook> {
+  copy ??= await loadCopy()
+  const hit = dayBooks.get(game)
+  if (hit && hit.epoch === copy.epoch) return hit
+  const days = new Map<number, BookDay>()
   for (const entry of copy.byGame.get(game) ?? []) {
     const key = keyOf(entry.at)
-    let names = seen.get(key)
-    if (!names) {
-      names = new Set()
-      seen.set(key, names)
-      byDay.set(key, [])
-    }
-    if (names.has(entry.name)) continue
-    names.add(entry.name)
-    byDay.get(key)!.push({ name: entry.name, score: entry.score, at: entry.at, device: entry.device, ...(entry.skin ? { skin: entry.skin } : {}) })
+    let day = days.get(key)
+    if (!day) days.set(key, (day = newBookDay(key)))
+    day.runs.push(entry)
   }
-  dayIndexes.set(game, { epoch: copy.epoch, version, byDay })
+  const book: DayBook = { epoch: copy.epoch, days, version: 0, index: null }
+  dayBooks.set(game, book)
+  return book
+}
+
+function addToDayBook(book: DayBook, entry: LeaderboardEntry) {
+  const key = keyOf(entry.at)
+  let day = book.days.get(key)
+  if (!day) book.days.set(key, (day = newBookDay(key)))
+  insertInOrder(day.runs, entry)
+  day.version++
+  book.version++
+}
+
+/** Runs in board order, one a tag: each one's first, which is their best. */
+function bestsOf(runs: readonly LeaderboardEntry[]): DayPlayer[] {
+  const seen = new Set<string>()
+  const out: DayPlayer[] = []
+  for (const entry of runs) {
+    if (seen.has(entry.name)) continue
+    seen.add(entry.name)
+    out.push({ name: entry.name, score: entry.score, at: entry.at, device: entry.device, ...(entry.skin ? { skin: entry.skin } : {}) })
+  }
+  return out
+}
+
+function dayPlayersOf(day: BookDay): DayPlayer[] {
+  if (day.playersVersion !== day.version) {
+    day.players = bestsOf(day.runs)
+    day.playersVersion = day.version
+  }
+  return day.players
+}
+
+/**
+ * Each day's players on a game, by day key, the days in the order their best runs come on the board (as a walk
+ * over the history in board order first met them). A Hot Lap track's board reads a day for each time it was
+ * driven, and the list of tracks reads every day there has been.
+ */
+async function dayIndex(game: GameSlug): Promise<Map<number, DayPlayer[]>> {
+  const book = await dayBook(game)
+  if (book.index && book.index.version === book.version) return book.index.byDay
+  const byDay = new Map<number, DayPlayer[]>()
+  const days = [...book.days.values()].sort((a, b) => boardOrder(a.runs[0]!, b.runs[0]!))
+  for (const day of days) byDay.set(day.key, dayPlayersOf(day))
+  book.index = { version: book.version, byDay }
   return byDay
+}
+
+/**
+ * dayPointsBoard over the runs from `from` up to `to`, drawn from the game's days: a day wholly inside takes its
+ * kept players, so only a day that has changed is walked again. The same board: the days are taken in the order a
+ * walk over the window's runs in board order meets them, and a day cut by the window (a season beginning mid-day)
+ * is drawn from its runs inside it.
+ */
+function dayPointsFromBook(game: GameSlug, book: DayBook, from: number, to: number): LeaderboardEntry[] {
+  const since = DAILY_SINCE[game] ?? 0
+  const parts: { first: LeaderboardEntry; best: DayPlayer[] }[] = []
+  for (const day of book.days.values()) {
+    if (day.key < since) continue
+    const [start, end] = (day.span ??= [dayStartMs(day.key), dayStartMs(addDaysToDateKey(day.key, 1))])
+    if (end <= from || start >= to) continue
+    if (start >= from && end <= to) {
+      parts.push({ first: day.runs[0]!, best: dayPlayersOf(day) })
+      continue
+    }
+    const inside = day.runs.filter((run) => run.at >= from && run.at < to)
+    if (inside.length) parts.push({ first: inside[0]!, best: bestsOf(inside) })
+  }
+  parts.sort((a, b) => boardOrder(a.first, b.first))
+  const totals = new Map<string, LeaderboardEntry & { days: number }>()
+  for (const { best } of parts) {
+    best.forEach((run, i) => {
+      const points = placePoints(i + 1, best.length)
+      const had = totals.get(run.name)
+      if (!had) {
+        // In the skin of their latest day's best run, as the board shows a run's (the site's SkinMark).
+        totals.set(run.name, { id: `days:${game}:${run.name}`, name: run.name, score: points, at: run.at, device: run.device, ...(run.skin ? { skin: run.skin } : {}), days: 1 })
+        return
+      }
+      had.score += points
+      had.days += 1
+      if (run.at > had.at) {
+        had.at = run.at
+        had.device = run.device
+        if (run.skin) had.skin = run.skin
+        else delete had.skin
+      }
+    })
+  }
+  return [...totals.values()].sort(boardOrder)
 }
 
 /**

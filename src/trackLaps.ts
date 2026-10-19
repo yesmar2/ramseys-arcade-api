@@ -1,5 +1,5 @@
 import crypto from 'node:crypto'
-import { asc, desc, eq, and } from 'drizzle-orm'
+import { asc, desc, eq, sql } from 'drizzle-orm'
 import { db } from './db/client.js'
 import { trackLaps } from './db/schema.js'
 import { HOTLAP_FIRST_DAY, HOTLAP_PACE_MS } from './hotlapPace.js'
@@ -8,7 +8,7 @@ import { MARBLERUN_FIRST_DAY, MARBLERUN_PACE_MS } from './marblerunPace.js'
 import { SLING_FIRST_DAY, SLING_PACE_MS } from './slingPace.js'
 import { SWOOP_FIRST_DAY, SWOOP_PACE_MS } from './swoopPace.js'
 import { WOBBLERUN_FIRST_DAY, WOBBLERUN_PACE_MS } from './wobblerunPace.js'
-import { boardDateKey, dayPlayers, isDeviceType, type DeviceType, type GameSlug } from './store.js'
+import { boardDateKey, dayBoards, isDeviceType, type DeviceType, type GameSlug } from './store.js'
 
 /*
  * Course records. Every course of a ranked daily keeps a board of its own for good: Hot Lap's tracks, Marble
@@ -175,30 +175,110 @@ function merge(dayBests: TrackEntry[], laps: TrackEntry[]): TrackEntry[] {
   return [...best.values()].sort((a, b) => b.score - a.score || a.at - b.at)
 }
 
-/** A course's days' runs, each player's best: its first day's, and any later day that played it again (Hot Lap's tracks go round). */
-async function dayLaps(game: GameSlug, n: number, today: number): Promise<TrackEntry[]> {
-  const out: TrackEntry[] = []
-  const step = planOf(game).repeats ? trackCount() : Infinity
-  for (let d = n; d <= today; d += step) {
-    for (const p of await dayPlayers(game, dayKeyOf(d, game))) out.push({ name: p.name, score: p.score, at: p.at, device: p.device, ...(p.skin ? { skin: p.skin } : {}) })
-  }
-  return out
+const lapDevice = (device: string): DeviceType => (isDeviceType(device) ? device : 'desktop')
+
+/*
+ * A game's laps on its courses after their days, read from the table once and kept, each new lap put in as it's
+ * written (addTrackLap). Once a minute, in the background, the table's count and newest lap are checked against
+ * the kept ones, and the laps read again if something else wrote it (the admin's reset, the seed). A course's
+ * board is drawn from them and its days' players and kept until either changes. Before this, the list of a game's
+ * courses read every lap it has had and drew every course's board again, for each player who opened its Past or
+ * Records tab: 200 to 400 ms at 20,000 players, 0.7 s on Lander's (load test, 2026-10-19).
+ */
+const LAPS_CHECK_MS = 60_000
+type LapsKept = { at: number; byTrack: Promise<Map<number, TrackEntry[]>>; rows: number; lastAt: number; checking: boolean }
+const lapsKept = new Map<GameSlug, LapsKept>()
+
+function lapsOf(game: GameSlug): Promise<Map<number, TrackEntry[]>> {
+  const hit = lapsKept.get(game)
+  if (!hit) return readLaps(game)
+  if (Date.now() - hit.at >= LAPS_CHECK_MS && !hit.checking) void checkLaps(game, hit)
+  return hit.byTrack
 }
 
-const lapDevice = (device: string): DeviceType => (isDeviceType(device) ? device : 'desktop')
+function readLaps(game: GameSlug): Promise<Map<number, TrackEntry[]>> {
+  const kept: LapsKept = { at: Date.now(), byTrack: null!, rows: 0, lastAt: 0, checking: false }
+  kept.byTrack = (async () => {
+    const rows = await db()
+      .select({ track: trackLaps.track, name: trackLaps.name, score: trackLaps.score, at: trackLaps.at, device: trackLaps.device, skin: trackLaps.skin })
+      .from(trackLaps)
+      .where(eq(trackLaps.game, game))
+      .orderBy(desc(trackLaps.score), asc(trackLaps.at))
+    const out = new Map<number, TrackEntry[]>()
+    for (const { track, skin, ...r } of rows) {
+      const lap: TrackEntry = { ...r, device: lapDevice(r.device), ...(skin ? { skin } : {}) }
+      const list = out.get(track)
+      if (list) list.push(lap)
+      else out.set(track, [lap])
+      kept.rows++
+      kept.lastAt = Math.max(kept.lastAt, r.at)
+    }
+    return out
+  })()
+  lapsKept.set(game, kept)
+  kept.byTrack.catch(() => {
+    if (lapsKept.get(game) === kept) lapsKept.delete(game)
+  })
+  return kept.byTrack
+}
+
+async function checkLaps(game: GameSlug, kept: LapsKept) {
+  kept.checking = true
+  try {
+    await kept.byTrack
+    const [table] = await db()
+      .select({ rows: sql<number>`count(*)::float8`, lastAt: sql<number>`coalesce(max(${trackLaps.at}), 0)::float8` })
+      .from(trackLaps)
+      .where(eq(trackLaps.game, game))
+    if (lapsKept.get(game) !== kept) return
+    if (table && Number(table.rows) === kept.rows && Number(table.lastAt) === kept.lastAt) kept.at = Date.now()
+    else void readLaps(game).catch(() => {})
+  } catch (err) {
+    console.warn(`[laps] checking ${game}'s laps failed:`, err)
+  } finally {
+    kept.checking = false
+  }
+}
+
+/** A lap just written, into the kept laps: a new list, so a board drawn from the old one is drawn again. */
+async function keepLap(game: GameSlug, track: number, lap: TrackEntry) {
+  const kept = lapsKept.get(game)
+  if (!kept) return
+  const byTrack = await kept.byTrack.catch(() => null)
+  if (!byTrack || lapsKept.get(game) !== kept) return
+  // A reading under way may have it already: a tag's second copy of a lap changes no board (merge), and the
+  // count a lap over sends the next check to read the table again.
+  const list = (byTrack.get(track) ?? []).slice()
+  let i = 0
+  while (i < list.length && (list[i]!.score > lap.score || (list[i]!.score === lap.score && list[i]!.at <= lap.at))) i++
+  list.splice(i, 0, lap)
+  byTrack.set(track, list)
+  kept.rows++
+  kept.lastAt = Math.max(kept.lastAt, lap.at)
+}
+
+type KeptBoard = { laps: readonly TrackEntry[] | undefined; days: (readonly TrackEntry[] | undefined)[]; board: TrackEntry[] }
+const boardsKept = new Map<string, KeptBoard>()
+
+/** A course's board from its days' players and its laps since, kept while both are the lists it was drawn from. */
+function keptBoard(game: GameSlug, n: number, today: number, dayBoardsByKey: ReadonlyMap<number, readonly TrackEntry[]>, laps: readonly TrackEntry[] | undefined): TrackEntry[] {
+  const step = planOf(game).repeats ? trackCount() : Infinity
+  const days: (readonly TrackEntry[] | undefined)[] = []
+  for (let d = n; d <= today; d += step) days.push(dayBoardsByKey.get(dayKeyOf(d, game)))
+  const key = `${game}:${n}`
+  const hit = boardsKept.get(key)
+  if (hit && hit.laps === laps && hit.days.length === days.length && hit.days.every((list, i) => list === days[i])) return hit.board
+  const board = merge(days.flatMap((list) => list ?? []), [...(laps ?? [])])
+  boardsKept.set(key, { laps, days, board })
+  return board
+}
 
 /** A course's All time board: each player's best run on it, best first. */
 export async function trackBoard(game: GameSlug, n: number, now = Date.now()): Promise<TrackEntry[]> {
   const today = dayNumberOf(boardDateKey(now), game)
-  const rows = await db()
-    .select({ name: trackLaps.name, score: trackLaps.score, at: trackLaps.at, device: trackLaps.device, skin: trackLaps.skin })
-    .from(trackLaps)
-    .where(and(eq(trackLaps.game, game), eq(trackLaps.track, n)))
-    .orderBy(desc(trackLaps.score), asc(trackLaps.at))
-  return merge(
-    await dayLaps(game, n, today),
-    rows.map(({ skin, ...r }) => ({ ...r, device: lapDevice(r.device), ...(skin ? { skin } : {}) })),
-  )
+  const [byKey, laps] = await Promise.all([dayBoards(game), lapsOf(game)])
+  // Copies: the kept board is shared by every caller.
+  return keptBoard(game, n, today, byKey, laps.get(n)).map((e) => ({ ...e }))
 }
 
 export type TrackRecord = {
@@ -217,28 +297,18 @@ export async function trackRecords(game: GameSlug, name: string | null, now = Da
   const today = dayNumberOf(boardDateKey(now), game)
   const last = Math.min(today, courseCount(game))
   if (last < 1) return []
-  const rows = await db()
-    .select({ track: trackLaps.track, name: trackLaps.name, score: trackLaps.score, at: trackLaps.at, device: trackLaps.device })
-    .from(trackLaps)
-    .where(eq(trackLaps.game, game))
-    .orderBy(desc(trackLaps.score), asc(trackLaps.at))
-  const later = new Map<number, TrackEntry[]>()
-  for (const r of rows) {
-    const lap = { name: r.name, score: r.score, at: r.at, device: lapDevice(r.device) }
-    const list = later.get(r.track)
-    if (list) list.push(lap)
-    else later.set(r.track, [lap])
-  }
+  const [byKey, later] = await Promise.all([dayBoards(game), lapsOf(game)])
   const who = name ? name.trim().slice(0, 12).toUpperCase() : null
   const out: TrackRecord[] = []
   for (let n = last; n >= 1; n--) {
-    const board = merge(await dayLaps(game, n, today), later.get(n) ?? [])
+    const board = keptBoard(game, n, today, byKey, later.get(n))
     const mine = who ? board.findIndex((e) => e.name === who) : -1
+    const top = board[0]
     out.push({
       track: n,
       day: trackDayIso(n, game),
       drivers: board.length,
-      record: board[0] ?? null,
+      record: top ? { name: top.name, score: top.score, at: top.at, device: top.device, ...(top.skin ? { skin: top.skin } : {}) } : null,
       you: mine >= 0 ? { score: board[mine]!.score, place: mine + 1 } : null,
     })
   }
@@ -257,7 +327,9 @@ export async function addTrackLap(input: {
   durationMs: number | null
   skin?: string | null
 }): Promise<void> {
+  const at = Date.now()
   await db()
     .insert(trackLaps)
-    .values({ id: crypto.randomBytes(12).toString('base64url'), ...input, at: Date.now() })
+    .values({ id: crypto.randomBytes(12).toString('base64url'), ...input, at })
+  await keepLap(input.game, input.track, { name: input.name, score: input.score, at, device: input.device, ...(input.skin ? { skin: input.skin } : {}) })
 }

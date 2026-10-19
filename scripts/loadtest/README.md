@@ -49,6 +49,29 @@ Stop with `pg_ctl -D <scratch>/pgdata stop -m fast` and delete the folder.
 - **Fast:** every other request takes 2–25 ms alone.
 - **After a boot:** the first `/records/site` takes 2–10 s, and the boot itself stalls about 6.5 s.
 
+**Fixed the same day:**
+- **A daily's days** (`store.ts` dayBook): each game's runs are kept by day, and a save goes into its day in place. `/days`, the day boards and the week's, month's and season's day points are drawn again only for the day that changed. `/days` now takes 10–15 ms.
+- **Course boards** (`trackLaps.ts`): a game's laps are kept, with a cheap count check once a minute. Each course's board is kept until its days or laps change. Track records now take 9–14 ms (Lander's was 0.7 s).
+- **The course records at start** (`courseRecords.ts`, `records.ts` seedRecordEntries): each player's best in a book is looked up once, not by a walk down the book for every entry. That walk was 62 s of stalls after every boot on the old code. With the boards kept it became one 152 s stall; now it's gone.
+- **Same answers:** `days-check.mjs` compares every dailies answer from two servers on one database: days, day boards, week, month and season points, standings, daily records and course boards. 4,971 of 4,971 matched at rest. After about 500 saves through the new code, all 4,863 matched the old code reading the tables fresh.
+
+**After the fixes** (`site.mjs`, warm server, laptop, local Postgres):
+
+| People (visitors / guests / players) | Requests a second | p50 | p95 | p99 | Saves p50 / p95 | Failed |
+|---|---|---|---|---|---|---|
+| 40 (20 / 5 / 15) | 28 | 14 ms | 70 ms | 0.68 s | 67 ms / 163 ms | 1 of 8,268 |
+| 550 (300 / 100 / 150) | 420 | 31 ms | 555 ms | 1.4 s | 0.4 s / 3.5 s | 51 of 156,811 |
+| 1,000 (550 / 200 / 250) | 498 | 149 ms | 3.4 s | 6.4 s | 10 s / 25 s | 1,662 of 166,810 |
+
+- **The ceiling:** one server tops out near 500 requests a second, about 550–600 people on this mix. That is CPU, not stalls.
+- **What's left:**
+  - Saves are the costliest request: about 12 queries each, through the 10-connection pool.
+  - `buildSiteRecords` takes about 0.9 s once a minute.
+  - Reading the tables at boot takes about 5 s for scores and 7 s for record books.
+  - Memory reached 2.6 GB of a 3 GB heap with 1,300 requests in flight.
+- **Don't trust a slow run until you've checked the machine.** Another process ate three quarters of the CPU during one run here.
+- **Columns:** `q` in the table is the average number of database queries a request made (`X-Db-Queries`).
+
 ## Where the time goes
 
 An "error" in `load.mjs` is a connection dropped, not a status: the server stalled long enough for idle sockets to close under the client. To find the stall, start the API with `NODE_OPTIONS="--import file:///<repo>/scripts/loadtest/profile-hook.mjs"` (next to the memory flag). It logs `[stall]` and `[lag]` lines when the event loop runs late, and records a CPU profile between `touch scripts/loadtest/profile.start` and `touch scripts/loadtest/profile.stop`. Then:

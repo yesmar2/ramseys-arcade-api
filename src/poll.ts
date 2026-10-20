@@ -188,13 +188,20 @@ export async function pollView(accountId: string | null, now = Date.now()): Prom
   return { today, yesterday, tomorrow: after?.q ?? null, tickets: POLL_TICKETS, answers }
 }
 
-/** A past question's answers, final once its day is over (answers are taken on their day only), so kept for good. */
-const final = new Map<number, PollCounts>()
+/**
+ * A past question's answers, final once its day is over (answers are taken on their day only), so kept a while:
+ * only a test-data reset (resetWorld.ts) changes them after that, and it's caught up with within the hour.
+ */
+const final = new Map<number, { at: number; value: PollCounts }>()
 const FINAL_KEEP = 500
+const FINAL_FOR_MS = 60 * 60 * 1000
 
 /** Past questions' counts, those not kept yet in one look at the ledger. */
-async function finalCounts(polls: Poll[]): Promise<Map<number, PollCounts>> {
-  const missing = polls.filter((p) => !final.has(p.n))
+async function finalCounts(polls: Poll[], now: number): Promise<Map<number, PollCounts>> {
+  const missing = polls.filter((p) => {
+    const kept = final.get(p.n)
+    return !kept || now - kept.at >= FINAL_FOR_MS
+  })
   if (missing.length) {
     const rows = await db()
       .select({ ref: ticketLedger.ref, pick: sql<string>`${ticketLedger.detail}->>'pick'`, votes: sql<number>`count(*)::int` })
@@ -208,11 +215,12 @@ async function finalCounts(polls: Poll[]): Promise<Map<number, PollCounts>> {
         const pick = Number(row.pick)
         if (Number.isInteger(pick) && pick >= 0 && pick < counts.length) counts[pick]! += Number(row.votes)
       }
-      final.set(p.n, { counts, total: counts.reduce((a, b) => a + b, 0) })
+      final.delete(p.n)
+      final.set(p.n, { at: now, value: { counts, total: counts.reduce((a, b) => a + b, 0) } })
       if (final.size > FINAL_KEEP) final.delete(final.keys().next().value!)
     }
   }
-  return new Map(polls.map((p) => [p.n, final.get(p.n)!]))
+  return new Map(polls.map((p) => [p.n, final.get(p.n)!.value]))
 }
 
 export type PastPoll = Poll & PollCounts & { pick: number | null }
@@ -234,7 +242,7 @@ export async function pastPolls(
   const polls = (await pollsBetween(from, top)).reverse()
   const refs = polls.map((p) => ref(p.n))
   const [counts, picks, answers] = await Promise.all([
-    finalCounts(polls),
+    finalCounts(polls, now),
     accountId
       ? db()
           .select({ ref: ticketLedger.ref, detail: ticketLedger.detail })

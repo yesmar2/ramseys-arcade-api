@@ -85,6 +85,16 @@ const MOST_DAYS = 100_000
 
 const planOf = (game: GameSlug): CoursePlan => PLANS[game] ?? PLANS.hotlap!
 
+/**
+ * A course's blue run in ms, from its game's plan: Hot Lap's track n is the plan's nth; any other game's course n
+ * is day n's, the plan's days going round as the site's dailies have them. Null for a game without courses.
+ */
+export function coursePace(game: GameSlug, n: number): number | null {
+  const plan = PLANS[game]
+  if (!plan?.pace.length || !Number.isInteger(n) || n < 1) return null
+  return plan.pace[(n - 1) % plan.pace.length] ?? null
+}
+
 /** How many tracks Hot Lap's plan has. */
 export function trackCount(): number {
   return HOTLAP_PACE_MS.length

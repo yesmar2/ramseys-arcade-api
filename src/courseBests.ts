@@ -7,9 +7,11 @@ import { db } from './db/client.js'
 import { courseBests } from './db/schema.js'
 import { takeToken } from './rateLimit.js'
 import { peekRun } from './runs.js'
+import { getClaim } from './names.js'
 import { checkScoreRate, TIME_SCORE_BASE } from './scoreLimits.js'
 import { resolveGameSlug, type GameSlug } from './store.js'
-import { fastestBelievable, TRACK_GAMES, trackDayIso, trackState } from './trackLaps.js'
+import { RACE_MEDAL_RUNGS, RACE_MEDAL_STEP } from './ticketLadders.js'
+import { coursePace, fastestBelievable, TRACK_GAMES, trackDayIso, trackState } from './trackLaps.js'
 
 /*
  * Your best time on every course of a racing daily, for your medals on its past courses (Ramsey picked A and C of
@@ -18,6 +20,10 @@ import { fastestBelievable, TRACK_GAMES, trackDayIso, trackState } from './track
  * member's practice on an older one, and the quickest is kept. It's yours alone: no board, place, rank or
  * ticket reads it, so a Plus member bettering an old course's medal buys nobody a place anywhere.
  *
+ * The times stay yours, but how many medals they add up to is anyone's to see: the player card shows it (Ramsey
+ * made the counts public, 2026-10-20, for the card's "Race medals").
+ *
+ *   GET  /course-bests/medals?name=TAG   a player's medals, counted: { platinum, gold, silver, bronze }
  *   GET  /course-bests/:game        your best on each of the game's courses: [{ course, ms }]
  *   POST /course-bests/:game/:n     a finished run's time on course n: { ms, runId }, kept if it's your best
  */
@@ -59,6 +65,43 @@ export async function courseBestsOf(accountId: string, game: GameSlug): Promise<
     .from(courseBests)
     .where(and(eq(courseBests.accountId, accountId), eq(courseBests.game, game)))
 }
+
+export type MedalCounts = { platinum: number; gold: number; silver: number; bronze: number }
+
+const MEDAL_ORDER = ['bronze', 'silver', 'gold', 'platinum'] as const
+
+/**
+ * How many of each medal an account's course bests take, each course's best against its blue run (the site's
+ * raceMedals.ts medalFor, with ticketLadders.ts's rungs and steps).
+ */
+export async function medalCountsOf(accountId: string): Promise<MedalCounts> {
+  const rows = await db()
+    .select({ game: courseBests.game, course: courseBests.course, ms: courseBests.ms })
+    .from(courseBests)
+    .where(eq(courseBests.accountId, accountId))
+  const counts: MedalCounts = { platinum: 0, gold: 0, silver: 0, bronze: 0 }
+  for (const row of rows) {
+    const step = RACE_MEDAL_STEP[row.game as keyof typeof RACE_MEDAL_STEP]
+    const pace = coursePace(row.game as GameSlug, row.course)
+    if (!step || !pace) continue
+    // The highest rung the time beats, if any.
+    let best = -1
+    for (let i = 0; i < MEDAL_ORDER.length; i++) if (row.ms <= Math.round(pace * (1 - RACE_MEDAL_RUNGS[i]! * step))) best = i
+    if (best >= 0) counts[MEDAL_ORDER[best]!] += 1
+  }
+  return counts
+}
+
+courseBestsRouter.get('/medals', async (req, res) => {
+  const name = typeof req.query.name === 'string' ? req.query.name : ''
+  const claim = name ? await getClaim(name) : null
+  if (!name) {
+    res.status(400).json({ error: 'name required' })
+    return
+  }
+  const none: MedalCounts = { platinum: 0, gold: 0, silver: 0, bronze: 0 }
+  res.json({ medals: claim?.accountId ? await medalCountsOf(claim.accountId) : none })
+})
 
 courseBestsRouter.get('/:game', async (req, res) => {
   const game = courseGame(req.params.game)

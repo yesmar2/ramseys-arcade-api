@@ -2,8 +2,8 @@
  * The prize counter's catalogue: what can be traded for tickets, and for how
  * many. Every prize is a look, never a score: an avatar (a finish for the
  * avatar's badge), a style for the tag on the boards, a background for the
- * player card, confetti for a win, the signs, which put the tag itself in
- * lights, and the Hangar's skins. Titles are earned, never traded for. The site draws them (its
+ * player card, confetti for a win, and the Hangar's skins. Titles are earned,
+ * never traded for, and the signs are retired. The site draws them (its
  * `src/data/prizes.ts`, kept in step with this list); the API owns the prices
  * and who owns what.
  *
@@ -18,7 +18,8 @@ export type PrizeKind = 'finish' | 'name' | 'card' | 'confetti' | 'title' | 'sig
  * (plus.ts) gives it, and only that. Its price is nought.
  *
  * `retired`: off the counter for good, never traded for or saved for again, but still worn by anyone who
- * has it. The titles that were for tickets are retired: a title is earned now, never bought.
+ * has it. The titles that were for tickets are retired: a title is earned now, never bought. So are the signs,
+ * since the player card has no sign on it any more (2026-10-20).
  */
 export type Prize = { id: string; kind: PrizeKind; price: number; earned?: true; retired?: true }
 
@@ -73,10 +74,10 @@ export const PRIZES: readonly Prize[] = [
   { id: 't-egg', kind: 'title', price: 1000, retired: true },
   { id: 't-extralife', kind: 'title', price: 1200, retired: true },
   { id: 't-finalboss', kind: 'title', price: 1500, retired: true },
-  { id: 'sign-led', kind: 'sign', price: 4000 },
-  { id: 'sign-marquee', kind: 'sign', price: 6500 },
-  { id: 'sign', kind: 'sign', price: 10_000 },
-  { id: 'sign-rooftop', kind: 'sign', price: 15_000 },
+  { id: 'sign-led', kind: 'sign', price: 4000, retired: true },
+  { id: 'sign-marquee', kind: 'sign', price: 6500, retired: true },
+  { id: 'sign', kind: 'sign', price: 10_000, retired: true },
+  { id: 'sign-rooftop', kind: 'sign', price: 15_000, retired: true },
   // The Hangar: skins for good, not a season's (skins.ts HANGAR_SKINS), each a game's ship, car or tail. Never
   // a season's own skin, which only its pass gives. Worn on a game's page, as a season skin is.
   { id: 'hotlap-green-flash', kind: 'skin', price: 1000 },

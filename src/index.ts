@@ -25,6 +25,7 @@ import { notificationsRouter } from './notificationsRoutes.js'
 import { challengesRouter } from './challengesRoutes.js'
 import { bugHuntRouter } from './bugHuntRoutes.js'
 import { clientErrorsRouter } from './clientErrorsRoutes.js'
+import { noteApiFailure, routeLabel, startErrorAlerts } from './errorAlerts.js'
 import { feedbackRouter } from './feedbackRoutes.js'
 import { launchListRouter } from './launchListRoutes.js'
 import { ticketsRouter } from './ticketsRoutes.js'
@@ -97,6 +98,8 @@ async function main() {
   await withLease('boot', () => migrateStrideToCrosswalk(), { ttlMs: 5 * 60_000, waitMs: 5 * 60_000 })
   // The season's boards go by the early preview (store.ts setSeasonSpan): known before the first is asked for.
   await seasonPreview().catch(() => null)
+  // The admins' devices, kept for an error spike's push (errorAlerts.ts).
+  startErrorAlerts()
 
   const app = express()
 
@@ -159,6 +162,11 @@ async function main() {
         return writeHead(...args)
       }) as typeof res.writeHead
       res.on('finish', () => {
+        // A failed answer counts toward a spike (errorAlerts.ts). A 503 is a part this server hasn't been set up
+        // with (push, a sign-in way), which is no failure.
+        if (res.statusCode >= 500 && res.statusCode !== 503) {
+          noteApiFailure(`${res.statusCode} on ${routeLabel(req.method, req.originalUrl.split('?')[0] ?? '')}`)
+        }
         if (process.env.LOG_REQUESTS === '1') {
           const ms = Math.round(performance.now() - started)
           console.log(

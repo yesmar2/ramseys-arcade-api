@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import { z } from 'zod'
 import { recordClientError } from './clientErrors.js'
+import { noteSiteError } from './errorAlerts.js'
 import { clientIp, takeToken } from './rateLimit.js'
 
 export const clientErrorsRouter = Router()
@@ -24,6 +25,8 @@ clientErrorsRouter.post('/', async (req, res) => {
     return
   }
   const gate = takeToken(`client-errors:ip:${clientIp(req)}`, PER_IP)
+  // Counted toward a spike before the limit for everyone, which a spike would reach (errorAlerts.ts).
+  if (gate.ok) noteSiteError(parsed.data.message, clientIp(req))
   if (!gate.ok || !takeToken('client-errors:all', EVERYONE).ok) {
     res.status(429).json({ error: 'Too many reports', code: 'RATE_LIMITED' })
     return

@@ -4,6 +4,7 @@ import { requireAdmin, whyNotAdmin } from './admin.js'
 import { accountFromRequest } from './auth.js'
 import { banName, listBans, purgeName, recentScores, unbanName, voidScores } from './bans.js'
 import { listClientErrors } from './clientErrors.js'
+import { errorAlertsState, sendToAdmins } from './errorAlerts.js'
 import { listFeedback } from './feedback.js'
 import { launchEmail, leaveLaunchList, listLaunchList, sendLaunchBatch, sendLaunchTest } from './launchList.js'
 import { BATCH_MAX, mailerReady } from './mailer.js'
@@ -51,6 +52,33 @@ adminRouter.get('/client-errors', async (req, res) => {
     await requireAdmin(req)
     const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 100))
     res.json({ errors: await listClientErrors(limit) })
+  } catch (err) {
+    refuse(err, res)
+  }
+})
+
+/** Where an error spike's push would go (errorAlerts.ts): the admins' devices, and what counts as a spike. */
+adminRouter.get('/alerts', async (req, res) => {
+  try {
+    await requireAdmin(req)
+    res.json(await errorAlertsState())
+  } catch (err) {
+    refuse(err, res)
+  }
+})
+
+/** A test push to every admin's devices, to see that an error spike's would arrive. */
+adminRouter.post('/alerts/test', async (req, res) => {
+  try {
+    await requireAdmin(req)
+    const { devices } = await errorAlertsState()
+    const sent = await sendToAdmins({
+      title: 'Test alert',
+      body: 'This is where Blipka tells you when errors spike.',
+      href: '/admin',
+      tag: 'admin-test',
+    })
+    res.json({ devices, sent })
   } catch (err) {
     refuse(err, res)
   }

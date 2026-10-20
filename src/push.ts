@@ -192,6 +192,32 @@ export type PushOutcome =
   | 'capped'
   | 'duplicate'
 
+export type PushDevice = { endpoint: string; p256dh: string; auth: string }
+
+/**
+ * An admin's alert (errorAlerts.ts), straight to the devices given. It goes at any hour and outside the daily
+ * cap, which are guardrails for players. A device the browser has thrown away is dropped, if the database will
+ * have it. Returns how many devices took it.
+ */
+export async function pushToDevices(
+  devices: PushDevice[],
+  message: { title: string; body: string; href: string; tag: string },
+): Promise<number> {
+  if (!ensureConfigured()) return 0
+  const body = JSON.stringify({ ...message, kind: 'admin-alert' })
+  let delivered = 0
+  for (const device of devices) {
+    try {
+      await webpush.sendNotification({ endpoint: device.endpoint, keys: { p256dh: device.p256dh, auth: device.auth } }, body)
+      delivered++
+    } catch (err) {
+      const status = (err as { statusCode?: number }).statusCode
+      if (status === 404 || status === 410) await dropEndpoint(device.endpoint).catch(() => {})
+    }
+  }
+  return delivered
+}
+
 /**
  * Deliver one notification to a player's devices, if every guardrail agrees.
  * Whether the player wants it pushed at all is `deliver`'s question.

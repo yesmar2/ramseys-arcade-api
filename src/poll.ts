@@ -188,6 +188,74 @@ export async function pollView(accountId: string | null, now = Date.now()): Prom
   return { today, yesterday, tomorrow: after?.q ?? null, tickets: POLL_TICKETS, answers }
 }
 
+/** A past question's answers, final once its day is over (answers are taken on their day only), so kept for good. */
+const final = new Map<number, PollCounts>()
+const FINAL_KEEP = 500
+
+/** Past questions' counts, those not kept yet in one look at the ledger. */
+async function finalCounts(polls: Poll[]): Promise<Map<number, PollCounts>> {
+  const missing = polls.filter((p) => !final.has(p.n))
+  if (missing.length) {
+    const rows = await db()
+      .select({ ref: ticketLedger.ref, pick: sql<string>`${ticketLedger.detail}->>'pick'`, votes: sql<number>`count(*)::int` })
+      .from(ticketLedger)
+      .where(and(eq(ticketLedger.reason, 'poll'), inArray(ticketLedger.ref, missing.map((p) => ref(p.n)))))
+      .groupBy(ticketLedger.ref, sql`${ticketLedger.detail}->>'pick'`)
+    for (const p of missing) {
+      const counts = Array.from({ length: p.options.length }, () => 0)
+      for (const row of rows) {
+        if (row.ref !== ref(p.n)) continue
+        const pick = Number(row.pick)
+        if (Number.isInteger(pick) && pick >= 0 && pick < counts.length) counts[pick]! += Number(row.votes)
+      }
+      final.set(p.n, { counts, total: counts.reduce((a, b) => a + b, 0) })
+      if (final.size > FINAL_KEEP) final.delete(final.keys().next().value!)
+    }
+  }
+  return new Map(polls.map((p) => [p.n, final.get(p.n)!]))
+}
+
+export type PastPoll = Poll & PollCounts & { pick: number | null }
+
+/**
+ * Blip's past questions (the "Blip's questions" page), newest first: up to `count` from the one before `before`
+ * (yesterday's, by default), each with how everyone answered and the player's answer. `next` asks for older ones.
+ */
+export async function pastPolls(
+  accountId: string | null,
+  before: number | null,
+  count: number,
+  now = Date.now(),
+): Promise<{ today: number | null; polls: PastPoll[]; next: number | null; answers: number | null }> {
+  const today = pollNumber(boardDateKey(now))
+  const top = Math.min(before ?? Number.MAX_SAFE_INTEGER, today ?? 1) - 1
+  if (top < 1) return { today, polls: [], next: null, answers: accountId ? await answersOf(accountId) : null }
+  const from = Math.max(1, top - count + 1)
+  const polls = (await pollsBetween(from, top)).reverse()
+  const refs = polls.map((p) => ref(p.n))
+  const [counts, picks, answers] = await Promise.all([
+    finalCounts(polls),
+    accountId
+      ? db()
+          .select({ ref: ticketLedger.ref, detail: ticketLedger.detail })
+          .from(ticketLedger)
+          .where(and(eq(ticketLedger.accountId, accountId), eq(ticketLedger.reason, 'poll'), inArray(ticketLedger.ref, refs)))
+      : [],
+    accountId ? answersOf(accountId) : null,
+  ])
+  const pickBy = new Map<string, number>()
+  for (const row of picks) {
+    const pick = (row.detail as { pick?: unknown } | null)?.pick
+    if (typeof pick === 'number') pickBy.set(row.ref, pick)
+  }
+  return {
+    today,
+    polls: polls.map((p) => ({ ...p, ...counts.get(p.n)!, pick: pickBy.get(ref(p.n)) ?? null })),
+    next: from > 1 ? from : null,
+    answers,
+  }
+}
+
 /** Answer today's question: once a day, for POLL_TICKETS, and toward Blip's set: `won` is a skin this answer won. */
 export async function answerPoll(
   accountId: string,

@@ -2,7 +2,7 @@ import { Router } from 'express'
 import { z } from 'zod'
 import { requireAdmin } from './admin.js'
 import { accountFromRequest } from './auth.js'
-import { answerPoll, editPoll, pollNumber, pollsBetween, pollView, resetPoll } from './poll.js'
+import { answerPoll, editPoll, pastPolls, pollNumber, pollsBetween, pollView, resetPoll } from './poll.js'
 import { takeToken } from './rateLimit.js'
 import { boardDateKey } from './store.js'
 
@@ -29,6 +29,27 @@ pollRouter.get('/', async (req, res) => {
     const account = await accountFromRequest(req)
     res.setHeader('Cache-Control', 'no-store')
     res.json(await pollView(account?.id ?? null))
+  } catch (err) {
+    fail(err, res)
+  }
+})
+
+const pastSchema = z.object({
+  before: z.coerce.number().int().min(2).optional(),
+  count: z.coerce.number().int().min(1).max(60).optional(),
+})
+
+/** The questions before today's, newest first, each with how everyone answered and yours: Blip's questions page. */
+pollRouter.get('/past', async (req, res) => {
+  const parsed = pastSchema.safeParse(req.query)
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Invalid query', code: 'INVALID_QUERY' })
+    return
+  }
+  try {
+    const account = await accountFromRequest(req)
+    res.setHeader('Cache-Control', 'no-store')
+    res.json(await pastPolls(account?.id ?? null, parsed.data.before ?? null, parsed.data.count ?? 20))
   } catch (err) {
     fail(err, res)
   }

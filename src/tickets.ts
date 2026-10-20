@@ -76,6 +76,8 @@ export type TicketReason =
   | 'season'
   /** Answering Blip's question of the day (poll.ts): one a day, its pick in the detail. */
   | 'poll'
+  /** A full sticker page on the back of the player card (stickers.ts): once a page, its id in the ref. */
+  | 'stickers'
 
 export type TicketLine = { reason: TicketReason; amount: number }
 

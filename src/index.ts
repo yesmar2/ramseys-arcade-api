@@ -32,6 +32,7 @@ import { ticketsRouter } from './ticketsRoutes.js'
 import { pollRouter } from './pollRoutes.js'
 import { tracksRouter } from './trackLapsRoutes.js'
 import { courseBestsRouter } from './courseBests.js'
+import { stickersRouter } from './stickers.js'
 import { holesRouter } from './holesRoutes.js'
 import { todayRouter } from './todayRoutes.js'
 import { seasonRouter } from './seasonRoutes.js'
@@ -237,6 +238,7 @@ async function main() {
   app.use('/poll', pollRouter)
   app.use('/tracks', tracksRouter)
   app.use('/course-bests', courseBestsRouter)
+  app.use('/stickers', stickersRouter)
   app.use('/holes', holesRouter)
   app.use('/today', todayRouter)
   app.use('/season', seasonRouter)

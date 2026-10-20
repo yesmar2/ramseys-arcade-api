@@ -1,4 +1,4 @@
-import { and, eq, sql } from 'drizzle-orm'
+import { and, eq, gte, lt, sql } from 'drizzle-orm'
 import { Router } from 'express'
 import { z } from 'zod'
 import { inArchive } from './archive.js'
@@ -74,11 +74,16 @@ const MEDAL_ORDER = ['bronze', 'silver', 'gold', 'platinum'] as const
  * How many of each medal an account's course bests take, each course's best against its blue run (the site's
  * raceMedals.ts medalFor, with ticketLadders.ts's rungs and steps).
  */
-export async function medalCountsOf(accountId: string): Promise<MedalCounts> {
+export async function medalCountsOf(accountId: string, window: readonly [number, number] | null = null): Promise<MedalCounts> {
+  // With a window (a season's, for its sticker page), only the bests set in it.
   const rows = await db()
     .select({ game: courseBests.game, course: courseBests.course, ms: courseBests.ms })
     .from(courseBests)
-    .where(eq(courseBests.accountId, accountId))
+    .where(
+      window
+        ? and(eq(courseBests.accountId, accountId), gte(courseBests.at, window[0]), lt(courseBests.at, window[1]))
+        : eq(courseBests.accountId, accountId),
+    )
   const counts: MedalCounts = { platinum: 0, gold: 0, silver: 0, bronze: 0 }
   for (const row of rows) {
     const step = RACE_MEDAL_STEP[row.game as keyof typeof RACE_MEDAL_STEP]

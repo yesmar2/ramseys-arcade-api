@@ -58,6 +58,8 @@ export const AVATAR_BADGES = [
   'lava',
   'holo',
   'aurora',
+  // A showpiece from the counter, moving (2026-10-20).
+  'plasma',
   // Earned by a 30-day Today streak (today.ts), not traded for.
   'gilded',
   // Season 1's pass (seasons.ts).

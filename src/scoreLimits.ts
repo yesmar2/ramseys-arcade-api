@@ -132,7 +132,14 @@ const SCORE_RULES: Record<GameSlug, ScoreRule> = {
    * the bot under 0.8 of the cap at every point.
    */
   bop: { kind: 'rate', floor: 20, perSecond: 7.5 },
-  putt: { kind: 'rate', floor: 500, perSecond: 80 },
+  /*
+   * Five holes, par 2: an ace pays 500, so a round tops out at 2,500. Measured
+   * with the game's own engine (2026-10-20): every hole can be aced, and five
+   * aces with no time spent aiming end at about 26 seconds, past the old
+   * 500 + 80/s's near-cap flag; a top round is 1,000–1,600 in 35–60 s. The
+   * floor of 900 keeps even the five-ace round under the flag on a quick save.
+   */
+  putt: { kind: 'rate', floor: 900, perSecond: 80 },
   barrage: { kind: 'rate', floor: 500, perSecond: 400 },
   /*
    * Measured, not guessed: a bot that plays Frenzy badly reaches 24,000 in
@@ -152,12 +159,15 @@ const SCORE_RULES: Record<GameSlug, ScoreRule> = {
   /*
    * Rows pay ten to eighty times the level, and the level climbs a step every
    * ten rows, so the points compound as Frenzy's do. Measured with the game's
-   * own engine: a bot that drops 2.5 pieces a second, perfectly, chasing four
-   * rows at a time, scores 3,400 in a minute, 60,000 in five and 255,000 in
-   * ten; these leave it about three times that at every point. A bot at four
-   * pieces a second, faster than hands, still stays under (575,000 in ten).
+   * own engine (2026-10-20) and a stacker that clears 97% of its rows four at
+   * a time, back to back: at 4 pieces a second (faster than any hand on these
+   * keys) it scores 9,600 in a minute, 236,000 in five and 900,000 in ten,
+   * which the old 1,000 + 50 s + 2 s² refused after two minutes; keyed in at
+   * a top player's speed, where the high levels' gravity blocks slides, it
+   * tops out near half the old cap. These keep the 4-a-second bot under 0.75
+   * of the cap at every point.
    */
-  pileup: { kind: 'curve', floor: 1_000, perSecond: 50, perSecondSquared: 2 },
+  pileup: { kind: 'curve', floor: 1_000, perSecond: 50, perSecondSquared: 3.5 },
   acechase: { kind: 'tries' },
   findbug: { kind: 'time' },
   spotter: { kind: 'time' },

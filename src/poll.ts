@@ -166,17 +166,25 @@ async function giveBlipSkins(accountId: string, answers: number, now: number): P
 
 /** Blip's question for a player (or a visitor, `null`): today's, its counts once they've answered, yesterday's result. */
 export async function pollView(accountId: string | null, now = Date.now()): Promise<PollView> {
-  const key = boardDateKey(now)
-  const n = pollNumber(key)
-  const answers = accountId ? await answersOf(accountId) : null
-  if (n == null) return { today: null, yesterday: null, tomorrow: null, tickets: POLL_TICKETS, answers }
-  const around = await pollsBetween(Math.max(1, n - 1), n + 1)
+  const n = pollNumber(boardDateKey(now))
+  if (n == null) {
+    return { today: null, yesterday: null, tomorrow: null, tickets: POLL_TICKETS, answers: accountId ? await answersOf(accountId) : null }
+  }
+  // Side by side, not one after another: each is a round trip, and answering waits on all of them.
+  const [answers, around, pick] = await Promise.all([
+    accountId ? answersOf(accountId) : null,
+    pollsBetween(Math.max(1, n - 1), n + 1),
+    accountId ? pickOf(accountId, n) : null,
+  ])
   const poll = around.find((p) => p.n === n)!
   const before = around.find((p) => p.n === n - 1) ?? null
   const after = around.find((p) => p.n === n + 1) ?? null
-  const pick = accountId ? await pickOf(accountId, n) : null
-  const today = pick == null ? { ...poll, pick } : { ...poll, pick, ...(await countsFor(n, poll.options.length, now)) }
-  const yesterday = before ? { ...before, ...(await countsFor(before.n, before.options.length, now)) } : null
+  const [counts, beforeCounts] = await Promise.all([
+    pick == null ? null : countsFor(n, poll.options.length, now),
+    before ? countsFor(before.n, before.options.length, now) : null,
+  ])
+  const today = { ...poll, pick, ...counts }
+  const yesterday = before && beforeCounts ? { ...before, ...beforeCounts } : null
   return { today, yesterday, tomorrow: after?.q ?? null, tickets: POLL_TICKETS, answers }
 }
 
@@ -195,7 +203,10 @@ export async function answerPoll(
   const detail: TicketDetail = { pick, label: poll.q }
   const { earned } = await awardTickets(accountId, 'poll', ref(n), POLL_TICKETS, null, now, detail)
   counted.delete(n)
-  // An answer that counted may win the next skin of Blip's set.
-  const won = earned > 0 ? await giveBlipSkins(accountId, await answersOf(accountId), now) : []
-  return { ...(await pollView(accountId, now)), earned, won: won.at(-1) ?? null }
+  // An answer that counted may win the next skin of Blip's set; looked at alongside the view it answers with.
+  const [won, view] = await Promise.all([
+    earned > 0 ? answersOf(accountId).then((answers) => giveBlipSkins(accountId, answers, now)) : [],
+    pollView(accountId, now),
+  ])
+  return { ...view, earned, won: won.at(-1) ?? null }
 }

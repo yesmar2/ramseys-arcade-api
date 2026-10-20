@@ -361,6 +361,7 @@ export async function tradePrize(accountId: string, prizeId: string, now = Date.
   const prize = prizeById(prizeId)
   if (!prize) throw refusal('There’s no such prize', 404, 'UNKNOWN_PRIZE')
   if (prize.earned) throw refusal('That one’s earned with a Dailies streak, not traded for', 409, 'EARNED_ONLY')
+  if (prize.retired) throw refusal('That one isn’t at the prize counter any more', 409, 'RETIRED')
   return db().transaction(async (tx) => {
     await lockWallet(tx, accountId, now)
     const [had] = await tx
@@ -391,6 +392,7 @@ export async function tradePrize(accountId: string, prizeId: string, now = Date.
 export async function setGoal(accountId: string, prizeId: string | null, now = Date.now()): Promise<string | null> {
   if (prizeId && !prizeById(prizeId)) throw refusal('There’s no such prize', 404, 'UNKNOWN_PRIZE')
   if (prizeId && prizeById(prizeId)?.earned) throw refusal('That one’s earned with a Dailies streak, not traded for', 409, 'EARNED_ONLY')
+  if (prizeId && prizeById(prizeId)?.retired) throw refusal('That one isn’t at the prize counter any more', 409, 'RETIRED')
   await db()
     .insert(ticketWallets)
     .values({ accountId, goal: prizeId, updatedAt: now })
@@ -435,7 +437,8 @@ export async function ticketsFor(accountId: string, now = Date.now()): Promise<T
       runs: wallet && wallet.runDay === today ? wallet.runToday : 0,
       cap: RUN_TICKETS_PER_DAY,
     },
-    goal: wallet?.goal ?? null,
+    // A goal that left the counter (a retired title) is no goal: it can't be traded for.
+    goal: wallet?.goal && !prizeById(wallet.goal)?.retired ? wallet.goal : null,
     owned: owned.map((row) => row.prizeId),
     recent,
   }

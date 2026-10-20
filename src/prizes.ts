@@ -1,8 +1,9 @@
 /*
  * The prize counter's catalogue: what can be traded for tickets, and for how
- * many. Every prize is a look, never a score: a badge finish, a style for the
- * tag on the boards, a card theme, confetti for a win, a title, and the signs
- * on the wall, which put the tag itself in lights. The site draws them (its
+ * many. Every prize is a look, never a score: an avatar (a finish for the
+ * avatar's badge), a style for the tag on the boards, a background for the
+ * player card, confetti for a win, the signs, which put the tag itself in
+ * lights, and the Hangar's skins. Titles are earned, never traded for. The site draws them (its
  * `src/data/prizes.ts`, kept in step with this list); the API owns the prices
  * and who owns what.
  *
@@ -15,8 +16,11 @@ export type PrizeKind = 'finish' | 'name' | 'card' | 'confetti' | 'title' | 'sig
 /**
  * `earned`: never for sale; a Today streak (today.ts), a season's pass (seasons.ts) or a month of Plus
  * (plus.ts) gives it, and only that. Its price is nought.
+ *
+ * `retired`: off the counter for good, never traded for or saved for again, but still worn by anyone who
+ * has it. The titles that were for tickets are retired: a title is earned now, never bought.
  */
-export type Prize = { id: string; kind: PrizeKind; price: number; earned?: true }
+export type Prize = { id: string; kind: PrizeKind; price: number; earned?: true; retired?: true }
 
 export const PRIZES: readonly Prize[] = [
   { id: 'glitter', kind: 'finish', price: 450 },
@@ -45,30 +49,30 @@ export const PRIZES: readonly Prize[] = [
   { id: 'cf-pixels', kind: 'confetti', price: 200 },
   { id: 'cf-tickets', kind: 'confetti', price: 250 },
   { id: 'cf-fireworks', kind: 'confetti', price: 500 },
-  { id: 't-insert', kind: 'title', price: 50 },
-  { id: 't-start', kind: 'title', price: 50 },
-  { id: 't-masher', kind: 'title', price: 60 },
-  { id: 't-snack', kind: 'title', price: 60 },
-  { id: 't-owl', kind: 'title', price: 80 },
-  { id: 't-early', kind: 'title', price: 80 },
-  { id: 't-onemore', kind: 'title', price: 80 },
-  { id: 't-rage', kind: 'title', price: 100 },
-  { id: 't-tutorial', kind: 'title', price: 100 },
-  { id: 't-couch', kind: 'title', price: 120 },
-  { id: 't-bugmagnet', kind: 'title', price: 120 },
-  { id: 't-lurker', kind: 'title', price: 150 },
-  { id: 't-rat', kind: 'title', price: 300 },
-  { id: 't-jockey', kind: 'title', price: 350 },
-  { id: 't-muncher', kind: 'title', price: 350 },
-  { id: 't-hoarder', kind: 'title', price: 400 },
-  { id: 't-cannon', kind: 'title', price: 450 },
-  { id: 't-twist', kind: 'title', price: 500 },
-  { id: 't-main', kind: 'title', price: 600 },
-  { id: 't-bossmusic', kind: 'title', price: 700 },
-  { id: 't-secret', kind: 'title', price: 900 },
-  { id: 't-egg', kind: 'title', price: 1000 },
-  { id: 't-extralife', kind: 'title', price: 1200 },
-  { id: 't-finalboss', kind: 'title', price: 1500 },
+  { id: 't-insert', kind: 'title', price: 50, retired: true },
+  { id: 't-start', kind: 'title', price: 50, retired: true },
+  { id: 't-masher', kind: 'title', price: 60, retired: true },
+  { id: 't-snack', kind: 'title', price: 60, retired: true },
+  { id: 't-owl', kind: 'title', price: 80, retired: true },
+  { id: 't-early', kind: 'title', price: 80, retired: true },
+  { id: 't-onemore', kind: 'title', price: 80, retired: true },
+  { id: 't-rage', kind: 'title', price: 100, retired: true },
+  { id: 't-tutorial', kind: 'title', price: 100, retired: true },
+  { id: 't-couch', kind: 'title', price: 120, retired: true },
+  { id: 't-bugmagnet', kind: 'title', price: 120, retired: true },
+  { id: 't-lurker', kind: 'title', price: 150, retired: true },
+  { id: 't-rat', kind: 'title', price: 300, retired: true },
+  { id: 't-jockey', kind: 'title', price: 350, retired: true },
+  { id: 't-muncher', kind: 'title', price: 350, retired: true },
+  { id: 't-hoarder', kind: 'title', price: 400, retired: true },
+  { id: 't-cannon', kind: 'title', price: 450, retired: true },
+  { id: 't-twist', kind: 'title', price: 500, retired: true },
+  { id: 't-main', kind: 'title', price: 600, retired: true },
+  { id: 't-bossmusic', kind: 'title', price: 700, retired: true },
+  { id: 't-secret', kind: 'title', price: 900, retired: true },
+  { id: 't-egg', kind: 'title', price: 1000, retired: true },
+  { id: 't-extralife', kind: 'title', price: 1200, retired: true },
+  { id: 't-finalboss', kind: 'title', price: 1500, retired: true },
   { id: 'sign-led', kind: 'sign', price: 4000 },
   { id: 'sign-marquee', kind: 'sign', price: 6500 },
   { id: 'sign', kind: 'sign', price: 10_000 },

@@ -49,7 +49,7 @@ export const MEMBERS_LOOKS: readonly { month: number; id: string; name: string; 
   { month: 202611, id: 't-founder', name: 'Founding Member', what: 'Title' },
   { month: 202611, id: 'nm-prism', name: 'Prism', what: 'Name style' },
   { month: 202612, id: 't-founder', name: 'Founding Member', what: 'Title' },
-  { month: 202612, id: 'cd-snowglobe', name: 'Snow globe', what: 'Card theme' },
+  { month: 202612, id: 'cd-snowglobe', name: 'Snow globe', what: 'Background' },
   { month: 202701, id: 'cf-streamers', name: 'Streamers', what: 'Confetti' },
 ]
 

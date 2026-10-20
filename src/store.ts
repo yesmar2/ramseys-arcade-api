@@ -1233,10 +1233,12 @@ function dayLine(day: BookDay, since: number, keep: ((score: number) => boolean)
   return line
 }
 
-/** Every run's score on a game, best first, all time: what its ticket ladder is drawn from (ticketLadders.ts). */
-export async function runScores(game: GameSlug): Promise<number[]> {
+/** Every run's score on a game, best first, all time or before `before`: what its ticket ladder is drawn from (ticketLadders.ts). */
+export async function runScores(game: GameSlug, before = Infinity): Promise<number[]> {
   const copy = await loadCopy()
-  return (copy.byGame.get(game) ?? []).map((entry) => entry.score)
+  const out: number[] = []
+  for (const entry of copy.byGame.get(game) ?? []) if (entry.at < before) out.push(entry.score)
+  return out
 }
 
 type DayPlayer = { name: string; score: number; at: number; device: DeviceType; skin?: string }

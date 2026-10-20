@@ -1,6 +1,7 @@
 import crypto from 'node:crypto'
 import { asc, desc, eq, sql } from 'drizzle-orm'
 import { db } from './db/client.js'
+import { insertWithFeed, onChange } from './feed.js'
 import { trackLaps } from './db/schema.js'
 import { HOTLAP_FIRST_DAY, HOTLAP_PACE_MS } from './hotlapPace.js'
 import { LANDER_FIRST_DAY, LANDER_PACE_MS } from './landerPace.js'
@@ -189,7 +190,7 @@ const lapDevice = (device: string): DeviceType => (isDeviceType(device) ? device
 
 /*
  * A game's laps on its courses after their days, read from the table once and kept, each new lap put in as it's
- * written (addTrackLap). Once a minute, in the background, the table's count and newest lap are checked against
+ * written (addTrackLap, or another server's through the feed). Once a minute, in the background, the table's count and newest lap are checked against
  * the kept ones, and the laps read again if something else wrote it (the admin's reset, the seed). A course's
  * board is drawn from them and its days' players and kept until either changes. Before this, the list of a game's
  * courses read every lap it has had and drew every course's board again, for each player who opened its Past or
@@ -338,8 +339,24 @@ export async function addTrackLap(input: {
   skin?: string | null
 }): Promise<void> {
   const at = Date.now()
-  await db()
-    .insert(trackLaps)
-    .values({ id: crypto.randomBytes(12).toString('base64url'), ...input, at })
-  await keepLap(input.game, input.track, { name: input.name, score: input.score, at, device: input.device, ...(input.skin ? { skin: input.skin } : {}) })
+  const lap: TrackEntry = { name: input.name, score: input.score, at, device: input.device, ...(input.skin ? { skin: input.skin } : {}) }
+  // With the feed, every server keeps it at once, as this one does (and the caller's next request waits for it).
+  await insertWithFeed(
+    db().insert(trackLaps).values({ id: crypto.randomBytes(12).toString('base64url'), ...input, at }),
+    'lap',
+    { game: input.game, track: input.track, lap },
+  )
+  await keepLap(input.game, input.track, lap)
 }
+
+/** Another server's lap, into the kept laps here. */
+onChange<{ game: GameSlug; track: number; lap: TrackEntry }>('lap', async ({ game, track, lap }) => {
+  if (!lap || !Number.isInteger(track)) return
+  await keepLap(game, track, {
+    name: String(lap.name),
+    score: Number(lap.score),
+    at: Number(lap.at),
+    device: lapDevice(String(lap.device)),
+    ...(typeof lap.skin === 'string' && lap.skin ? { skin: lap.skin } : {}),
+  })
+})

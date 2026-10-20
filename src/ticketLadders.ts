@@ -6,7 +6,7 @@ import { SWOOP_FIRST_DAY, SWOOP_PACE_MS } from './swoopPace.js'
 import { WOBBLERUN_FIRST_DAY, WOBBLERUN_PACE_MS } from './wobblerunPace.js'
 import { TIME_SCORE_BASE, TIME_SCORED_GAMES, TRIES_SCORE_BASE } from './scoreLimits.js'
 import { GAME_BANDS } from './seedBoards.js'
-import { ALLOWED_GAMES, boardDateKey, runScores, type GameSlug } from './store.js'
+import { ALLOWED_GAMES, boardDateKey, boardDayStart, runScores, type GameSlug } from './store.js'
 
 /*
  * Ticket ladders: what a run pays by the score it reached, the way an arcade
@@ -88,7 +88,8 @@ async function drawnLadder(game: GameSlug, now: number): Promise<Ladder> {
   const day = boardDateKey(now)
   const held = drawnToday.get(game)
   if (held && held.day === day) return held.ladder
-  const ladder = drawn(game, await runScores(game))
+  // From the runs before the day began: every server draws the same ladder, whenever it's first asked.
+  const ladder = drawn(game, await runScores(game, boardDayStart(now)))
   drawnToday.set(game, { day, ladder })
   return ladder
 }

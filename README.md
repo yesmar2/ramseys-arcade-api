@@ -31,16 +31,29 @@ Health check: `GET /health` — returns `{ ok, games, db }`. A missing/unreachab
 
 ### More than one instance
 
-Each instance keeps the boards, record books, events, tags and sessions in memory, so by default the API must run as **one** instance. To run more (Render: Settings → Scaling, a paid instance type):
+Each instance keeps the boards, record books, events, tags and sessions in memory, so by default the API must run as **one** instance. To run more on Render (any paid instance type; the service must have no disk):
 
-1. Set `MULTI_INSTANCE=1` on the service and deploy, still at one instance.
-2. Then raise the instance count.
+1. On the service's **Environment** page, add `MULTI_INSTANCE` = `1`, and save it so it deploys, still at one instance. Don't add it to render.yaml: an edit there puts its env values back over the dashboard's (render.yaml's `value:` lines).
+2. Check that `/health` answers `"db": true`, and that the next save and log-in work.
+3. On the service's **Compute** page, under **Manual Scaling**, set the instance count (2, then more as needed) and **Save Changes**. Render starts the new instances at once and shares requests evenly between them. Each instance is billed as a whole plan: two Pro instances cost twice one.
+4. Autoscaling (a minimum, a maximum and a target CPU or memory) needs a Pro *workspace* plan or higher. It scales up at once and down a few minutes later, and it overrides the manual count.
+
+Before you need it:
+- `DATABASE_URL` should be Neon's **pooled** connection string (its host has `-pooler`), as each instance opens up to 10 connections (`src/db/client.ts`).
+- Set `NODE_OPTIONS` = `--max-old-space-size=3072` on a 4 GB instance. Every instance holds the whole score history: about 2.5 GB at 20,000 players and 2.3 million runs (scripts/loadtest). More instances spread the requests, not that memory, and every instance still takes in every save.
+
+Checked 2026-10-20 on two local servers with `MULTI_INSTANCE=1`, on a 20,000-player world:
+- `scripts/loadtest/multi-check.mjs` passed all its checks. A change made on one server was on the other at once: a save, a record, a log-out, an avatar, a group, a capped event and a bracket joined from both, a Plus grant, a deleted account and a lap on a past course.
+- 550 people spread over both (`site.mjs --bases`) ran at 413 req/s, p50 21 ms, p95 0.42 s. The two then gave the same answers: `days-check.mjs` 4,971 of 4,971 and `compare.mjs` 400 of 400.
+- A server restarted afterwards, reading the tables afresh, gave those same answers too.
 
 With it on, every change goes into the `change_feed` table and every instance reads it twice a second (`src/feed.ts`); a response to a change carries `X-Feed-Id`, and the app sends it back as `X-Feed-After` for 15 seconds, so whichever instance answers next has read that far first. The sweep runs on one instance at a time (a lease in the `leases` table), and so do the checks at boot. Things to know:
 
 - The feed polls the database twice a second per instance, so Neon never idles down while the API runs.
 - Rate limits are counted per instance, so a caller spread across two instances gets twice the allowance.
 - A script that rewrites tables (`npm run seed:world`, `npm run seed`, `avatars:refresh`) tells running instances through the feed; anything else that writes to the tables directly needs a restart of the API. With one instance the ten-minute look at the tables still catches it.
+- A few things are kept per instance for up to a minute and reach the others when that runs out: a day's Ace Chase spread (20 s), bug-hunt and poll counts (20 s and 15 s), friend lists (10 s), name flair (60 s), the site events switch (30 s) and the season preview switch (30 s).
+- The admin page's **Reset test data** restarts every instance, a few seconds apart, as it restarts the one that ran it.
 - Going back to one instance: lower the count first, then remove the variable.
 
 ### Launch checklist

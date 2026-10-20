@@ -1,6 +1,8 @@
 import { and, eq, isNull, ne, or } from 'drizzle-orm'
+import { forgetAccountSessions } from './auth.js'
 import { db } from './db/client.js'
 import { accounts, memberships, nameClaims, prizesOwned } from './db/schema.js'
+import { announce, onChange } from './feed.js'
 import { stripe, type CheckoutSession } from './payments.js'
 import { prizeById } from './prizes.js'
 import { seasonNow, syncSeason } from './seasons.js'
@@ -149,10 +151,21 @@ export async function memberNames(now = Date.now()): Promise<string[]> {
   return membersHeld.names
 }
 
+function forgetPlan(accountId: string) {
+  forgetAccountSessions(accountId)
+  membersHeld = null
+}
+
+onChange<{ accountId?: string }>('plan', ({ accountId }) => {
+  if (accountId) forgetPlan(String(accountId))
+})
+
 /** The plan, and the season's Pass+ rewards up to their level the moment they become a member. */
 async function setPlan(accountId: string, plus: boolean, now = Date.now()) {
   await db().update(accounts).set({ plan: plus ? 'plus' : 'free' }).where(eq(accounts.id, accountId))
-  membersHeld = null
+  // The plan is read from the kept session, on every server: drop it there, and the members' marks with it.
+  forgetPlan(accountId)
+  await announce('plan', { accountId })
   if (!plus) return
   await giveMembersLooks(accountId, 'plus', now)
   const season = await seasonNow(now)

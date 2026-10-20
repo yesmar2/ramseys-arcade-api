@@ -100,6 +100,7 @@ async function getOrCreateAccount(
     // Their email there changed: follow it, unless another account here already has it.
     if (known.email !== email && !(await accountWhere(eq(accounts.email, email)))) {
       await db().update(accounts).set({ email }).where(eq(accounts.id, known.id))
+      await dropAccountSessions(known.id)
       return rowToAccount({ ...known, email })
     }
     return rowToAccount(known)
@@ -114,6 +115,7 @@ async function getOrCreateAccount(
     }
     if (Object.keys(link).length) {
       await db().update(accounts).set(link).where(eq(accounts.id, existing.id))
+      await dropAccountSessions(existing.id)
       return rowToAccount({ ...existing, ...link })
     }
     return rowToAccount(existing)
@@ -481,6 +483,26 @@ export function invalidateSessionCache(token?: string) {
 onChange<{ key?: string }>('session-drop', ({ key }) => {
   sessionDrops++
   if (key) sessionCache.delete(String(key))
+})
+
+/** Every kept session of one account, here: its row changed (its plan, its email) or went. */
+export function forgetAccountSessions(accountId: string) {
+  sessionDrops++
+  for (const [key, hit] of sessionCache) if (hit.account?.id === accountId) sessionCache.delete(key)
+}
+
+/**
+ * An account's kept sessions dropped here and, through the feed, on every server, so the next request on any
+ * of them reads the account afresh. Without it, another server answered for up to five minutes with what it
+ * held: a deleted account still signed in, a new Plus member still free.
+ */
+export async function dropAccountSessions(accountId: string): Promise<void> {
+  forgetAccountSessions(accountId)
+  await announce('account-drop', { accountId })
+}
+
+onChange<{ accountId?: string }>('account-drop', ({ accountId }) => {
+  if (accountId) forgetAccountSessions(String(accountId))
 })
 
 export async function resolveSession(

@@ -2,7 +2,7 @@
 // pages and their boards, and runs played the way the games play them (run start, the run's own length, records,
 // the save, the end card's reads, a race's ghost). load.mjs is the September crowd; this one follows the site.
 //
-// Usage: node site.mjs --visitors 300 --guests 100 --players 150 --seconds 120 [--base http://127.0.0.1:8806] [--timeline]
+// Usage: node site.mjs --visitors 300 --guests 100 --players 150 --seconds 120 [--base http://127.0.0.1:8806 | --bases <a>,<b>] [--timeline]
 //   --visitors  signed-in people walking pages, with the header's polls
 //   --guests    signed-out people walking pages
 //   --players   signed-in people playing runs, end card included, with a page between runs now and then
@@ -15,7 +15,12 @@ const arg = (name, fallback) => {
   const i = process.argv.indexOf(`--${name}`)
   return i > 0 ? process.argv[i + 1] : fallback
 }
-const BASE = arg('base', 'http://127.0.0.1:8806')
+// Several servers on one database (MULTI_INSTANCE=1): --bases http://127.0.0.1:8806,http://127.0.0.1:8807 sends each
+// request to one of them at random, as a load balancer without sticky sessions does, and each person says back
+// their last change's feed number for 15 s, as the site does (feedSync.ts).
+const BASES = arg('bases', arg('base', 'http://127.0.0.1:8806')).split(',').map((b) => b.trim())
+const BASE = BASES[0]
+const FEED_HOLD_MS = 15_000
 const VISITORS = Number(arg('visitors', 100))
 const GUESTS = Number(arg('guests', 0))
 const PLAYERS = Number(arg('players', 0))
@@ -54,7 +59,13 @@ async function call(who, label, path, init = {}) {
     const headers = { 'x-forwarded-for': who.ip, ...(init.headers ?? {}) }
     if (who.token) headers.authorization = `Bearer ${who.token}`
     if (init.body) headers['content-type'] = 'application/json'
-    const res = await fetch(BASE + path, { ...init, headers, signal: controller.signal })
+    if (who.feedAfter && Date.now() - who.feedAt < FEED_HOLD_MS) headers['x-feed-after'] = String(who.feedAfter)
+    const res = await fetch(BASES[Math.floor(Math.random() * BASES.length)] + path, { ...init, headers, signal: controller.signal })
+    const fed = Number(res.headers.get('x-feed-id'))
+    if (fed > (who.feedAfter ?? 0)) {
+      who.feedAfter = fed
+      who.feedAt = Date.now()
+    }
     const body = await res.text()
     const ms = performance.now() - t0
     if (!res.ok) {
@@ -90,9 +101,9 @@ async function call(who, label, path, init = {}) {
 
 /* ---------- the server's memory, sampled from outside (Windows) ---------- */
 
-function serverPid() {
+function serverPid(base = BASE) {
   try {
-    const port = new URL(BASE).port
+    const port = new URL(base).port
     const out = execSync('netstat -ano', { encoding: 'utf8' })
     const line = out.split(/\r?\n/).find((l) => l.includes(`:${port} `) && l.includes('LISTENING'))
     return line ? line.trim().split(/\s+/).pop() : null
@@ -447,7 +458,7 @@ async function player(who, end) {
 
 /* ---------- the run ---------- */
 
-const pid = serverPid()
+const pids = BASES.map((base) => serverPid(base))
 console.log('learning the world…')
 await learn()
 console.log(
@@ -463,14 +474,16 @@ const visitorsList = people.slice(0, VISITORS).map((p) => ({ ...p, name: pick(NA
 const playersList = people.slice(VISITORS)
 const guestsList = Array.from({ length: GUESTS }, () => ({ ip: nextIp() }))
 
-console.log(`${BASE} · pid ${pid} · ${VISITORS} visitors · ${GUESTS} guests · ${PLAYERS} players · ${SECONDS}s`)
+console.log(`${BASES.join(' + ')} · pid ${pids.join(', ')} · ${VISITORS} visitors · ${GUESTS} guests · ${PLAYERS} players · ${SECONDS}s`)
 measuring = true
 const t0 = Date.now()
 const end = t0 + SECONDS * 1000
-const rss = []
+const rss = BASES.map(() => [])
 const memTimer = setInterval(() => {
-  const mb = pid ? rssMb(pid) : null
-  if (mb) rss.push(mb)
+  pids.forEach((pid, i) => {
+    const mb = pid ? rssMb(pid) : null
+    if (mb) rss[i].push(mb)
+  })
 }, 3000)
 await Promise.all([
   ...visitorsList.map((w) => visitor(w, end)),
@@ -515,6 +528,6 @@ if (TIMELINE) {
   )
 }
 console.log(
-  `${total} ok, ${failed} failed, ${(total / wall).toFixed(0)} req/s over ${wall.toFixed(0)}s · all p50 ${Math.round(pct(all, 50))} ms, p95 ${Math.round(pct(all, 95))} ms, p99 ${Math.round(pct(all, 99))} ms · peak in flight ${peakInFlight} · server memory ${rss.length ? `${Math.min(...rss)}–${Math.max(...rss)} MB` : 'n/a'}`,
+  `${total} ok, ${failed} failed, ${(total / wall).toFixed(0)} req/s over ${wall.toFixed(0)}s · all p50 ${Math.round(pct(all, 50))} ms, p95 ${Math.round(pct(all, 95))} ms, p99 ${Math.round(pct(all, 99))} ms · peak in flight ${peakInFlight} · server memory ${rss.map((list) => (list.length ? `${Math.min(...list)}–${Math.max(...list)} MB` : 'n/a')).join(', ')}`,
 )
 process.exit(0)

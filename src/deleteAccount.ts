@@ -1,6 +1,6 @@
 import { and, asc, eq, inArray, isNotNull, ne, or, sql } from 'drizzle-orm'
 import type { AnyPgColumn } from 'drizzle-orm/pg-core'
-import { invalidateSessionCache } from './auth.js'
+import { dropAccountSessions, invalidateSessionCache } from './auth.js'
 import { db } from './db/client.js'
 import {
   accounts,
@@ -142,8 +142,10 @@ export async function deleteAccount(accountId: string): Promise<{ tags: string[]
     await tx.delete(accounts).where(eq(accounts.id, accountId))
   })
 
-  // What this server held of it: its sessions, its tags and their boards, books, events and groups.
+  // What the servers held of it: its sessions (on every server, dropAccountSessions), its tags and their boards,
+  // books, events and groups.
   invalidateSessionCache()
+  await dropAccountSessions(accountId)
   for (const tag of tags) invalidateFlair(tag)
   await rewrittenHere(['scores', 'records', 'events', 'claims', 'groups', 'site-records'])
   console.log(`[account] deleted an account with ${tags.length} tag(s); ${groupsPassed} group(s) passed on, ${groupsGone} gone`)

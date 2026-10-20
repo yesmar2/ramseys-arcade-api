@@ -1,6 +1,7 @@
 import { and, eq, inArray, isNotNull, isNull, like, notLike, or, sql } from 'drizzle-orm'
 import { encodeAvatar, parseAvatar, type Avatar } from './avatars.js'
 import { db } from './db/client.js'
+import { announce, onChange } from './feed.js'
 import { accounts, appMeta, directedInvites, friendRequests, friendships, groupMembers, groups, nameClaims, trophyCursor } from './db/schema.js'
 import { isFinishBadge } from './prizes.js'
 
@@ -191,6 +192,18 @@ class ResetRefused extends Error {
 
 let resetting = false
 
+/*
+ * Another server reset the data. The server that did it starts afresh on Render (adminRoutes.ts), so that nothing it
+ * held in memory outlives the data; each of the others does the same, a few seconds apart so they aren't all
+ * starting at once.
+ */
+onChange<{ at?: number }>('world-reset', ({ at }) => {
+  resetAtRead = Promise.resolve(Number(at) || Date.now())
+  if (!process.env.RENDER) return
+  console.log('[reset] another server reset the data: starting afresh')
+  setTimeout(() => process.exit(0), 2_000 + Math.random() * 10_000)
+})
+
 /** Empty everything played and drop the sample players, in one transaction. Answers what was there before. */
 export async function resetWorld(now = Date.now()): Promise<{ at: number; before: ResetCounts }> {
   if (now >= RESET_UNTIL) throw new ResetRefused('The reset was for before launch, and launch day is over.', 410, 'RESET_CLOSED')
@@ -235,6 +248,8 @@ export async function resetWorld(now = Date.now()): Promise<{ at: number; before
       await tx.insert(appMeta).values({ key: 'data_reset_at', value: at }).onConflictDoUpdate({ target: appMeta.key, set: { value: at } })
     })
     resetAtRead = Promise.resolve(now)
+    // Every other server holds the old world in memory too: it starts afresh as well (below).
+    await announce('world-reset', { at: now })
     console.log(
       `[reset] emptied play and ${before.samplePlayers} sample players at ${at}; ${before.players} accounts kept, ${before.dressedAvatars} avatars made plain`,
     )

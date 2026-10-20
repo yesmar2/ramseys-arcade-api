@@ -1,11 +1,14 @@
 // Two API servers on one database (MULTI_INSTANCE=1): a change made on one is
 // seen on the other, straight away for the caller who made it. Throwaway
-// database only.
+// database only. LOAD_DB names it (default arcade_load on :55432); both servers start with ADMIN_EMAILS set to
+// ADMIN_EMAIL (default multi-admin@example.test), for giving Plus.
 import postgres from 'postgres'
 
 const A = process.env.A ?? 'http://127.0.0.1:8796'
 const B = process.env.B ?? 'http://127.0.0.1:8797'
-const sql = postgres('postgres://postgres@127.0.0.1:55432/arcade_load', { max: 1 })
+// An admin, for giving Plus: both servers start with ADMIN_EMAILS set to it.
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL ?? 'multi-admin@example.test'
+const sql = postgres(process.env.LOAD_DB ?? 'postgres://postgres@127.0.0.1:55432/arcade_load', { max: 1 })
 
 let problems = 0
 const expect = (ok, what) => {
@@ -121,6 +124,8 @@ const stamp = Date.now().toString(36).slice(-4).toUpperCase()
   await p.call(A, '/names/claim', { name: tag })
   const list = await p.call(A, '/tournaments')
   const daily = list.body?.tournaments?.find((t) => t.cadence === 'daily' && t.status === 'active')
+  if (!daily) console.log('     (no daily event to try: the site events are off)')
+  else {
   const joined = await p.call(A, `/tournaments/${daily.id}/join`, { name: tag })
   expect(joined.status === 201, `joined the daily on A (${joined.status})`)
   const posted = await p.call(B, `/tournaments/${daily.id}/scores`, { name: tag, game: daily.games[0], score: 4242 })
@@ -134,6 +139,7 @@ const stamp = Date.now().toString(36).slice(-4).toUpperCase()
   const rowB = dB.body?.standings?.find((r) => r.name === tag)
   expect(rowA?.totalPoints != null && JSON.stringify(rowA) === JSON.stringify(rowB), `A and B both have the run (${JSON.stringify(rowB)?.slice(0, 100)})`)
   expect(JSON.stringify(dA.body) === JSON.stringify(dB.body), 'the whole daily page is the same on A and B')
+  }
 }
 
 // ---- A capped event, joined from both servers at once: never past its cap.
@@ -166,8 +172,16 @@ const stamp = Date.now().toString(36).slice(-4).toUpperCase()
   const rows = await sql`select count(*)::int as n from tournament_players where tournament_id = ${ev.id}`
   expect(rows[0].n === 3 && joinedCount === 3 && full === 3, `three seats taken, three turned away (${rows[0].n} rows, ${joinedCount} joined, ${full} full)`)
   await wait(1200)
-  const eA = await host.call(A, `/tournaments/${ev.id}?invite=${invite}`)
-  const eB = await host.call(B, `/tournaments/${ev.id}?invite=${invite}`)
+  let eA = await host.call(A, `/tournaments/${ev.id}?invite=${invite}`)
+  let eB = await host.call(B, `/tournaments/${ev.id}?invite=${invite}`)
+  // Joined from both at once, one server can be a moment behind the other: say where, then look again.
+  if (JSON.stringify(eA.body) !== JSON.stringify(eB.body)) {
+    const keys = Object.keys(eA.body ?? {}).filter((k) => JSON.stringify(eA.body[k]) !== JSON.stringify(eB.body?.[k]))
+    console.log(`     (not yet the same: ${keys.join(', ')}; again in 2 s)`)
+    await wait(2000)
+    eA = await host.call(A, `/tournaments/${ev.id}?invite=${invite}`)
+    eB = await host.call(B, `/tournaments/${ev.id}?invite=${invite}`)
+  }
   expect(eA.body?.players?.length === 3 && JSON.stringify(eA.body) === JSON.stringify(eB.body), `A and B show the same three (${eA.body?.players?.length}, ${eB.body?.players?.length})`)
 }
 
@@ -225,6 +239,54 @@ const stamp = Date.now().toString(36).slice(-4).toUpperCase()
   const runs = await sql`select count(*)::int as n from tournament_scores where tournament_id = ${ev.id}`
   expect(runs[0].n === posted.filter((r) => r.status < 300).length, `every run is a row (${runs[0].n})`)
   expect(JSON.stringify(fA.body) === JSON.stringify(fB.body), 'A and B agree after the runs')
+}
+
+// ---- Plus given on A: B reads the plan afresh, not from the session it kept (feed kind "plan").
+{
+  const admin = await signIn(ADMIN_EMAIL)
+  const p = await signIn(`multi-p-${stamp}@example.test`)
+  const tag = `MP${stamp}`
+  await p.call(A, '/names/claim', { name: tag })
+  const before = await p.call(B, '/auth/me')
+  const granted = await admin.call(A, '/admin/plus', { name: tag, on: true })
+  expect(granted.status === 200 && granted.body?.plan === 'plus', `Plus given on A (${granted.status} ${granted.body?.error ?? granted.body?.plan})`)
+  await wait(1200)
+  const after = await p.call(B, '/auth/me')
+  expect(before.body?.account?.plan === 'free' && after.body?.account?.plan === 'plus', `B has the plan at once (${before.body?.account?.plan} -> ${after.body?.account?.plan})`)
+  await admin.call(A, '/admin/plus', { name: tag, on: false })
+}
+
+// ---- An account deleted on A is signed out on B (feed kind "account-drop").
+{
+  const p = await signIn(`multi-d-${stamp}@example.test`)
+  const tag = `MD${stamp}`
+  await p.call(A, '/names/claim', { name: tag })
+  const before = await p.call(B, '/auth/me')
+  const gone = await p.call(A, '/auth/delete-account', { confirm: tag })
+  expect(gone.status === 200, `account deleted on A (${gone.status} ${gone.body?.error ?? ''})`)
+  const after = await p.call(B, '/auth/me')
+  expect(before.status === 200 && after.status === 401, `B has signed it out (${before.status} -> ${after.status})`)
+}
+
+// ---- A lap on a past course, run on A, is on B's board of the course (feed kind "lap").
+{
+  const p = await signIn(`multi-l-${stamp}@example.test`)
+  const tag = `ML${stamp}`
+  await p.call(A, '/names/claim', { name: tag })
+  // Lander's cave from two days ago: past, and inside the free week. Its blue ship took about a minute.
+  const today = Math.floor((Date.now() - 4 * 3600_000 - Date.UTC(2026, 8, 30)) / 86_400_000) + 1
+  const n = today - 2
+  const board = await p.call(B, `/tracks/lander/${n}/board?name=${tag}&limit=1`)
+  const run = await p.call(A, '/runs/start', { game: 'lander' })
+  const ms = 40_000
+  await wait(ms + 500)
+  const lap = await p.call(A, `/tracks/lander/${n}/laps`, { name: tag, score: 1_000_000 - ms, device: 'desktop', runId: run.body?.runId, runLagMs: 0 })
+  expect(lap.status === 200 && lap.feedId > 0, `a lap on cave ${n} on A (${lap.status} ${lap.body?.code ?? ''}, #${lap.feedId})`)
+  const onB = await p.call(B, `/tracks/lander/${n}/board?name=${tag}&limit=1`)
+  expect(board.status === 200 && onB.body?.you?.score === 1_000_000 - ms, `B has it on the cave's board at once (${JSON.stringify(onB.body?.you)})`)
+  const recs = await p.call(B, `/tracks/lander/records?name=${tag}`)
+  const row = recs.body?.tracks?.find((t) => t.track === n)
+  expect(row?.you?.score === 1_000_000 - ms, `and in B's list of caves (${JSON.stringify(row?.you)})`)
 }
 
 // ---- One server sweeps.

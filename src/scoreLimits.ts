@@ -101,7 +101,15 @@ const SCORE_RULES: Record<GameSlug, ScoreRule> = {
   stacker: { kind: 'rate', floor: 30, perSecond: 4 },
   // A daily since 2026-10-06: the API works its day out from the six taps (centroid/save.ts).
   centroid: { kind: 'judged' },
-  pop: { kind: 'rate', floor: 200, perSecond: 60 },
+  /*
+   * A round is 45 seconds. Measured with the game's own engine since the
+   * bubbles (73ba1a17): a bot that pops every bubble dead centre the instant
+   * it can scores 5,600–6,060; one with a fifth-second reaction and 80% centres
+   * 5,000–5,600; a steady player around 4,000. The old 200 + 60/s (2,900 at
+   * 45 s) refused all of them. These allow 7,700 at 45 s, and a perfect run
+   * stays under the near-cap flag.
+   */
+  pop: { kind: 'rate', floor: 500, perSecond: 160 },
   simon: { kind: 'rate', floor: 5, perSecond: 1.5 },
   pellets: { kind: 'rate', floor: 2_000, perSecond: 250 },
   crumbtrail: { kind: 'rate', floor: 2_000, perSecond: 250 },

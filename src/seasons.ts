@@ -128,7 +128,8 @@ const SPACE_RACE: SeasonReward[] = [
   { level: 25, kind: 'skin', id: 'snake-comet-tail', name: 'Blazing comet', what: 'Snake skin', game: 'snake' },
   { level: 26, kind: 'prize', id: 't-moonwalker', name: 'Moonwalker', what: 'Title' },
   tickets(27, 150),
-  { level: 28, kind: 'prize', id: 'sign-liftoff', name: 'Liftoff sign', what: 'Wall sign' },
+  // Was the Liftoff sign until the player card lost its sign (Ramsey picked the foils, 2026-10-20).
+  { level: 28, kind: 'prize', id: 'fl-liftoff', name: 'Liftoff foil', what: 'Card foil' },
   { level: 29, kind: 'prize', id: 'cd-nebula', name: 'Nebula', what: 'Background' },
   { level: 30, kind: 'prize', id: 'supernova', name: 'Supernova', what: 'Avatar' },
 ]
@@ -201,7 +202,8 @@ const COLD_SNAP: SeasonReward[] = [
   { level: 25, kind: 'skin', id: 'snake-snowdrift-tail', name: 'Snowdrift tail', what: 'Snake skin', game: 'snake' },
   { level: 26, kind: 'prize', id: 't-snow-bunny', name: 'Snow Bunny', what: 'Title' },
   tickets(27, 150),
-  { level: 28, kind: 'prize', id: 'sign-cold-snap', name: 'Cold Snap sign', what: 'Wall sign' },
+  // Was the Cold Snap sign until the player card lost its sign (Ramsey picked the foils, 2026-10-20).
+  { level: 28, kind: 'prize', id: 'fl-frost', name: 'Frost foil', what: 'Card foil' },
   { level: 29, kind: 'prize', id: 'cd-pine-forest', name: 'Pine forest', what: 'Background' },
   { level: 30, kind: 'prize', id: 'blizzard', name: 'Blizzard', what: 'Avatar' },
 ]

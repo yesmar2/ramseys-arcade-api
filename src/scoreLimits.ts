@@ -105,7 +105,16 @@ const SCORE_RULES: Record<GameSlug, ScoreRule> = {
    */
   asteroids: { kind: 'rate', floor: 4_000, perSecond: 800 },
   patriot: { kind: 'rate', floor: 3_000, perSecond: 300 },
-  snake: { kind: 'rate', floor: 200, perSecond: 25 },
+  /*
+   * Measured with the game's own engine (2026-10-20). A queued turn runs the
+   * head at twice the pace, so zig-zagging is the fast way across the board: a
+   * bot that plans every cell and turns at every one scores up to 2,460 by
+   * 74 s, ~33 points a second mid-run; one held to 8 turns a second with a
+   * fifth-second reaction ~18 a second; a steady player ~10. The old
+   * 200 + 25/s refused the perfect run (1.18x) and flagged the top human near
+   * the cap. These allow 3,070 at 72 s, and a perfect run stays under the flag.
+   */
+  snake: { kind: 'rate', floor: 300, perSecond: 38 },
   crosswalk: { kind: 'rate', floor: 50, perSecond: 12 },
   stacker: { kind: 'rate', floor: 30, perSecond: 4 },
   // A daily since 2026-10-06: the API works its day out from the six taps (centroid/save.ts).

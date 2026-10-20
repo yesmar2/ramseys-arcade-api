@@ -94,7 +94,16 @@ type ScoreRule =
   | { kind: 'judged' }
 
 const SCORE_RULES: Record<GameSlug, ScoreRule> = {
-  asteroids: { kind: 'rate', floor: 2_000, perSecond: 200 },
+  /*
+   * Rocks pay 20/50/100 doubled by a five-hit combo, the gun fires on its own,
+   * and a cleared wave pays for time under par, so the points come at a steady
+   * rate. Measured with the game's own engine (2026-10-20): a bot that leads
+   * every shot exactly scores about 620 a second all run (39,000 in a minute,
+   * 372,000 in ten), one aiming 180 ms late about 370, a steady player 165. The
+   * old 2,000 + 200/s refused the second within thirty seconds and flagged the
+   * third. These keep the first under the near-cap flag (0.83 at worst).
+   */
+  asteroids: { kind: 'rate', floor: 4_000, perSecond: 800 },
   patriot: { kind: 'rate', floor: 3_000, perSecond: 300 },
   snake: { kind: 'rate', floor: 200, perSecond: 25 },
   crosswalk: { kind: 'rate', floor: 50, perSecond: 12 },
@@ -113,7 +122,16 @@ const SCORE_RULES: Record<GameSlug, ScoreRule> = {
   simon: { kind: 'rate', floor: 5, perSecond: 1.5 },
   pellets: { kind: 'rate', floor: 2_000, perSecond: 250 },
   crumbtrail: { kind: 'rate', floor: 2_000, perSecond: 250 },
-  bop: { kind: 'rate', floor: 20, perSecond: 4 },
+  /*
+   * A right call is a point, a quick one two, and a third of a second passes
+   * between calls. Measured with the game's own engine (2026-10-20): a bot that
+   * answers every call the frame it comes up scores 6 a second for as long as
+   * it likes (3,600 in ten minutes); a ~180 ms keyboard hand makes about 3.8,
+   * which the old 20 + 4/s flagged near the cap within a minute (and the bot
+   * broke); a good keyboard player ~2.9, a phone player under 1.5. These leave
+   * the bot under 0.8 of the cap at every point.
+   */
+  bop: { kind: 'rate', floor: 20, perSecond: 7.5 },
   putt: { kind: 'rate', floor: 500, perSecond: 80 },
   barrage: { kind: 'rate', floor: 500, perSecond: 400 },
   /*
@@ -123,9 +141,12 @@ const SCORE_RULES: Record<GameSlug, ScoreRule> = {
    */
   frenzy: { kind: 'curve', floor: 300, perSecond: 100, perSecondSquared: 10 },
   /*
-   * A point a note. Measured: a bot that taps every tune back the instant it
-   * ends scores 525 in five minutes, and each tune takes its full length to
-   * watch, so no hand can go faster. These leave that bot under 60% of the cap.
+   * A point a note, a catch and a lantern rung, three for a Follow. Measured
+   * with the game's own engine (2026-10-20): a bot that taps every tune back
+   * the frame it ends and never misses a Catch or a Follow scores 390 in five
+   * minutes, 860 in ten and 6,975 in an hour, since each tune takes its full
+   * length to watch; a ~180 ms hand makes 720 in ten. These leave that bot
+   * under half the cap at ten minutes and under two thirds at an hour.
    */
   fireflies: { kind: 'rate', floor: 20, perSecond: 3 },
   /*

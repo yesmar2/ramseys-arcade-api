@@ -120,8 +120,26 @@ const SCORE_RULES: Record<GameSlug, ScoreRule> = {
    */
   pop: { kind: 'rate', floor: 500, perSecond: 160 },
   simon: { kind: 'rate', floor: 5, perSecond: 1.5 },
-  pellets: { kind: 'rate', floor: 2_000, perSecond: 250 },
-  crumbtrail: { kind: 'rate', floor: 2_000, perSecond: 250 },
+  /*
+   * Measured with the game's own engine (2026-10-20): a bot with instant
+   * reactions that baits all four chasers onto a glowberry, eats them, and
+   * rides the hundred-in-a-row fright banks 15,000 in its first twenty seconds,
+   * and never dies: ~135,000 in ten minutes. One with a 180 ms reaction reached
+   * 16,000 by 42 s. The old 2,000 + 250/s refused both, and flagged a steady
+   * player. These keep the instant bot under the near-cap flag everywhere
+   * (worst 0.82, at 49 s).
+   */
+  pellets: { kind: 'rate', floor: 15_000, perSecond: 300 },
+  /*
+   * Measured with the game's own engine (2026-10-20): every row pays, the
+   * streak runs to x8 through the crumbed gaps, and fruit grows with depth, so
+   * a bot with instant reactions scores ~440/s on a phone's ten columns and
+   * ~550/s on a desktop's twenty-one (330,000 in ten minutes, without dying);
+   * one with a 180 ms reaction 115,000 in four. The old 2,000 + 250/s refused
+   * even a steady player. These keep the instant bot under the near-cap flag
+   * (worst 0.83, desktop, three minutes in).
+   */
+  crumbtrail: { kind: 'rate', floor: 30_000, perSecond: 650 },
   /*
    * A right call is a point, a quick one two, and a third of a second passes
    * between calls. Measured with the game's own engine (2026-10-20): a bot that

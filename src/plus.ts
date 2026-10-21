@@ -318,6 +318,27 @@ export async function plusPortal(accountId: string, origin: string, to: 'cancel'
   return portal.url
 }
 
+/**
+ * A cancelled membership kept on before it ends: the cancellation taken off at Stripe, from the Plus page's
+ * Keep Plus, which used to send a member to the portal, whose page has no way back once it's done (Ramsey,
+ * 2026-10-21). An older API version's flag is cleared as it was set; a date (the portal's way now) is cleared
+ * to nothing. The membership as it is then.
+ */
+export async function keepPlus(accountId: string): Promise<PlusState> {
+  const [m] = await db().select({ subscription: memberships.subscription }).from(memberships).where(eq(memberships.accountId, accountId)).limit(1)
+  if (!m?.subscription) throw refusal('There’s no Plus membership to keep', 404, 'NO_MEMBERSHIP')
+  const path = `/subscriptions/${encodeURIComponent(m.subscription)}`
+  const sub = await stripe<Subscription>('GET', path)
+  if (!MEMBER_STATES.has(sub.status)) throw refusal('That membership has ended: join again from this page', 409, 'ENDED')
+  const kept = sub.cancel_at_period_end
+    ? await stripe<Subscription>('POST', path, { cancel_at_period_end: false })
+    : sub.cancel_at
+      ? await stripe<Subscription>('POST', path, { cancel_at: '' })
+      : sub
+  await noteSubscription(kept, accountId)
+  return plusState(accountId)
+}
+
 /** Plus from an admin, or taken back: to try it without paying. A paying member's is theirs to cancel, not taken. */
 export async function grantPlusMembership(accountId: string, on: boolean, now = Date.now()) {
   const [m] = await db().select({ source: memberships.source }).from(memberships).where(eq(memberships.accountId, accountId)).limit(1)

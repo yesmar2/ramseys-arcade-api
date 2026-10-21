@@ -2,7 +2,7 @@ import { Router } from 'express'
 import { z } from 'zod'
 import { accountFromRequest } from './auth.js'
 import { paymentsEnabled, returnOrigin } from './payments.js'
-import { confirmPlus, giveMembersLooks, looksAhead, memberNames, membersLooks, PLUS_PRICE, PLUS_YEAR, plusCheckout, plusPortal, plusState, TRIAL_DAYS } from './plus.js'
+import { confirmPlus, giveMembersLooks, keepPlus, looksAhead, memberNames, membersLooks, PLUS_PRICE, PLUS_YEAR, plusCheckout, plusPortal, plusState, TRIAL_DAYS } from './plus.js'
 import { takeToken } from './rateLimit.js'
 
 export const plusRouter = Router()
@@ -104,5 +104,23 @@ plusRouter.post('/manage', async (req, res) => {
     res.json({ url: await plusPortal(account.id, returnOrigin(req), parsed.success ? (parsed.data.to ?? null) : null) })
   } catch (err) {
     fail(err, res, 'Couldn’t open your membership')
+  }
+})
+
+/** POST /plus/keep: a cancelled membership kept on before it ends, right here rather than in Stripe's portal. */
+plusRouter.post('/keep', async (req, res) => {
+  try {
+    const account = await accountFromRequest(req)
+    if (!account) {
+      res.status(401).json({ error: 'Sign in first', code: 'AUTH_REQUIRED' })
+      return
+    }
+    if (!takeToken(`plus:${account.id}`, PAGE_LIMIT).ok) {
+      res.status(429).json({ error: 'Too many tries, give it a minute', code: 'RATE_LIMITED' })
+      return
+    }
+    res.json({ you: await keepPlus(account.id) })
+  } catch (err) {
+    fail(err, res, 'Couldn’t keep Plus on')
   }
 })

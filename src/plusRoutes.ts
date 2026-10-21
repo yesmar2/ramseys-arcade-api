@@ -88,7 +88,7 @@ plusRouter.post('/confirm', async (req, res) => {
   }
 })
 
-/** POST /plus/manage: Stripe's customer portal, to change the card or cancel. Its address. */
+/** POST /plus/manage: Stripe's customer portal, to change the card or cancel ({ to: 'cancel' }: its cancel step). Its address. */
 plusRouter.post('/manage', async (req, res) => {
   try {
     const account = await accountFromRequest(req)
@@ -100,7 +100,8 @@ plusRouter.post('/manage', async (req, res) => {
       res.status(429).json({ error: 'Too many tries, give it a minute', code: 'RATE_LIMITED' })
       return
     }
-    res.json({ url: await plusPortal(account.id, returnOrigin(req)) })
+    const parsed = z.object({ to: z.enum(['cancel']).optional() }).safeParse(req.body ?? {})
+    res.json({ url: await plusPortal(account.id, returnOrigin(req), parsed.success ? (parsed.data.to ?? null) : null) })
   } catch (err) {
     fail(err, res, 'Couldn’t open your membership')
   }

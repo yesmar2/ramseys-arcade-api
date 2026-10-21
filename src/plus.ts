@@ -104,6 +104,8 @@ type Subscription = {
   customer: string
   status: string
   cancel_at_period_end: boolean
+  /** When it ends, once cancelled: how newer API versions (and the customer portal) say "at the period's end". */
+  cancel_at?: number | null
   current_period_end?: number
   items?: { data?: { current_period_end?: number }[] }
   metadata: Record<string, string> | null
@@ -199,14 +201,17 @@ export async function noteSubscription(sub: Subscription, accountIdHint?: string
   }
   if (!accountId) return false
   const periodEnd = sub.current_period_end ?? sub.items?.data?.[0]?.current_period_end ?? null
+  // A cancellation comes as a date now (the portal sets cancel_at; cancel_at_period_end is deprecated), or as
+  // the old flag from an older API version: either way it ends then, and doesn't renew.
+  const endsAt = sub.cancel_at ?? null
   const member = MEMBER_STATES.has(sub.status)
   await keepMembership(accountId, {
     source: 'stripe',
     customer: sub.customer,
     subscription: sub.id,
     status: sub.status,
-    renewsAt: periodEnd ? periodEnd * 1000 : null,
-    cancelsAtEnd: sub.cancel_at_period_end,
+    renewsAt: endsAt ? endsAt * 1000 : periodEnd ? periodEnd * 1000 : null,
+    cancelsAtEnd: sub.cancel_at_period_end || endsAt != null,
   })
   await setPlan(accountId, member)
   return member
@@ -287,11 +292,29 @@ export async function confirmPlus(sessionId: string, accountId: string): Promise
   return settlePlusSession(session, accountId)
 }
 
-/** Stripe's customer portal for a member: change the card, see receipts, cancel. Its page's address. */
-export async function plusPortal(accountId: string, origin: string): Promise<string> {
-  const [m] = await db().select({ customer: memberships.customer }).from(memberships).where(eq(memberships.accountId, accountId)).limit(1)
+/**
+ * Stripe's customer portal for a member: change the card, see receipts, cancel. Its page's address. With
+ * `to: 'cancel'`, straight to its cancel step, and back to the Plus page once that's done (?left=done): the
+ * portal's own page has only a small way back, which Ramsey missed on his first try (2026-10-21).
+ */
+export async function plusPortal(accountId: string, origin: string, to: 'cancel' | null = null): Promise<string> {
+  const [m] = await db()
+    .select({ customer: memberships.customer, subscription: memberships.subscription })
+    .from(memberships)
+    .where(eq(memberships.accountId, accountId))
+    .limit(1)
   if (!m?.customer) throw refusal('There’s no Plus membership to manage', 404, 'NO_MEMBERSHIP')
-  const portal = await stripe<{ url: string }>('POST', '/billing_portal/sessions', { customer: m.customer, return_url: `${origin}/plus` })
+  const cancel =
+    to === 'cancel' && m.subscription
+      ? {
+          flow_data: {
+            type: 'subscription_cancel',
+            subscription_cancel: { subscription: m.subscription },
+            after_completion: { type: 'redirect', redirect: { return_url: `${origin}/plus?left=done` } },
+          },
+        }
+      : {}
+  const portal = await stripe<{ url: string }>('POST', '/billing_portal/sessions', { customer: m.customer, return_url: `${origin}/plus`, ...cancel })
   return portal.url
 }
 

@@ -26,6 +26,27 @@ export function paymentsEnabled(): boolean {
   return Boolean(process.env.STRIPE_SECRET_KEY?.trim())
 }
 
+/**
+ * Stripe as the merchant of record (Managed Payments, "Let us handle it", Ramsey's pick at sign-up on
+ * 2026-10-21): Stripe sells, and charges, files and pays the sales tax and VAT, for 3.5% more a sale. It's
+ * asked for on each checkout once STRIPE_MANAGED_PAYMENTS=on, since an account without it refuses one that
+ * asks. Neither checkout sends what it doesn't allow (automatic tax, payment method types, shipping, invoices).
+ */
+export function managedPayments(): { managed_payments?: { enabled: true } } {
+  return /^(1|on|true|yes)$/i.test(process.env.STRIPE_MANAGED_PAYMENTS?.trim() ?? '') ? { managed_payments: { enabled: true } } : {}
+}
+
+/**
+ * What each thing sold is, for tax (Stripe's product tax codes), which Managed Payments needs: games played in
+ * the browser. Plus is kept to its subscription; a Gold Pass is one season's.
+ */
+export const TAX_CODES = {
+  /** Video Games - streamed - subscription - with conditional rights. */
+  plus: 'txcd_10201004',
+  /** Video Games - streamed - non subscription - with limited rights. */
+  goldPass: 'txcd_10201003',
+} as const
+
 function refusal(message: string, status: number, code: string) {
   return Object.assign(new Error(message), { status, code })
 }
@@ -83,6 +104,7 @@ export async function plusCheckout(def: SeasonDef, accountId: string, origin: st
   if (!def.plus) throw refusal('That season has no Gold Pass', 404, 'NO_PLUS')
   const session = await stripe<CheckoutSession>('POST', '/checkout/sessions', {
     mode: 'payment',
+    ...managedPayments(),
     client_reference_id: accountId,
     customer_email: email || undefined,
     metadata: { accountId, season: def.id },
@@ -96,6 +118,7 @@ export async function plusCheckout(def: SeasonDef, accountId: string, origin: st
           product_data: {
             name: `Season ${def.id} Gold Pass · ${def.name}`,
             description: 'The Gold row of the season pass: skins and looks, yours to keep. Looks only, never score.',
+            tax_code: TAX_CODES.goldPass,
           },
         },
       },

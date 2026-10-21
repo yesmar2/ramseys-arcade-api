@@ -3,7 +3,7 @@ import { forgetAccountSessions } from './auth.js'
 import { db } from './db/client.js'
 import { accounts, memberships, nameClaims, prizesOwned } from './db/schema.js'
 import { announce, onChange } from './feed.js'
-import { stripe, type CheckoutSession } from './payments.js'
+import { managedPayments, stripe, TAX_CODES, type CheckoutSession } from './payments.js'
 import { prizeById } from './prizes.js'
 import { seasonNow, syncSeason } from './seasons.js'
 import { boardDateKey } from './store.js'
@@ -242,6 +242,7 @@ export async function plusCheckout(accountId: string, origin: string, email?: st
   const price = interval === 'year' ? PLUS_YEAR : PLUS_PRICE
   const session = await stripe<CheckoutSession>('POST', '/checkout/sessions', {
     mode: 'subscription',
+    ...managedPayments(),
     client_reference_id: accountId,
     customer_email: email || undefined,
     metadata: { accountId, kind: 'plus' },
@@ -257,6 +258,7 @@ export async function plusCheckout(accountId: string, origin: string, email?: st
             name: 'Blipka Plus',
             description:
               'Every past day of every daily, every season’s Gold Pass, a members’ look each month, new games a week before launch, and more events and groups to host. Playing stays free.',
+            tax_code: TAX_CODES.plus,
           },
         },
       },

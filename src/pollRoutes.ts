@@ -2,7 +2,7 @@ import { Router } from 'express'
 import { z } from 'zod'
 import { requireAdmin } from './admin.js'
 import { accountFromRequest } from './auth.js'
-import { answerPoll, editPoll, pastPolls, pollNumber, pollsBetween, pollView, resetPoll } from './poll.js'
+import { answerPastPoll, answerPoll, editPoll, pastPolls, pollNumber, pollsBetween, pollView, resetPoll } from './poll.js'
 import { takeToken } from './rateLimit.js'
 import { boardDateKey } from './store.js'
 
@@ -14,6 +14,8 @@ export const pollRouter = Router()
 
 /** More answers than anyone gives; only a script would. */
 const ANSWER_LIMIT = { limit: 20, windowMs: 10 * 60 * 1000 }
+/** Catching up on a backlog of past questions takes more, one tap each. */
+const PAST_ANSWER_LIMIT = { limit: 60, windowMs: 10 * 60 * 1000 }
 
 function fail(err: unknown, res: import('express').Response) {
   const status = (err as { status?: number }).status ?? 500
@@ -75,6 +77,30 @@ pollRouter.post('/', async (req, res) => {
   }
   try {
     res.json(await answerPoll(account.id, parsed.data.pick))
+  } catch (err) {
+    fail(err, res)
+  }
+})
+
+/** Answer a past question, late: signed in, once each, for no tickets (poll.ts answerPastPoll). */
+pollRouter.post('/past/:n', async (req, res) => {
+  const n = Number(req.params.n)
+  const parsed = answerSchema.safeParse(req.body)
+  if (!Number.isInteger(n) || n < 1 || !parsed.success) {
+    res.status(400).json({ error: 'Pick an answer', code: 'INVALID_BODY' })
+    return
+  }
+  const account = await accountFromRequest(req)
+  if (!account) {
+    res.status(401).json({ error: 'Sign in to answer Blip', code: 'AUTH_REQUIRED' })
+    return
+  }
+  if (!takeToken(`poll-past:${account.id}`, PAST_ANSWER_LIMIT).ok) {
+    res.status(429).json({ error: 'Slow down a little', code: 'RATE_LIMITED' })
+    return
+  }
+  try {
+    res.json({ poll: await answerPastPoll(account.id, n, parsed.data.pick) })
   } catch (err) {
     fail(err, res)
   }

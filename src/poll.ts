@@ -1,4 +1,4 @@
-import { and, eq, inArray, sql } from 'drizzle-orm'
+import { and, eq, gt, inArray, sql } from 'drizzle-orm'
 import { db } from './db/client.js'
 import { appMeta, prizesOwned, ticketLedger, type TicketDetail } from './db/schema.js'
 import { POLL_FIRST_DAY, POLLS, type PlannedPoll } from './pollPlan.js'
@@ -140,12 +140,15 @@ export type PollView = {
   answers: number | null
 }
 
-/** How many of Blip's questions an account has answered, ever: its poll rows. */
+/**
+ * How many of Blip's questions an account has answered on their day, ever: its poll rows that paid. A past one
+ * answered late (answerPastPoll) is a row of nought, and doesn't count toward his set.
+ */
 async function answersOf(accountId: string): Promise<number> {
   const [row] = await db()
     .select({ answers: sql<number>`count(*)::int` })
     .from(ticketLedger)
-    .where(and(eq(ticketLedger.accountId, accountId), eq(ticketLedger.reason, 'poll')))
+    .where(and(eq(ticketLedger.accountId, accountId), eq(ticketLedger.reason, 'poll'), gt(ticketLedger.amount, 0)))
   return Number(row?.answers ?? 0)
 }
 
@@ -189,12 +192,12 @@ export async function pollView(accountId: string | null, now = Date.now()): Prom
 }
 
 /**
- * A past question's answers, final once its day is over (answers are taken on their day only), so kept a while:
- * only a test-data reset (resetWorld.ts) changes them after that, and it's caught up with within the hour.
+ * Past questions' answers, kept a short while: they still come in, late (answerPastPoll), but slowly. A player's
+ * own late answer drops its question's, so they see it counted.
  */
 const final = new Map<number, { at: number; value: PollCounts }>()
 const FINAL_KEEP = 500
-const FINAL_FOR_MS = 60 * 60 * 1000
+const FINAL_FOR_MS = 60 * 1000
 
 /** Past questions' counts, those not kept yet in one look at the ledger. */
 async function finalCounts(polls: Poll[], now: number): Promise<Map<number, PollCounts>> {
@@ -262,6 +265,26 @@ export async function pastPolls(
     next: from > 1 ? from : null,
     answers,
   }
+}
+
+/**
+ * Answer a past question, late (Ramsey, 2026-10-21: "we should let people still vote on older ones too"): once
+ * each, counted with everyone's, but for no tickets and not toward Blip's set, which stay the day's question's,
+ * so a backlog of them is nothing to farm. Says the question as it now stands, with the player's answer.
+ */
+export async function answerPastPoll(accountId: string, n: number, pick: number, now = Date.now()): Promise<PastPoll> {
+  const today = pollNumber(boardDateKey(now))
+  if (today == null || n < 1 || n >= today) {
+    throw Object.assign(new Error('That isn’t a past question'), { status: 404, code: 'NO_POLL' })
+  }
+  const poll = await pollAt(n)
+  if (!Number.isInteger(pick) || pick < 0 || pick >= poll.options.length) {
+    throw Object.assign(new Error('That isn’t one of the answers'), { status: 400, code: 'BAD_PICK' })
+  }
+  await awardTickets(accountId, 'poll', ref(n), 0, null, now, { pick, label: poll.q })
+  final.delete(n)
+  const [counts, mine] = await Promise.all([finalCounts([poll], now), pickOf(accountId, n)])
+  return { ...poll, ...counts.get(n)!, pick: mine }
 }
 
 /** Answer today's question: once a day, for POLL_TICKETS, and toward Blip's set: `won` is a skin this answer won. */

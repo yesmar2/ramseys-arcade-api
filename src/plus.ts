@@ -212,6 +212,29 @@ export async function noteSubscription(sub: Subscription, accountIdHint?: string
   return member
 }
 
+/**
+ * Plus ended now for a Stripe customer whose payment came back (a full refund, or a chargeback: payments.ts):
+ * its subscription cancelled at Stripe, so it charges no more, and the plan with it. What Plus gave stays
+ * given, as when it ends any other way. The account, or null when the customer has no membership here.
+ */
+export async function endPlusNow(customer: string): Promise<string | null> {
+  const [m] = await db()
+    .select({ accountId: memberships.accountId, subscription: memberships.subscription })
+    .from(memberships)
+    .where(eq(memberships.customer, customer))
+    .limit(1)
+  if (!m) return null
+  if (m.subscription) {
+    const path = `/subscriptions/${encodeURIComponent(m.subscription)}`
+    // One cancelled already (in Stripe's dashboard, before the refund) can't be cancelled again: it's read instead.
+    const sub = await stripe<Subscription>('DELETE', path).catch(() => stripe<Subscription>('GET', path))
+    await noteSubscription(sub, m.accountId)
+  } else {
+    await setPlan(m.accountId, false)
+  }
+  return m.accountId
+}
+
 /** A Stripe Checkout for a Plus membership, by the month or the year, for one account: with the free week, the first time. Its page's address. */
 export async function plusCheckout(accountId: string, origin: string, email?: string | null, interval: PlusInterval = 'month'): Promise<string> {
   const state = await plusState(accountId)

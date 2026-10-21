@@ -1,7 +1,9 @@
 import crypto from 'node:crypto'
 import type { Request, Response } from 'express'
-import { noteSubscription, settlePlusSession } from './plus.js'
-import { grantPlus, SEASONS, type SeasonDef } from './seasons.js'
+import { accountTags } from './deleteAccount.js'
+import { sendToAdmins } from './errorAlerts.js'
+import { endPlusNow, noteSubscription, settlePlusSession } from './plus.js'
+import { grantPlus, revokePlus, SEASONS, type SeasonDef } from './seasons.js'
 
 /*
  * Payments: a season's Pass+ (seasons.ts), bought once, and the Plus membership (plus.ts), monthly, both
@@ -12,6 +14,10 @@ import { grantPlus, SEASONS, type SeasonDef } from './seasons.js'
  *
  * Settings: STRIPE_SECRET_KEY (sk_test_… on staging, sk_live_… live), STRIPE_WEBHOOK_SECRET (whsec_…, from
  * the webhook Stripe sends to /payments/stripe/webhook).
+ *
+ * Money that goes back takes back what it paid for (Ramsey, 2026-10-20): a full refund, or a chargeback,
+ * ends that Gold Pass or Plus at once. Its events: checkout.session.completed and .async_payment_succeeded,
+ * customer.subscription.created, .updated and .deleted, charge.refunded and charge.dispute.created.
  */
 
 const STRIPE = 'https://api.stripe.com/v1'
@@ -36,7 +42,7 @@ function form(params: Record<string, unknown>, prefix = ''): string[] {
   return out
 }
 
-export async function stripe<T>(method: 'GET' | 'POST', path: string, params?: Record<string, unknown>): Promise<T> {
+export async function stripe<T>(method: 'GET' | 'POST' | 'DELETE', path: string, params?: Record<string, unknown>): Promise<T> {
   const key = process.env.STRIPE_SECRET_KEY?.trim()
   if (!key) throw refusal('Payments aren’t set up yet', 503, 'PAYMENTS_OFF')
   const res = await fetch(`${STRIPE}${path}`, {
@@ -64,6 +70,7 @@ export type CheckoutSession = {
   id: string
   mode?: 'payment' | 'subscription' | 'setup'
   url: string | null
+  payment_intent?: string | null
   payment_status: 'paid' | 'unpaid' | 'no_payment_required'
   amount_total: number | null
   currency: string | null
@@ -107,8 +114,73 @@ async function settleCheckout(session: CheckoutSession, accountId?: string): Pro
   if (!owner || !Number.isInteger(seasonId) || !SEASONS.some((s) => s.id === seasonId)) return false
   if (accountId && owner !== accountId) throw refusal('That payment is another account’s', 403, 'NOT_YOURS')
   if (session.payment_status !== 'paid') return false
+  // A checkout stays "paid" after its money goes back: the old thank-you link mustn't give the Gold Pass again.
+  if (session.payment_intent && (await moneyWentBack(session.payment_intent))) return false
   await grantPlus(owner, seasonId, { source: 'stripe', ref: session.id, amount: session.amount_total, currency: session.currency })
   return true
+}
+
+/** A charge, as a refund's or a dispute's event has it: whether it all went back, and what it paid for. */
+type StripeCharge = {
+  id: string
+  amount: number
+  currency: string
+  refunded: boolean
+  disputed?: boolean
+  payment_intent: string | null
+  customer: string | null
+}
+
+type StripeDispute = { id: string; charge: string; amount: number; currency: string; reason?: string | null }
+
+/** Whether a payment's money went back: refunded in full, or disputed. */
+async function moneyWentBack(paymentIntent: string): Promise<boolean> {
+  const charges = await stripe<{ data: StripeCharge[] }>('GET', `/charges?payment_intent=${encodeURIComponent(paymentIntent)}&limit=3`)
+  return charges.data.some((charge) => charge.refunded || charge.disputed === true)
+}
+
+/**
+ * What a charge paid for, taken back: a Gold Pass, its season's (the checkout put the account and the season on
+ * its payment), or else Plus, whose subscription is cancelled now so it charges no more. What either gave stays
+ * given, as when Plus ends (TermsPage). Null when it was neither.
+ */
+async function takeBack(charge: StripeCharge): Promise<{ what: 'Gold Pass' | 'Plus'; accountId: string } | null> {
+  if (charge.payment_intent) {
+    const intent = await stripe<{ metadata?: Record<string, string> | null }>('GET', `/payment_intents/${encodeURIComponent(charge.payment_intent)}`)
+    const accountId = intent.metadata?.accountId
+    const season = Number(intent.metadata?.season)
+    if (accountId && Number.isInteger(season)) {
+      await revokePlus(accountId, season)
+      return { what: 'Gold Pass', accountId }
+    }
+  }
+  const accountId = charge.customer ? await endPlusNow(charge.customer) : null
+  return accountId ? { what: 'Plus', accountId } : null
+}
+
+function dollars(amount: number, currency: string): string {
+  return currency.toLowerCase() === 'usd' ? `$${(amount / 100).toFixed(2)}` : `${(amount / 100).toFixed(2)} ${currency.toUpperCase()}`
+}
+
+/** A refund in full takes back what the charge paid for. A partial one, a goodwill one, leaves it all as it was. */
+async function onRefund(charge: StripeCharge) {
+  if (!charge.refunded) return
+  const taken = await takeBack(charge)
+  if (taken) console.log(`[payments] refunded ${charge.id}: ${taken.what} taken back from ${taken.accountId}`)
+}
+
+/** A chargeback takes back what it paid for, as a refund does, and tells the admins: it's answered in Stripe. */
+async function onDispute(dispute: StripeDispute) {
+  const charge = await stripe<StripeCharge>('GET', `/charges/${encodeURIComponent(dispute.charge)}`)
+  const taken = await takeBack(charge)
+  const tag = taken ? ((await accountTags(taken.accountId).catch(() => []))[0] ?? null) : null
+  console.log(`[payments] dispute ${dispute.id} on ${charge.id}: ${taken ? `${taken.what} taken back from ${taken.accountId}` : 'nothing to take back'}`)
+  await sendToAdmins({
+    title: 'A chargeback',
+    body: `${taken ? `${taken.what}${tag ? ` for ${tag}` : ''}` : 'A payment'}, ${dollars(dispute.amount, dispute.currency)}${dispute.reason ? ` (${dispute.reason.replace(/_/g, ' ')})` : ''}. ${taken ? 'It’s taken back. ' : ''}Answer it in Stripe.`,
+    href: 'https://dashboard.stripe.com/disputes',
+    tag: `dispute-${dispute.id}`,
+  }).catch((err) => console.warn('[payments] dispute push', err))
 }
 
 /** The buyer back on the Season page: their checkout, if it's paid, gives Pass+ now. */
@@ -154,6 +226,10 @@ export async function stripeWebhook(req: Request, res: Response) {
       }
     } else if (event.type === 'customer.subscription.updated' || event.type === 'customer.subscription.deleted' || event.type === 'customer.subscription.created') {
       await noteSubscription(event.data.object as unknown as Parameters<typeof noteSubscription>[0])
+    } else if (event.type === 'charge.refunded') {
+      await onRefund(event.data.object as unknown as StripeCharge)
+    } else if (event.type === 'charge.dispute.created') {
+      await onDispute(event.data.object as unknown as StripeDispute)
     }
     res.json({ received: true })
   } catch (err) {

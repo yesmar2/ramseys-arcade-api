@@ -166,6 +166,11 @@ export const PRIZES: readonly Prize[] = [
   { id: 'sign-cold-snap', kind: 'sign', price: 0, earned: true, retired: true },
   // A card foil: a sheen over the player's full-art card, whatever background is under it.
   { id: 'fl-frost', kind: 'foil', price: 0, earned: true },
+  // The foils that took the place of titles (2026-10-21): the Gold rows' tops, a 100-day streak, the founders.
+  { id: 'fl-nebula', kind: 'foil', price: 0, earned: true },
+  { id: 'fl-aurora', kind: 'foil', price: 0, earned: true },
+  { id: 'fl-everyday', kind: 'foil', price: 0, earned: true },
+  { id: 'fl-founder', kind: 'foil', price: 0, earned: true },
   // Season 2's Pass+ row (seasons.ts), never traded for.
   { id: 't-snow-angel', kind: 'title', price: 0, earned: true },
   { id: 't-ice-cold', kind: 'title', price: 0, earned: true },

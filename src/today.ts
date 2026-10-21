@@ -162,7 +162,8 @@ export const TODAY_MILESTONES: readonly TodayMilestone[] = [
   { day: 7, kind: 'pin', id: 'today' },
   { day: 14, kind: 'tickets', amount: 25 },
   { day: 30, kind: 'prize', id: 'gilded' },
-  { day: 100, kind: 'prize', id: 't-everyday' },
+  // A card foil since titles showed nowhere (2026-10-21); it was the Every Day title.
+  { day: 100, kind: 'prize', id: 'fl-everyday' },
 ]
 
 /** How far back a streak is looked for. */
@@ -561,7 +562,7 @@ const MILESTONE_WORDS: Record<number, { title: string; body: string; href: strin
   7: { title: 'A week of Dailies', body: 'The Dailies pin is yours to wear on your badge.', href: '/rank' },
   14: { title: 'Day 14 of your Dailies streak', body: '25 tickets for the prize counter.', href: '/prizes' },
   30: { title: 'Thirty days of Dailies', body: 'The gold badge finish is yours to wear.', href: '/rank' },
-  100: { title: 'A hundred days of Dailies', body: 'The “Every Day” title is yours, under your tag.', href: '/rank' },
+  100: { title: 'A hundred days of Dailies', body: 'The Every Day foil is yours, to wear over your player card.', href: '/rank' },
 }
 
 /** The digest key of a day's streak reminder (streakReminders.ts): one a day at most. */

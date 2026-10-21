@@ -33,7 +33,7 @@ import { ordinal } from './words.js'
  * look after it can: the Season page asks for that catch-up.
  */
 
-export type SeasonRewardKind = 'pin' | 'prize' | 'tickets' | 'skin'
+export type SeasonRewardKind = 'pin' | 'prize' | 'tickets' | 'skin' | 'sticker'
 
 export type SeasonReward = {
   level: number
@@ -105,28 +105,29 @@ const SPACE_RACE: SeasonReward[] = [
   { level: 2, kind: 'prize', id: 'nm-starlight', name: 'Starlight', what: 'Name style' },
   tickets(3, 50),
   { level: 4, kind: 'prize', id: 'orbit', name: 'Orbit', what: 'Avatar' },
-  { level: 5, kind: 'prize', id: 't-space-race', name: 'Space Race', what: 'Title' },
+  // Was a title until titles showed nowhere (Ramsey: "go for it", 2026-10-21). The season's sticker at its level instead (stickers.ts).
+  { level: 5, kind: 'sticker', id: 's1-moon', name: 'Moon', what: 'Sticker' },
   { level: 6, kind: 'prize', id: 'cd-deepfield', name: 'Deep field', what: 'Background' },
   { level: 7, kind: 'prize', id: 'cf-stardust', name: 'Stardust', what: 'Confetti' },
   { level: 8, kind: 'skin', id: 'lander-moonhopper', name: 'Moonhopper', what: 'Lander ship', game: 'lander' },
   tickets(9, 75),
-  { level: 10, kind: 'prize', id: 't-liftoff', name: 'Liftoff', what: 'Title' },
+  { level: 10, kind: 'sticker', id: 's1-ringed', name: 'Ringed planet', what: 'Sticker' },
   { level: 11, kind: 'prize', id: 'nm-countdown', name: 'Countdown', what: 'Name style' },
   { level: 12, kind: 'skin', id: 'asteroids-comet', name: 'Comet', what: 'Space Rocks ship', game: 'asteroids' },
   tickets(13, 100),
   { level: 14, kind: 'prize', id: 'ringed', name: 'Ringed planet', what: 'Avatar' },
   { level: 15, kind: 'skin', id: 'barrage-nova', name: 'Nova fighter', what: 'Barrage ship', game: 'barrage' },
-  { level: 16, kind: 'prize', id: 't-space-cadet', name: 'Space Cadet', what: 'Title' },
+  { level: 16, kind: 'sticker', id: 's1-comet', name: 'Comet', what: 'Sticker' },
   { level: 17, kind: 'prize', id: 'cd-launchpad', name: 'Launch pad', what: 'Background' },
   tickets(18, 100),
   { level: 19, kind: 'skin', id: 'hotlap-rocket', name: 'Rocket car', what: 'Hot Lap car', game: 'hotlap' },
   { level: 20, kind: 'prize', id: 'cf-shooting', name: 'Shooting stars', what: 'Confetti' },
-  { level: 21, kind: 'prize', id: 't-zero-g', name: 'Zero G', what: 'Title' },
+  { level: 21, kind: 'sticker', id: 's1-satellite', name: 'Satellite', what: 'Sticker' },
   { level: 22, kind: 'prize', id: 'mission', name: 'Mission patch', what: 'Avatar' },
   tickets(23, 150),
   { level: 24, kind: 'prize', id: 'nm-nebula', name: 'Nebula', what: 'Name style' },
   { level: 25, kind: 'skin', id: 'snake-comet-tail', name: 'Blazing comet', what: 'Snake skin', game: 'snake' },
-  { level: 26, kind: 'prize', id: 't-moonwalker', name: 'Moonwalker', what: 'Title' },
+  { level: 26, kind: 'sticker', id: 's1-astronaut', name: 'Astronaut', what: 'Sticker' },
   tickets(27, 150),
   // Was the Liftoff sign until the player card lost its sign (Ramsey picked the foils, 2026-10-20).
   { level: 28, kind: 'prize', id: 'fl-liftoff', name: 'Liftoff foil', what: 'Card foil' },
@@ -140,7 +141,8 @@ const SPACE_RACE: SeasonReward[] = [
  */
 const SPACE_RACE_PLUS: SeasonReward[] = [
   { level: 1, kind: 'skin', id: 'asteroids-shuttle', name: 'Shuttle', what: 'Space Rocks ship', game: 'asteroids', plus: true },
-  { level: 2, kind: 'prize', id: 't-flight-director', name: 'Flight Director', what: 'Title', plus: true },
+  // Was a title until titles showed nowhere (Ramsey: "go for it", 2026-10-21).
+  { ...tickets(2, 250), plus: true },
   { level: 4, kind: 'prize', id: 'nm-aurora', name: 'Aurora', what: 'Name style', plus: true },
   { level: 5, kind: 'prize', id: 'nm-telemetry', name: 'Telemetry', what: 'Name style', plus: true },
   { level: 7, kind: 'skin', id: 'lander-eagle', name: 'Eagle', what: 'Lander ship', game: 'lander', plus: true },
@@ -155,8 +157,8 @@ const SPACE_RACE_PLUS: SeasonReward[] = [
   { level: 20, kind: 'prize', id: 'blue-marble', name: 'Blue marble', what: 'Avatar', plus: true },
   { level: 22, kind: 'skin', id: 'hotlap-midnight', name: 'Moon buggy', what: 'Hot Lap car', game: 'hotlap', plus: true },
   { level: 23, kind: 'skin', id: 'snake-saturn-tail', name: 'Saturn tail', what: 'Snake skin', game: 'snake', plus: true },
-  { level: 25, kind: 'prize', id: 't-commander', name: 'Commander', what: 'Title', plus: true },
-  { level: 26, kind: 'prize', id: 't-ace-pilot', name: 'Ace Pilot', what: 'Title', plus: true },
+  { ...tickets(25, 250), plus: true },
+  { ...tickets(26, 250), plus: true },
   { level: 29, kind: 'prize', id: 'cd-station', name: 'Space station', what: 'Background', plus: true },
   { level: 30, kind: 'prize', id: 'eclipse', name: 'Eclipse', what: 'Avatar', plus: true },
   // The bonus levels, past the free row's last.
@@ -164,7 +166,8 @@ const SPACE_RACE_PLUS: SeasonReward[] = [
   { level: 32, kind: 'skin', id: 'lander-starhopper', name: 'Starhopper', what: 'Lander ship', game: 'lander', plus: true },
   { level: 33, kind: 'prize', id: 'nm-wormhole', name: 'Wormhole', what: 'Name style', plus: true },
   { level: 34, kind: 'prize', id: 'black-hole', name: 'Black hole', what: 'Avatar', plus: true },
-  { level: 35, kind: 'prize', id: 't-legend', name: 'Space Race Legend', what: 'Title', plus: true },
+  // The top of the Gold row: a card foil, not a title (2026-10-21).
+  { level: 35, kind: 'prize', id: 'fl-nebula', name: 'Nebula foil', what: 'Card foil', plus: true },
 ]
 
 /**
@@ -211,7 +214,8 @@ const COLD_SNAP: SeasonReward[] = [
 /** Season 2's Pass+ row: as Season 1's, ten skins and fifteen looks on two of every three levels, then five bonus levels. */
 const COLD_SNAP_PLUS: SeasonReward[] = [
   { level: 1, kind: 'skin', id: 'swoop-penguin', name: 'Penguin', what: 'Swoop bird', game: 'swoop', plus: true },
-  { level: 2, kind: 'prize', id: 't-snow-angel', name: 'Snow Angel', what: 'Title', plus: true },
+  // Was a title until titles showed nowhere (Ramsey: "go for it", 2026-10-21).
+  { ...tickets(2, 250), plus: true },
   { level: 4, kind: 'prize', id: 'nm-hoarfrost', name: 'Hoarfrost', what: 'Name style', plus: true },
   { level: 5, kind: 'prize', id: 'nm-polar', name: 'Polar', what: 'Name style', plus: true },
   { level: 7, kind: 'skin', id: 'marblerun-ice-marble', name: 'Ice marble', what: 'Marble Run marble', game: 'marblerun', plus: true },
@@ -226,8 +230,8 @@ const COLD_SNAP_PLUS: SeasonReward[] = [
   { level: 20, kind: 'prize', id: 'polar-bear', name: 'Polar bear', what: 'Avatar', plus: true },
   { level: 22, kind: 'skin', id: 'hotlap-borealis', name: 'Aurora glider', what: 'Hot Lap car', game: 'hotlap', plus: true },
   { level: 23, kind: 'skin', id: 'snake-fireside-tail', name: 'Ice dragon', what: 'Snake skin', game: 'snake', plus: true },
-  { level: 25, kind: 'prize', id: 't-ice-cold', name: 'Ice Cold', what: 'Title', plus: true },
-  { level: 26, kind: 'prize', id: 't-polar-explorer', name: 'Polar Explorer', what: 'Title', plus: true },
+  { ...tickets(25, 250), plus: true },
+  { ...tickets(26, 250), plus: true },
   { level: 29, kind: 'prize', id: 'cd-northern-lights', name: 'Northern lights', what: 'Background', plus: true },
   { level: 30, kind: 'prize', id: 'diamond-dust', name: 'Diamond dust', what: 'Avatar', plus: true },
   // The bonus levels, past the free row's last.
@@ -235,7 +239,8 @@ const COLD_SNAP_PLUS: SeasonReward[] = [
   { level: 32, kind: 'skin', id: 'pileup-northern-lights', name: 'Northern lights', what: 'Pileup blocks', game: 'pileup', plus: true },
   { level: 33, kind: 'prize', id: 'nm-crystal', name: 'Crystal', what: 'Name style', plus: true },
   { level: 34, kind: 'prize', id: 'ice-crown', name: 'Ice crown', what: 'Avatar', plus: true },
-  { level: 35, kind: 'prize', id: 't-cold-legend', name: 'Cold Snap Legend', what: 'Title', plus: true },
+  // The top of the Gold row: a card foil, not a title (2026-10-21).
+  { level: 35, kind: 'prize', id: 'fl-aurora', name: 'Aurora foil', what: 'Card foil', plus: true },
 ]
 
 export const SEASONS: readonly SeasonDef[] = [
@@ -252,7 +257,7 @@ export const SEASONS: readonly SeasonDef[] = [
     spotlight: ['lander', 'asteroids', 'barrage'],
     rewards: SPACE_RACE,
     goals: [
-      { id: 'dailies', title: 'Keep the Dailies on 30 days', need: 30, reward: { kind: 'prize', id: 't-regular', name: 'The Regular title' } },
+      { id: 'dailies', title: 'Keep the Dailies on 30 days', need: 30, reward: { kind: 'tickets', amount: 300, name: '300 tickets' } },
       { id: 'games', title: 'Win tickets in 12 different games', need: 12, reward: { kind: 'tickets', amount: 200, name: '200 tickets' } },
     ],
     // $2.99 for the season, the same as a month of Plus, so joining Plus for a month and leaving is no cheaper (Ramsey, 2026-10-04).
@@ -270,7 +275,7 @@ export const SEASONS: readonly SeasonDef[] = [
     spotlight: ['hotlap', 'swoop', 'marblerun'],
     rewards: COLD_SNAP,
     goals: [
-      { id: 'dailies', title: 'Keep the Dailies on 30 days', need: 30, reward: { kind: 'prize', id: 't-snowbound', name: 'The Snowbound title' } },
+      { id: 'dailies', title: 'Keep the Dailies on 30 days', need: 30, reward: { kind: 'tickets', amount: 300, name: '300 tickets' } },
       { id: 'games', title: 'Win tickets in 12 different games', need: 12, reward: { kind: 'tickets', amount: 200, name: '200 tickets' } },
     ],
     plus: { price: 299, currency: 'usd', rewards: COLD_SNAP_PLUS, bonus: 5 },
@@ -504,7 +509,8 @@ export const SEASON_SKINS: ReadonlyMap<string, string> = new Map(
  * with nothing to hand out.
  */
 export function rewardReady(reward: SeasonReward): boolean {
-  if (reward.kind === 'tickets' || reward.kind === 'pin') return true
+  // A sticker is the album's to give (stickers.ts reads the level): nothing to hand out here.
+  if (reward.kind === 'tickets' || reward.kind === 'pin' || reward.kind === 'sticker') return true
   if (reward.kind === 'prize') return prizeById(reward.id) != null
   return SKINS_DRAWN.has(reward.id)
 }

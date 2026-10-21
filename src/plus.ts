@@ -44,13 +44,14 @@ export const TRIAL_DAYS = 7
 /**
  * The members' looks: each month, every Plus member gets that month's (Ramsey's pick, 2026-10-04: the
  * Dailies + Seasons membership), kept for good. Months are the boards' (America/New_York), YYYYMM. The
- * arcade's opening months also give Founding Member.
+ * arcade's opening months also give the Founder foil.
  */
 export const MEMBERS_LOOKS: readonly { month: number; id: string; name: string; what: string }[] = [
-  { month: 202610, id: 't-founder', name: 'Founding Member', what: 'Title' },
-  { month: 202611, id: 't-founder', name: 'Founding Member', what: 'Title' },
+  // The founders' look was a title until titles showed nowhere (2026-10-21): a card foil now.
+  { month: 202610, id: 'fl-founder', name: 'Founder foil', what: 'Card foil' },
+  { month: 202611, id: 'fl-founder', name: 'Founder foil', what: 'Card foil' },
   { month: 202611, id: 'nm-prism', name: 'Prism', what: 'Name style' },
-  { month: 202612, id: 't-founder', name: 'Founding Member', what: 'Title' },
+  { month: 202612, id: 'fl-founder', name: 'Founder foil', what: 'Card foil' },
   { month: 202612, id: 'cd-snowglobe', name: 'Snow globe', what: 'Background' },
   { month: 202701, id: 'cf-streamers', name: 'Streamers', what: 'Confetti' },
 ]

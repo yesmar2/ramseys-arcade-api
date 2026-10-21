@@ -48,13 +48,14 @@ export const STICKER_PAGES: readonly Page[] = [
   {
     id: 's1',
     season: 1,
+    // Its level stickers are the free pass's rewards at those levels (seasons.ts), where the titles were.
     stickers: [
       { id: 's1-liftoff', has: (f) => level(f, 1) },
       { id: 's1-moon', has: (f) => level(f, 5) },
       { id: 's1-ringed', has: (f) => level(f, 10) },
-      { id: 's1-comet', has: (f) => level(f, 15) },
-      { id: 's1-satellite', has: (f) => level(f, 20) },
-      { id: 's1-astronaut', has: (f) => level(f, 25) },
+      { id: 's1-comet', has: (f) => level(f, 16) },
+      { id: 's1-satellite', has: (f) => level(f, 21) },
+      { id: 's1-astronaut', has: (f) => level(f, 26) },
       { id: 's1-supernova', has: (f) => level(f, 30) },
       { id: 's1-medals', has: (f) => medalsOf(f.season?.medals ?? NO_MEDALS) >= 5 },
       { id: 's1-gold', has: (f) => golds(f.season?.medals ?? NO_MEDALS) >= 5 },

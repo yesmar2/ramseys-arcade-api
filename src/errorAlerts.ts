@@ -71,19 +71,21 @@ function mostOf(list: Seen[]): { what: string; times: number } {
 async function alert(kind: Kind, list: Seen[], players: number) {
   const most = mostOf(list)
   const minutes = WINDOW_MS / 60_000
+  // Each alert its own tag: a phone replaces a notification with the same tag, and an iPhone does it silently, with
+  // no banner or sound, when the last alert is still in its list (Ramsey's test, 2026-10-22).
   const message =
     kind === 'site'
       ? {
           title: 'Site errors are spiking',
           body: `${list.length} from ${players} players in the last ${minutes} minutes. Most: ${most.what.slice(0, 120)} (${most.times})`,
           href: '/admin',
-          tag: 'admin-site-errors',
+          tag: `admin-site-errors-${Date.now()}`,
         }
       : {
           title: 'API errors are spiking',
           body: `${list.length} failed answers in the last ${minutes} minutes. Most: ${most.what} (${most.times}). Render's logs have the rest.`,
           href: '/admin',
-          tag: 'admin-api-errors',
+          tag: `admin-api-errors-${Date.now()}`,
         }
   const to = await adminDevices()
   const sent = await pushToDevices(to, message)
@@ -196,7 +198,8 @@ export async function testAdminAlert() {
     title: 'Test alert',
     body: 'This is where Blipka tells you when errors spike.',
     href: '/admin',
-    tag: 'admin-test',
+    // Its own tag, as the spikes' have, so it never silently replaces the last test still on the phone.
+    tag: `admin-test-${Date.now()}`,
   })
   return {
     devices: to.length,

@@ -225,6 +225,13 @@
       "when": 1792691200961,
       "tag": "0031_push_device",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1792700398904,
+      "tag": "0032_share_events",
+      "breakpoints": true
     }
   ]
 }

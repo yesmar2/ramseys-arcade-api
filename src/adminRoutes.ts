@@ -12,6 +12,7 @@ import { listFlags, reviewFlag, unreviewedCount } from './scoreFlags.js'
 import { runCheck } from './runCheck.js'
 import { getClaim } from './names.js'
 import { resetPreview, resetWorld } from './resetWorld.js'
+import { launchNumbers } from './launchNumbers.js'
 import { playerStats } from './playerStats.js'
 import { grantPlusMembership, plusState } from './plus.js'
 import { grantPlus, hasPlus, revokePlus, seasonInfo, seasonNow, seasonPreview, SEASONS, setSeasonPreview } from './seasons.js'
@@ -114,6 +115,16 @@ adminRouter.get('/players', async (req, res) => {
   try {
     await requireAdmin(req)
     res.json(await playerStats(Date.now(), req.query.seeded === '1'))
+  } catch (err) {
+    refuse(err, res)
+  }
+})
+
+/** The three numbers to watch from launch (launchNumbers.ts): do new players stay, do they share, do they pay. */
+adminRouter.get('/launch-numbers', async (req, res) => {
+  try {
+    await requireAdmin(req)
+    res.json(await launchNumbers())
   } catch (err) {
     refuse(err, res)
   }

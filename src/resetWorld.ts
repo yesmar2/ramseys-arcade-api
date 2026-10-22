@@ -11,7 +11,7 @@ import { isFinishBadge } from './prizes.js'
  * sign-ins, tags, friends and groups, notification settings and push devices, Plus, and the launch email list,
  * feedback and bans. Everything played goes: runs, boards, record books, medals, laps, ghosts, holes, bug hunts,
  * challenges, tickets (Blip's poll answers are ticket rows) and prizes, trophies, season progress, events and
- * their invites, notifications and score flags. The sample players go entirely. And what an avatar wore from
+ * their invites, notifications, score flags and shares. The sample players go entirely. And what an avatar wore from
  * all that comes off it, as an avatar is saved on its tag (avatars.ts): a prize counter finish goes back to the
  * plain badge, and its ring, its pin (but the welcome pin everyone has) and the prizes it wore go. Its emblem or
  * monogram and colours stay. Ramsey, after the first reset: "my users (DAD) stuff from the store wasn't removed".
@@ -54,6 +54,7 @@ const PLAY_TABLES = [
   'change_feed',
   'email_codes',
   'magic_links',
+  'share_events',
 ] as const
 
 const SAMPLE_EMAIL = '%@seed.skermix.dev'

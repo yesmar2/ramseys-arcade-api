@@ -964,3 +964,24 @@ export const launchList = pgTable('launch_list', {
   email: text('email').primaryKey(),
   createdAt: bigint('created_at', { mode: 'number' }).notNull(),
 })
+
+/**
+ * Each time a player sent something on from the site (shares.ts): through the share sheet or copied. What kind
+ * of link it was and the game it was about, never who it went to or the words with it. With the account when
+ * they were signed in, and gone with it. The admin page counts these (launchNumbers.ts).
+ */
+export const shareEvents = pgTable(
+  'share_events',
+  {
+    id: text('id').primaryKey(),
+    at: bigint('at', { mode: 'number' }).notNull(),
+    /** The link's kind: the first part of its path ('today', 'c', 'e', 'records', …), or 'text' with no link. */
+    kind: text('kind').notNull(),
+    /** The game the link was about, when it says. */
+    game: text('game'),
+    /** 'sheet' (the device's share sheet), 'copy', or 'place' (one of the share panel's Email, X…). */
+    how: text('how').notNull(),
+    accountId: text('account_id').references(() => accounts.id, { onDelete: 'cascade' }),
+  },
+  (t) => [index('share_events_at_idx').on(t.at)],
+)

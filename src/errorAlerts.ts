@@ -3,7 +3,7 @@ import { eq } from 'drizzle-orm'
 import { isAdminEmail } from './admin.js'
 import { db } from './db/client.js'
 import { accounts, pushSubscriptions } from './db/schema.js'
-import { pushToDevices, type PushDevice } from './push.js'
+import { pushReady, pushToDevices, pushToDevicesEach, type PushDevice } from './push.js'
 
 /*
  * The admins hear on their phones when errors spike (the launch checklist's "Push you when errors spike"):
@@ -139,8 +139,69 @@ export async function errorAlertsState(now = Date.now()) {
   const list = await adminDevices(now)
   return {
     devices: list.length,
+    /** Whether this server can send push at all (staging can't): with no keys, nothing goes, whatever the devices. */
+    pushReady: pushReady(),
+    deviceList: await adminDeviceList(),
     spike: SPIKE,
     windowMinutes: WINDOW_MS / 60_000,
     lastAlert: { site: alertedAt.site || null, api: alertedAt.api || null },
+  }
+}
+
+/**
+ * The push service a device's address belongs to, which says what kind of device it is. "Sent to 1 device"
+ * left Ramsey asking which device that was when his phone showed nothing (2026-10-22).
+ */
+export type PushService = 'apple' | 'google' | 'microsoft' | 'mozilla' | 'other'
+
+export function pushServiceOf(endpoint: string): PushService {
+  let host = ''
+  try {
+    host = new URL(endpoint).hostname
+  } catch {
+    return 'other'
+  }
+  if (host.endsWith('push.apple.com')) return 'apple'
+  if (host.endsWith('googleapis.com')) return 'google'
+  if (host.endsWith('notify.windows.com')) return 'microsoft'
+  if (host.endsWith('mozilla.com')) return 'mozilla'
+  return 'other'
+}
+
+/** The admins' devices for the admin page, the latest turned on first: what kind each is and when, never its address. */
+async function adminDeviceList() {
+  const rows = await db()
+    .select({
+      endpoint: pushSubscriptions.endpoint,
+      createdAt: pushSubscriptions.createdAt,
+      lastSeenAt: pushSubscriptions.lastSeenAt,
+      email: accounts.email,
+    })
+    .from(pushSubscriptions)
+    .innerJoin(accounts, eq(accounts.id, pushSubscriptions.accountId))
+  return rows
+    .filter((row) => isAdminEmail(row.email))
+    .sort((a, b) => b.lastSeenAt - a.lastSeenAt)
+    .map((row) => ({ service: pushServiceOf(row.endpoint), email: row.email, addedAt: row.createdAt, lastSeenAt: row.lastSeenAt }))
+}
+
+/**
+ * A test push to every admin's devices, from the admin page, with what each device's push service answered. A
+ * device that threw its subscription away (404 or 410) is dropped as it answers.
+ */
+export async function testAdminAlert() {
+  devicesAt = 0
+  const to = await adminDevices()
+  const outcomes = await pushToDevicesEach(to, {
+    title: 'Test alert',
+    body: 'This is where Blipka tells you when errors spike.',
+    href: '/admin',
+    tag: 'admin-test',
+  })
+  return {
+    devices: to.length,
+    sent: outcomes.filter((outcome) => outcome.ok).length,
+    pushReady: pushReady(),
+    results: outcomes.map((outcome) => ({ service: pushServiceOf(outcome.endpoint), ok: outcome.ok, status: outcome.status })),
   }
 }

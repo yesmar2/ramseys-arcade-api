@@ -61,6 +61,11 @@ function ensureConfigured(): boolean {
   return true
 }
 
+/** Whether this server can send push at all: it has VAPID keys. Staging has none. */
+export function pushReady(): boolean {
+  return ensureConfigured()
+}
+
 /** Local wall-clock hour for an IANA zone, falling back to UTC. */
 export function hourIn(zone: string | null, now: number): number {
   if (!zone) return new Date(now).getUTCHours()
@@ -194,28 +199,40 @@ export type PushOutcome =
 
 export type PushDevice = { endpoint: string; p256dh: string; auth: string }
 
+/** What one device's push service answered: whether it took the push, and its HTTP status. */
+export type DeviceOutcome = { endpoint: string; ok: boolean; status: number | null }
+
 /**
  * An admin's alert (errorAlerts.ts), straight to the devices given. It goes at any hour and outside the daily
- * cap, which are guardrails for players. A device the browser has thrown away is dropped, if the database will
- * have it. Returns how many devices took it.
+ * cap, which are guardrails for players. A device the browser has thrown away (404 or 410) is dropped, if the
+ * database will have it. Returns what each device's push service answered; none when push isn't set up here.
  */
+export async function pushToDevicesEach(
+  devices: PushDevice[],
+  message: { title: string; body: string; href: string; tag: string },
+): Promise<DeviceOutcome[]> {
+  if (!ensureConfigured()) return []
+  const body = JSON.stringify({ ...message, kind: 'admin-alert' })
+  const outcomes: DeviceOutcome[] = []
+  for (const device of devices) {
+    try {
+      const sent = await webpush.sendNotification({ endpoint: device.endpoint, keys: { p256dh: device.p256dh, auth: device.auth } }, body)
+      outcomes.push({ endpoint: device.endpoint, ok: true, status: sent.statusCode ?? null })
+    } catch (err) {
+      const status = (err as { statusCode?: number }).statusCode ?? null
+      if (status === 404 || status === 410) await dropEndpoint(device.endpoint).catch(() => {})
+      outcomes.push({ endpoint: device.endpoint, ok: false, status })
+    }
+  }
+  return outcomes
+}
+
+/** The same, counting the devices that took it. */
 export async function pushToDevices(
   devices: PushDevice[],
   message: { title: string; body: string; href: string; tag: string },
 ): Promise<number> {
-  if (!ensureConfigured()) return 0
-  const body = JSON.stringify({ ...message, kind: 'admin-alert' })
-  let delivered = 0
-  for (const device of devices) {
-    try {
-      await webpush.sendNotification({ endpoint: device.endpoint, keys: { p256dh: device.p256dh, auth: device.auth } }, body)
-      delivered++
-    } catch (err) {
-      const status = (err as { statusCode?: number }).statusCode
-      if (status === 404 || status === 410) await dropEndpoint(device.endpoint).catch(() => {})
-    }
-  }
-  return delivered
+  return (await pushToDevicesEach(devices, message)).filter((outcome) => outcome.ok).length
 }
 
 /**

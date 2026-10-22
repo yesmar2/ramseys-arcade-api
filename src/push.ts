@@ -128,6 +128,50 @@ export type SubscriptionInput = {
   endpoint: string
   keys: { p256dh: string; auth: string }
   timeZone?: string
+  /** The kind of device, from deviceLabel. */
+  device?: string | null
+}
+
+/**
+ * The kind of device a browser is, in a few words, from its user agent: "Chrome on an Android phone", "Edge on a
+ * Windows computer", "an iPhone" (a Home Screen app names no browser). Null when it can't tell. The admin page
+ * lists where alerts go by it: Chrome's push service is the same on a phone and a computer, so the address alone
+ * couldn't say which (Ramsey, 2026-10-22).
+ */
+export function deviceLabel(userAgent: string | undefined): string | null {
+  const ua = userAgent ?? ''
+  const os = /Android/i.test(ua)
+    ? /Mobile/i.test(ua)
+      ? 'an Android phone'
+      : 'an Android tablet'
+    : /iPhone|iPod/i.test(ua)
+      ? 'an iPhone'
+      : /iPad/i.test(ua)
+        ? 'an iPad'
+        : /CrOS/.test(ua)
+          ? 'a Chromebook'
+          : /Windows/i.test(ua)
+            ? 'a Windows computer'
+            : /Macintosh|Mac OS X/i.test(ua)
+              ? 'a Mac'
+              : /Linux/i.test(ua)
+                ? 'a Linux computer'
+                : null
+  const browser = /EdgA?\/|EdgiOS\//.test(ua)
+    ? 'Edge'
+    : /SamsungBrowser\//.test(ua)
+      ? 'Samsung Internet'
+      : /OPR\/|Opera/.test(ua)
+        ? 'Opera'
+        : /Firefox\/|FxiOS\//.test(ua)
+          ? 'Firefox'
+          : /CriOS\/|Chrome\//.test(ua)
+            ? 'Chrome'
+            : /Safari\//.test(ua)
+              ? 'Safari'
+              : null
+  if (!os) return browser
+  return browser ? `${browser} on ${os}` : os
 }
 
 export async function savePushSubscription(
@@ -144,6 +188,7 @@ export async function savePushSubscription(
       p256dh: sub.keys.p256dh,
       auth: sub.keys.auth,
       timeZone: sub.timeZone ?? null,
+      device: sub.device ?? null,
       createdAt: now,
       lastSeenAt: now,
     })
@@ -154,6 +199,7 @@ export async function savePushSubscription(
         p256dh: sub.keys.p256dh,
         auth: sub.keys.auth,
         timeZone: sub.timeZone ?? null,
+        device: sub.device ?? null,
         lastSeenAt: now,
         // A re-subscribe clears an earlier delivery failure.
         failedAt: null,
@@ -203,6 +249,12 @@ export type PushDevice = { endpoint: string; p256dh: string; auth: string }
 export type DeviceOutcome = { endpoint: string; ok: boolean; status: number | null }
 
 /**
+ * How an admin's alert travels: urgent, so a phone that's sitting idle shows it at once (Android holds back
+ * ordinary pushes then, to save the battery), and kept a day for a device that's off.
+ */
+const ALERT_OPTIONS = { urgency: 'high', TTL: 24 * 60 * 60 } as const
+
+/**
  * An admin's alert (errorAlerts.ts), straight to the devices given. It goes at any hour and outside the daily
  * cap, which are guardrails for players. A device the browser has thrown away (404 or 410) is dropped, if the
  * database will have it. Returns what each device's push service answered; none when push isn't set up here.
@@ -216,7 +268,11 @@ export async function pushToDevicesEach(
   const outcomes: DeviceOutcome[] = []
   for (const device of devices) {
     try {
-      const sent = await webpush.sendNotification({ endpoint: device.endpoint, keys: { p256dh: device.p256dh, auth: device.auth } }, body)
+      const sent = await webpush.sendNotification(
+        { endpoint: device.endpoint, keys: { p256dh: device.p256dh, auth: device.auth } },
+        body,
+        ALERT_OPTIONS,
+      )
       outcomes.push({ endpoint: device.endpoint, ok: true, status: sent.statusCode ?? null })
     } catch (err) {
       const status = (err as { statusCode?: number }).statusCode ?? null

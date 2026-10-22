@@ -470,6 +470,11 @@ export const pushSubscriptions = pgTable(
     auth: text('auth').notNull(),
     /** IANA zone, for holding notifications out of the middle of the night. */
     timeZone: text('time_zone'),
+    /**
+     * The kind of device in a few words, from its browser when push was turned on ("Chrome on an Android phone"),
+     * so the admin page can say where alerts go. Null for a device that turned push on before it was kept.
+     */
+    device: text('device'),
     createdAt: bigint('created_at', { mode: 'number' }).notNull(),
     lastSeenAt: bigint('last_seen_at', { mode: 'number' }).notNull(),
     failedAt: bigint('failed_at', { mode: 'number' }),

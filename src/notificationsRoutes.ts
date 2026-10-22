@@ -4,6 +4,7 @@ import { accountFromRequest } from './auth.js'
 import { listNotifications, markRead, unreadCount } from './notifications.js'
 import { isTopic, levelsFor, saveLevels, type NotificationLevels } from './notificationSettings.js'
 import {
+  deviceLabel,
   disablePush,
   publicVapidKey,
   pushStatus,
@@ -151,7 +152,8 @@ notificationsRouter.post('/push', async (req, res) => {
     return
   }
   try {
-    await savePushSubscription(account.id, parsed.data)
+    // The kind of device, from the browser asking, so the admin page can say where alerts go.
+    await savePushSubscription(account.id, { ...parsed.data, device: deviceLabel(req.get('user-agent')) })
     res.json(await pushStatus(account.id))
   } catch (err) {
     fail(err, res)

@@ -170,21 +170,34 @@ export function pushServiceOf(endpoint: string): PushService {
   return 'other'
 }
 
-/** The admins' devices for the admin page, the latest turned on first: what kind each is and when, never its address. */
-async function adminDeviceList() {
+/** The admins' devices with what's known about each, the latest turned on first. */
+async function adminDeviceRows() {
   const rows = await db()
     .select({
       endpoint: pushSubscriptions.endpoint,
+      device: pushSubscriptions.device,
       createdAt: pushSubscriptions.createdAt,
       lastSeenAt: pushSubscriptions.lastSeenAt,
       email: accounts.email,
     })
     .from(pushSubscriptions)
     .innerJoin(accounts, eq(accounts.id, pushSubscriptions.accountId))
-  return rows
-    .filter((row) => isAdminEmail(row.email))
-    .sort((a, b) => b.lastSeenAt - a.lastSeenAt)
-    .map((row) => ({ service: pushServiceOf(row.endpoint), email: row.email, addedAt: row.createdAt, lastSeenAt: row.lastSeenAt }))
+  return rows.filter((row) => isAdminEmail(row.email)).sort((a, b) => b.lastSeenAt - a.lastSeenAt)
+}
+
+/**
+ * The admins' devices for the admin page: the kind of device each is ("Chrome on an Android phone"; null from
+ * before that was kept) and its push service, whose it is, and when it was added and last turned on. Never its
+ * address.
+ */
+async function adminDeviceList() {
+  return (await adminDeviceRows()).map((row) => ({
+    service: pushServiceOf(row.endpoint),
+    device: row.device,
+    email: row.email,
+    addedAt: row.createdAt,
+    lastSeenAt: row.lastSeenAt,
+  }))
 }
 
 /**
@@ -194,6 +207,8 @@ async function adminDeviceList() {
 export async function testAdminAlert() {
   devicesAt = 0
   const to = await adminDevices()
+  // Read before sending: a device that answers 410 is gone afterwards.
+  const kinds = new Map((await adminDeviceRows()).map((row) => [row.endpoint, row.device]))
   const outcomes = await pushToDevicesEach(to, {
     title: 'Test alert',
     body: 'This is where Blipka tells you when errors spike.',
@@ -205,6 +220,11 @@ export async function testAdminAlert() {
     devices: to.length,
     sent: outcomes.filter((outcome) => outcome.ok).length,
     pushReady: pushReady(),
-    results: outcomes.map((outcome) => ({ service: pushServiceOf(outcome.endpoint), ok: outcome.ok, status: outcome.status })),
+    results: outcomes.map((outcome) => ({
+      service: pushServiceOf(outcome.endpoint),
+      device: kinds.get(outcome.endpoint) ?? null,
+      ok: outcome.ok,
+      status: outcome.status,
+    })),
   }
 }

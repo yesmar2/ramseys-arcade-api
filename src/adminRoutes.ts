@@ -3,9 +3,9 @@ import { z } from 'zod'
 import { requireAdmin, whyNotAdmin } from './admin.js'
 import { accountFromRequest } from './auth.js'
 import { banName, listBans, purgeName, recentScores, unbanName, voidScores } from './bans.js'
-import { listClientErrors } from './clientErrors.js'
+import { clearClientErrors, listClientErrors, removeClientError } from './clientErrors.js'
 import { errorAlertsState, sendToAdmins } from './errorAlerts.js'
-import { listFeedback } from './feedback.js'
+import { clearFeedback, listFeedback, removeFeedback } from './feedback.js'
 import { launchEmail, leaveLaunchList, listLaunchList, sendLaunchBatch, sendLaunchTest } from './launchList.js'
 import { BATCH_MAX, mailerReady } from './mailer.js'
 import { listFlags, reviewFlag, unreviewedCount } from './scoreFlags.js'
@@ -52,6 +52,35 @@ adminRouter.get('/client-errors', async (req, res) => {
     await requireAdmin(req)
     const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 100))
     res.json({ errors: await listClientErrors(limit) })
+  } catch (err) {
+    refuse(err, res)
+  }
+})
+
+/** One error off the list, once it's fixed: it comes back if it happens again. */
+adminRouter.delete('/client-errors/:fingerprint', async (req, res) => {
+  try {
+    await requireAdmin(req)
+    res.json({ removed: await removeClientError(String(req.params.fingerprint ?? '')) })
+  } catch (err) {
+    refuse(err, res)
+  }
+})
+
+/** A list cleared up to `before`, the newest it showed: what came in after the admin loaded it stays. */
+const clearBody = z.object({ before: z.number().int().nonnegative() })
+
+adminRouter.post('/client-errors/clear', async (req, res) => {
+  try {
+    const account = await requireAdmin(req)
+    const parsed = clearBody.safeParse(req.body)
+    if (!parsed.success) {
+      res.status(400).json({ error: 'before required', code: 'INVALID_BODY' })
+      return
+    }
+    const removed = await clearClientErrors(parsed.data.before)
+    console.log(`[admin] ${account.email} cleared ${removed} site error(s)`)
+    res.json({ removed })
   } catch (err) {
     refuse(err, res)
   }
@@ -270,6 +299,32 @@ adminRouter.get('/feedback', async (req, res) => {
     await requireAdmin(req)
     const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 100))
     res.json({ feedback: await listFeedback(limit) })
+  } catch (err) {
+    refuse(err, res)
+  }
+})
+
+/** One message off the list, once it's dealt with: gone for good. */
+adminRouter.delete('/feedback/:id', async (req, res) => {
+  try {
+    await requireAdmin(req)
+    res.json({ removed: await removeFeedback(String(req.params.id ?? '')) })
+  } catch (err) {
+    refuse(err, res)
+  }
+})
+
+adminRouter.post('/feedback/clear', async (req, res) => {
+  try {
+    const account = await requireAdmin(req)
+    const parsed = clearBody.safeParse(req.body)
+    if (!parsed.success) {
+      res.status(400).json({ error: 'before required', code: 'INVALID_BODY' })
+      return
+    }
+    const removed = await clearFeedback(parsed.data.before)
+    console.log(`[admin] ${account.email} cleared ${removed} feedback message(s)`)
+    res.json({ removed })
   } catch (err) {
     refuse(err, res)
   }

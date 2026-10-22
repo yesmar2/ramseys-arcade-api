@@ -1,5 +1,5 @@
 import crypto from 'node:crypto'
-import { desc, lt, sql } from 'drizzle-orm'
+import { desc, eq, lt, lte, sql } from 'drizzle-orm'
 import { db } from './db/client.js'
 import { clientErrors } from './db/schema.js'
 
@@ -59,6 +59,27 @@ export async function recordClientError(
 /** The latest first. */
 export async function listClientErrors(limit = 100) {
   return db().select().from(clientErrors).orderBy(desc(clientErrors.lastAt)).limit(limit)
+}
+
+/** One error off an admin's list, once it's fixed. If it happens again, it comes back, counted from one. */
+export async function removeClientError(fingerprint: string): Promise<boolean> {
+  const gone = await db()
+    .delete(clientErrors)
+    .where(eq(clientErrors.fingerprint, fingerprint))
+    .returning({ fingerprint: clientErrors.fingerprint })
+  return gone.length > 0
+}
+
+/**
+ * Every error last seen by `before`: the newest on the list the admin cleared. One that has happened since
+ * they loaded it stays, so nothing goes unseen.
+ */
+export async function clearClientErrors(before: number): Promise<number> {
+  const gone = await db()
+    .delete(clientErrors)
+    .where(lte(clientErrors.lastAt, before))
+    .returning({ fingerprint: clientErrors.fingerprint })
+  return gone.length
 }
 
 export async function pruneClientErrors(now = Date.now()): Promise<void> {

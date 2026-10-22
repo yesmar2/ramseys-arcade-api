@@ -126,6 +126,12 @@ under `/admin` answers `404` to anyone else, so the surface is not discoverable.
 | `GET /admin/bans` | Current bans |
 | `POST /admin/bans` `{name, reason?, purge?}` | Bar a tag; `purge` also wipes what it posted |
 | `DELETE /admin/bans/:name` | Lift a ban |
+| `GET /admin/client-errors?limit=` | What broke in players' browsers, the latest first |
+| `DELETE /admin/client-errors/:fingerprint` | One error off the list; it comes back if it happens again |
+| `POST /admin/client-errors/clear` `{before}` | Every error last seen by `before`, the newest the list showed |
+| `GET /admin/feedback?limit=` | What players sent from Tell us, the latest first |
+| `DELETE /admin/feedback/:id` | One message off the list, for good |
+| `POST /admin/feedback/clear` `{before}` | Every message sent by `before`, the newest the list showed |
 
 A ban records the account behind the tag, so claiming a fresh tag is not a way
 back on. Trophies already awarded are left alone — they record what a season's

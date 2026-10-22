@@ -1,5 +1,5 @@
 import crypto from 'node:crypto'
-import { desc } from 'drizzle-orm'
+import { desc, eq, lte } from 'drizzle-orm'
 import { db } from './db/client.js'
 import { feedback } from './db/schema.js'
 
@@ -38,4 +38,19 @@ export async function recordFeedback(
 /** The latest first. */
 export async function listFeedback(limit = 100) {
   return db().select().from(feedback).orderBy(desc(feedback.createdAt)).limit(limit)
+}
+
+/** One message off an admin's list, once it's dealt with: gone for good. */
+export async function removeFeedback(id: string): Promise<boolean> {
+  const gone = await db().delete(feedback).where(eq(feedback.id, id)).returning({ id: feedback.id })
+  return gone.length > 0
+}
+
+/**
+ * Every message sent by `before`: the newest on the list the admin cleared. One sent since they loaded it
+ * stays, so nothing goes unread.
+ */
+export async function clearFeedback(before: number): Promise<number> {
+  const gone = await db().delete(feedback).where(lte(feedback.createdAt, before)).returning({ id: feedback.id })
+  return gone.length
 }

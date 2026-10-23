@@ -2,8 +2,10 @@ import { randomInt } from 'node:crypto'
 import { and, eq } from 'drizzle-orm'
 import { db } from './db/client.js'
 import { challengeResults, challenges, leaderboardScores } from './db/schema.js'
+import { GHOST_GAMES } from './lapGhosts.js'
 import { notify } from './notifications.js'
 import { boardDateKey, DAILY_GAMES, type GameSlug } from './store.js'
+import { todaysCourse } from './trackLaps.js'
 import { gameAddress, gameLabel, gapWords, isTime, scoreFigure, scoreWords } from './words.js'
 
 /**
@@ -174,15 +176,43 @@ export async function recordChallengeRun(
   return { ...base, outcome: won ? 'won' : 'short', replyId }
 }
 
-/** Whether now is the day of the run a challenge was made from. */
-async function sameDayAsChallenge(challenge: ChallengeRow, now: number): Promise<boolean> {
+/** When the run a challenge was made from was played. */
+async function challengeRunAt(challenge: ChallengeRow): Promise<number> {
   const [run] = await db()
     .select({ at: leaderboardScores.at })
     .from(leaderboardScores)
     .where(eq(leaderboardScores.id, challenge.scoreId))
     .limit(1)
-  const at = run?.at ?? challenge.createdAt
-  return boardDateKey(Number(at)) === boardDateKey(now)
+  return Number(run?.at ?? challenge.createdAt)
+}
+
+/** Whether now is the day of the run a challenge was made from. */
+async function sameDayAsChallenge(challenge: ChallengeRow, now: number): Promise<boolean> {
+  return boardDateKey(await challengeRunAt(challenge)) === boardDateKey(now)
+}
+
+/* ---------- a racing daily's: the sender's ghost ---------- */
+
+/**
+ * The course a racing daily's run was on, and its day (YYYY-MM-DD): a challenge from it races its sender's
+ * ghost there (Ramsey picked "race my ghost" links, 2026-10-23). Null for a game that leaves no ghosts.
+ */
+export function challengeCourseOf(game: string, at: number): { course: number; day: string } | null {
+  if (!GHOST_GAMES.has(game as GameSlug)) return null
+  const key = boardDateKey(at)
+  const day = `${Math.floor(key / 10_000)}-${String(Math.floor(key / 100) % 100).padStart(2, '0')}-${String(key % 100).padStart(2, '0')}`
+  return { course: todaysCourse(game as GameSlug, at), day }
+}
+
+/**
+ * Whether a challenge link opens its sender's ghost on a course to whoever has the link, Plus or not: the
+ * challenge is `name`'s, on this game, from a run on this course. Its sender chose to send it, so it's theirs to
+ * give; any other player's ghost is still Plus's (the ghost route's ?of=).
+ */
+export async function challengeOpensGhost(id: string, game: GameSlug, course: number, name: string): Promise<boolean> {
+  const challenge = await getChallenge(id)
+  if (!challenge || challenge.game !== game || challenge.name !== name) return false
+  return challengeCourseOf(game, await challengeRunAt(challenge))?.course === course
 }
 
 async function tellChallenger(

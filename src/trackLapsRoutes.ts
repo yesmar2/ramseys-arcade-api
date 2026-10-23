@@ -4,6 +4,7 @@ import { z } from 'zod'
 import { ARCHIVED, inArchive } from './archive.js'
 import { accountFromRequest } from './auth.js'
 import { isBanned } from './bans.js'
+import { challengeOpensGhost } from './challenges.js'
 import { GHOST_GAMES, GHOST_RATE, ghostFor, ghostProblem, ghostState, keepDayGhost, keepGhost, nextGhostFor, playerGhostFor } from './lapGhosts.js'
 import { assertCanUseName, namesOwnedByAccount, withAvatarIds } from './names.js'
 import { pageParams } from './paging.js'
@@ -29,7 +30,8 @@ import { addTrackLap, fastestBelievable, TRACK_GAMES, trackBoard, trackDayIso, t
  *                                      track's record book too, and taking the record pays RECORD_TICKETS once
  *   GET  /tracks/:game/:n/ghost        the track's #1, and their lap's path if it came with one (lapGhosts.ts);
  *                                      with ?above=TAG, on today's track, the player one place above TAG;
- *                                      with ?of=TAG, TAG's own; { ghost: null } when there's nobody
+ *                                      with ?of=TAG, TAG's own (a Plus member's, or anyone's with ?challenge=
+ *                                      a link of TAG's from this course); { ghost: null } when there's nobody
  *   POST /tracks/:game/:n/ghost        a saved lap's path, kept if it's the track's fastest yet, and on
  *                                      today's track as its player's own ghost (next place up)
  *
@@ -290,7 +292,10 @@ tracksRouter.get('/:game/:n/ghost', async (req, res) => {
       noGhost(res, game, n)
       return
     }
-    if (found.place !== 1) {
+    // A challenge link opens its sender's own ghost to whoever has it (challenges.ts challengeOpensGhost).
+    const dare = typeof req.query.challenge === 'string' ? req.query.challenge.trim() : ''
+    const given = found.place !== 1 && dare !== '' && (await challengeOpensGhost(dare, game, n, found.name))
+    if (found.place !== 1 && !given) {
       const account = await accountFromRequest(req)
       const plan = account?.plan === 'plus' ? 'plus' : 'free'
       if (!planLimits(plan).anyGhost) {

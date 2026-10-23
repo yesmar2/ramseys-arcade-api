@@ -206,6 +206,16 @@ const REPAIRS: Repair[] = [
       return `counted High Rise's streaks again at ${line.toLocaleString()}: ${gone} rows out, ${kept} in`
     },
   },
+  {
+    // Fireflies' "Scores over … in a row" line went from 60 to 40 when the game went back to tunes only
+    // (records.ts SCORE_STREAK_THRESHOLDS, Ramsey, 2026-10-23), so its book is counted again at it.
+    id: '2026-10-23-fireflies-streak-40',
+    run: async () => {
+      const { line, gone, kept } = await recountStreakBook('fireflies')
+      invalidateRecordHistoryCache()
+      return `counted Fireflies' streaks again at ${line.toLocaleString()}: ${gone} rows out, ${kept} in`
+    },
+  },
 ]
 
 /**

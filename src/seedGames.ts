@@ -357,21 +357,11 @@ const frenzy: Model = (q, rng) => {
   return finish('frenzy', rng, score, play, [])
 }
 
-/** A night's rounds, dealt as the game deals them. */
-const FIREFLY_NIGHTS = [
-  ['tune', 'tune', 'catch', 'tune', 'follow'],
-  ['tune', 'catch', 'tune', 'follow', 'tune'],
-  ['tune', 'follow', 'tune', 'catch', 'tune'],
-] as const
-
 /**
- * Nights of five lanterns, a round won lighting one. A tune is a point a note,
- * 3 + t notes for the t-th, sung then sung back; the run ends at the first
- * wrong firefly, likelier as the tune outgrows what the player can hold. A
- * Catch pays a point a catch and lights its lantern at eight, from fewer
- * chances as the nights shorten them; a Follow pays 3 when found. A lost
- * Catch or Follow only leaves its lantern dark, so the night plays on, and a
- * full string rings for 5.
+ * Nights of five lanterns, each tune got right lighting one. A tune is a point
+ * a note, 3 + t notes for the t-th, sung then sung back; the run ends at the
+ * first wrong firefly, likelier as the tune outgrows what the player can hold.
+ * A full string rings for 5.
  */
 const fireflies: Model = (q, rng) => {
   const span = lerp(5, 14, q) * between(rng, 0.88, 1.12)
@@ -379,35 +369,17 @@ const fireflies: Model = (q, rng) => {
   let t = 1
   let tunes = 0
   for (let night = 1; night < 40; night++) {
-    const plan = FIREFLY_NIGHTS[(night - 1) % FIREFLY_NIGHTS.length]!
-    let lit = 0
-    for (let played = 0; lit < 5; played++) {
-      const kind = plan[played % plan.length]!
-      if (kind === 'tune') {
-        const len = 3 + tunes
-        const watch = len * lerp(0.62, 0.45, tunes / 20) + 1.6
-        const slip = 0.02 + 0.9 / (1 + Math.exp(-(len - span) / 1.1))
-        if (rng() < slip) {
-          const got = Math.floor(rng() * len)
-          return finish('fireflies', rng, score + got, t + watch + got * 0.55 + 1, fireflyBooks(tunes, night - 1, t))
-        }
-        score += len
-        t += watch + len * 0.55
-        tunes += 1
-        lit += 1
-      } else if (kind === 'catch') {
-        const window = Math.max(0.5, 0.95 - 0.11 * (night - 1))
-        const caught = Math.round(clamp(13 * lerp(0.55, 0.95, q) * Math.sqrt(window / 0.95) * between(rng, 0.8, 1.1), 0, 14))
-        score += caught
-        t += 11
-        if (caught >= 8) lit += 1
-      } else {
-        if (rng() < clamp(lerp(0.72, 0.97, q) - (night - 1) * 0.03, 0.3, 0.97)) {
-          score += 3
-          lit += 1
-        }
-        t += 6 + night * 0.6
+    for (let lit = 0; lit < 5; lit++) {
+      const len = 3 + tunes
+      const watch = len * lerp(0.62, 0.45, tunes / 20) + 1.6
+      const slip = 0.02 + 0.9 / (1 + Math.exp(-(len - span) / 1.1))
+      if (rng() < slip) {
+        const got = Math.floor(rng() * len)
+        return finish('fireflies', rng, score + got, t + watch + got * 0.55 + 1, fireflyBooks(tunes, night - 1, t))
       }
+      score += len
+      t += watch + len * 0.55
+      tunes += 1
     }
     score += 5
     t += 4

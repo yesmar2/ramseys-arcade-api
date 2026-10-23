@@ -428,7 +428,10 @@ export const SCORE_STREAK_THRESHOLDS: Record<GameSlug, number> = {
   bop: 40,
   // A round at par: five holes in two strokes each pays 1,000.
   putt: 1000,
-  fireflies: 60,
+  // Fireflies went back to tunes only (Ramsey, 2026-10-23), which pays about 40% less than tunes, Catches and
+  // Follows did: 40 is clearing the first night and well into the second. The book was counted again at this line
+  // (repairs.ts).
+  fireflies: 40,
   pileup: 9000,
   // Dailies: none kept (see buildCrossRunStreakRecords).
   acechase: 0,

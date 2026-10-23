@@ -6,6 +6,7 @@ import { banName, listBans, purgeName, recentScores, unbanName, voidScores } fro
 import { clearClientErrors, listClientErrors, removeClientError } from './clientErrors.js'
 import { errorAlertsState, testAdminAlert } from './errorAlerts.js'
 import { clearFeedback, listFeedback, removeFeedback } from './feedback.js'
+import { feedbackPushOn, setFeedbackPush } from './feedbackAlerts.js'
 import { launchEmail, leaveLaunchList, listLaunchList, sendLaunchBatch, sendLaunchTest } from './launchList.js'
 import { BATCH_MAX, mailerReady } from './mailer.js'
 import { listFlags, reviewFlag, unreviewedCount } from './scoreFlags.js'
@@ -332,6 +333,32 @@ adminRouter.post('/feedback/clear', async (req, res) => {
     const removed = await clearFeedback(parsed.data.before)
     console.log(`[admin] ${account.email} cleared ${removed} feedback message(s)`)
     res.json({ removed })
+  } catch (err) {
+    refuse(err, res)
+  }
+})
+
+/** Whether new feedback pushes to the admins' devices (feedbackAlerts.ts). On unless an admin turned it off. */
+adminRouter.get('/feedback-push', async (req, res) => {
+  try {
+    await requireAdmin(req)
+    res.json({ on: await feedbackPushOn() })
+  } catch (err) {
+    refuse(err, res)
+  }
+})
+
+adminRouter.post('/feedback-push', async (req, res) => {
+  try {
+    const account = await requireAdmin(req)
+    const parsed = z.object({ on: z.boolean() }).safeParse(req.body)
+    if (!parsed.success) {
+      res.status(400).json({ error: 'Invalid body', code: 'INVALID_BODY' })
+      return
+    }
+    const on = await setFeedbackPush(parsed.data.on)
+    console.log(`[admin] ${account.email} turned feedback pushes ${on ? 'on' : 'off'}`)
+    res.json({ on })
   } catch (err) {
     refuse(err, res)
   }

@@ -2,6 +2,7 @@ import { Router } from 'express'
 import { z } from 'zod'
 import { accountFromRequest } from './auth.js'
 import { recordFeedback } from './feedback.js'
+import { noteNewFeedback } from './feedbackAlerts.js'
 import { clientIp, takeToken } from './rateLimit.js'
 
 export const feedbackRouter = Router()
@@ -32,12 +33,17 @@ feedbackRouter.post('/', async (req, res) => {
   }
   try {
     const account = await accountFromRequest(req)
+    const name = account ? (parsed.data.name ?? null) : null
     await recordFeedback(parsed.data, {
       accountId: account?.id ?? null,
-      name: account ? (parsed.data.name ?? null) : null,
+      name,
       userAgent: String(req.headers['user-agent'] ?? ''),
     })
     res.status(201).json({ kept: true })
+    // The admins hear of it on their phones, after the player's answer: a slow push never holds them up.
+    noteNewFeedback({ kind: parsed.data.kind, message: parsed.data.message, name }).catch((err) =>
+      console.warn('[feedback] could not push it to the admins:', err),
+    )
   } catch (err) {
     console.warn('[feedback] could not keep a message:', err)
     res.status(500).json({ error: 'Could not keep the message' })

@@ -3,7 +3,7 @@ import { asc, desc, eq, sql } from 'drizzle-orm'
 import { db } from './db/client.js'
 import { insertWithFeed, onChange } from './feed.js'
 import { trackLaps } from './db/schema.js'
-import { HOTLAP_FIRST_DAY, HOTLAP_PACE_MS } from './hotlapPace.js'
+import { HOTLAP_FIRST_DAY, HOTLAP_PACE_MS, HOTLAP_PLATINUM_MS } from './hotlapPace.js'
 import { LANDER_FIRST_DAY, LANDER_PACE_MS } from './landerPace.js'
 import { MARBLERUN_FIRST_DAY, MARBLERUN_PACE_MS } from './marblerunPace.js'
 import { SLING_FIRST_DAY, SLING_PACE_MS } from './slingPace.js'
@@ -96,6 +96,12 @@ export function coursePace(game: GameSlug, n: number): number | null {
   return plan.pace[(n - 1) % plan.pace.length] ?? null
 }
 
+/** A course's own platinum in ms, where its game sets one course by course: Hot Lap's tracks. Null elsewhere. */
+export function coursePlatinum(game: GameSlug, n: number): number | null {
+  if (game !== 'hotlap' || !HOTLAP_PLATINUM_MS.length || !Number.isInteger(n) || n < 1) return null
+  return HOTLAP_PLATINUM_MS[(n - 1) % HOTLAP_PLATINUM_MS.length] ?? null
+}
+
 /** How many tracks Hot Lap's plan has. */
 export function trackCount(): number {
   return HOTLAP_PACE_MS.length
@@ -151,11 +157,17 @@ export function trackState(n: number, now = Date.now(), game: GameSlug = 'hotlap
   return n <= today ? 'past' : 'ahead'
 }
 
-/** The fastest run on a course that can be believed, in ms: well under its blue run's time. Hot Lap's unless said. */
+/**
+ * The fastest run on a course that can be believed, in ms: well under its blue run's time. Hot Lap's unless said.
+ * A Hot Lap track whose platinum comes near its floor (one with a lot to gain on the blue car's line) believes a
+ * lap a tenth under its platinum, so a lap past platinum is never refused.
+ */
 export function fastestBelievable(n: number, game: GameSlug = 'hotlap'): number {
   const plan = planOf(game)
   const pace = plan.pace.length ? plan.pace[(n - 1) % plan.pace.length] : undefined
-  return Math.round((pace ?? 40_000) * plan.floor)
+  const floor = Math.round((pace ?? 40_000) * plan.floor)
+  const platinum = coursePlatinum(game, n)
+  return platinum ? Math.min(floor, Math.round(platinum * 0.9)) : floor
 }
 
 /** The course a race plays today: Hot Lap's track, or any other race's day number. */

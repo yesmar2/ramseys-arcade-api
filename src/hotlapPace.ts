@@ -1,6 +1,6 @@
 // Written by the site's scripts/hotlap-daily.mjs from its src/games/hotlap/dailyPlan.ts: each planned day's
-// blue car (its pace car's lap), in milliseconds, from the first day on. Hot Lap's ticket ladder goes by it
-// (ticketLadders.ts), so a lap is paid by the day's own blue car, whatever the site sends. Past the last
+// blue car (its pace car's lap) and platinum, in milliseconds, from the first day on. Hot Lap's ticket ladder goes
+// by them (ticketLadders.ts), so a lap is paid by the day's own medals, whatever the site sends. Past the last
 // planned day the days come round again, as the site's dailyTrack has them. Don't edit it by hand: the
 // script writes it again whenever the plan changes.
 export const HOTLAP_FIRST_DAY = '2026-09-26'
@@ -25,4 +25,28 @@ export const HOTLAP_PACE_MS: readonly number[] = [
   66092, 65833, 66133, 66283, 66783, 64817, 61425, 63092, 67275, 59867,
   67850, 61067, 66692, 64500, 61550, 67492, 56625, 65708, 64725, 63133,
   67683,
+]
+
+// Each day's platinum: the lap that takes it, set track by track (the site's medalLap.ts). Bronze, silver and
+// gold sit between the blue car and it (ticketLadders.ts hotlapLadder).
+export const HOTLAP_PLATINUM_MS: readonly number[] = [
+  40064, 44062, 72262, 49387, 52865, 48260, 53254, 43009, 54081, 55341,
+  47012, 52715, 48894, 55037, 42077, 50115, 53017, 50626, 45078, 53908,
+  49968, 48780, 50019, 51831, 48750, 49600, 54867, 49242, 51017, 49192,
+  51392, 44274, 46623, 49908, 46949, 47666, 49642, 50482, 46154, 53526,
+  47695, 48003, 50969, 51676, 50335, 41323, 49309, 50262, 52448, 49139,
+  51124, 43677, 49679, 47664, 50205, 55827, 55934, 54400, 54228, 50656,
+  44439, 45952, 48048, 46006, 51922, 41403, 50518, 50641, 48494, 48138,
+  51618, 53186, 53427, 44589, 51439, 50773, 51236, 46268, 51437, 46117,
+  49283, 48749, 50755, 47619, 43746, 49577, 51821, 49285, 53621, 52405,
+  49829, 50515, 46935, 51527, 48721, 48651, 48312, 47280, 54427, 49019,
+  49174, 52756, 54152, 48969, 54140, 46616, 50889, 49218, 53516, 47989,
+  47289, 45861, 51492, 46442, 45524, 53494, 45119, 52404, 52414, 51561,
+  51456, 44927, 47669, 51226, 48596, 47149, 50425, 46588, 47471, 47618,
+  51029, 44420, 52906, 46967, 50707, 52565, 47486, 44165, 51962, 51754,
+  45559, 50636, 51131, 52503, 55273, 49553, 46597, 49529, 46067, 48204,
+  48318, 55647, 52516, 48549, 49840, 54810, 53047, 45605, 53538, 47831,
+  48369, 51424, 49020, 52091, 53934, 51556, 46881, 47516, 53685, 46239,
+  50444, 43052, 53123, 50935, 48266, 52623, 43920, 52906, 51542, 46363,
+  52769,
 ]

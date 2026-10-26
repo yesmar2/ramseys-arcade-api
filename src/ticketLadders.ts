@@ -1,4 +1,4 @@
-import { HOTLAP_FIRST_DAY, HOTLAP_PACE_MS } from './hotlapPace.js'
+import { HOTLAP_FIRST_DAY, HOTLAP_PACE_MS, HOTLAP_PLATINUM_MS } from './hotlapPace.js'
 import { LANDER_FIRST_DAY, LANDER_PACE_MS } from './landerPace.js'
 import { MARBLERUN_FIRST_DAY, MARBLERUN_PACE_MS } from './marblerunPace.js'
 import { SLING_FIRST_DAY, SLING_PACE_MS } from './slingPace.js'
@@ -201,32 +201,42 @@ export const RACE_MEDAL_STEP = { hotlap: 0.05, marblerun: 0.1, lander: 0.1, swoo
 export const RACE_MEDAL_RUNGS = [1.2, 1.8, 2.4, 3] as const
 
 /**
- * A racing daily's steps on a day whose blue goes in `pace` ms, `score` turning a time into a board score.
- * Each rung names what it beats: a run's tickets say one rung on its own, where "it" would be nothing
- * (Ramsey, 2026-10-05: "People won't know what 'it' is"). The same sums as the site's medalTimes.
+ * Each medal's time on a course whose blue goes in `pace` ms, bronze to platinum: the game's steps under it, or,
+ * given a platinum of its own (Hot Lap's, set track by track: hotlapPace.ts HOTLAP_PLATINUM_MS), the other three
+ * spaced between the blue and it as the steps would be. The same sums as the site's raceMedals.ts medalTimes.
  */
-function raceSteps(pace: number, step: number, blue: string, score: (ms: number) => number): LadderStep[] {
-  const [bronze, silver, gold, platinum] = RACE_MEDAL_RUNGS
-  const pct = (k: number) => Math.round(k * step * 100)
-  const at = (k: number) => score(Math.round(pace * (1 - k * step)))
-  return [
-    { at: at(bronze), tickets: 5, label: `beating the ${blue} by ${pct(bronze)}%` },
-    { at: at(silver), tickets: 8, label: `beating the ${blue} by ${pct(silver)}%` },
-    { at: at(gold), tickets: 11, label: `beating the ${blue} by ${pct(gold)}%` },
-    { at: at(platinum), tickets: 15, label: `beating the ${blue} by ${pct(platinum)}%` },
-  ]
+export function raceMedalTimes(pace: number, step: number, platinumMs?: number | null): number[] {
+  const top = RACE_MEDAL_RUNGS[RACE_MEDAL_RUNGS.length - 1]!
+  if (platinumMs && platinumMs < pace) return RACE_MEDAL_RUNGS.map((k) => Math.round(pace - ((pace - platinumMs) * k) / top))
+  return RACE_MEDAL_RUNGS.map((k) => Math.round(pace * (1 - k * step)))
 }
 
 /**
- * Hot Lap, on a day whose blue car laps in `paceMs`: under 6% faster than it 3, by 6% 5, by 9% 8, by 12%
- * 11, by 15% 15. Without a blue car, a lap pays the 3 alone.
+ * A racing daily's steps on a day whose blue goes in `pace` ms, `score` turning a time into a board score.
+ * Each rung names what it beats: a run's tickets say one rung on its own, where "it" would be nothing
+ * (Ramsey, 2026-10-05: "People won't know what 'it' is").
  */
-export function hotlapLadder(paceMs: number | null | undefined): Ladder {
+function raceSteps(pace: number, step: number, blue: string, score: (ms: number) => number, platinumMs?: number | null): LadderStep[] {
+  const pct = (ms: number) => Math.round((1 - ms / pace) * 100)
+  return raceMedalTimes(pace, step, platinumMs).map((ms, i) => ({
+    at: score(ms),
+    tickets: [5, 8, 11, 15][i]!,
+    label: `beating the ${blue} by ${pct(ms)}%`,
+  }))
+}
+
+/**
+ * Hot Lap, on a day whose blue car laps in `paceMs` and whose platinum is `platinumMs` (set track by track since
+ * 2026-10-26: the site's medalLap.ts): platinum 15, and bronze 5, silver 8 and gold 11 between the blue car and it,
+ * as the other races' steps are spaced; a lap short of bronze 3. Without a platinum, 6, 9, 12 and 15% under the
+ * blue car. Without a blue car, a lap pays the 3 alone.
+ */
+export function hotlapLadder(paceMs: number | null | undefined, platinumMs?: number | null): Ladder {
   const base = { base: 3, baseLabel: 'a lap today' }
   if (!paceMs) return { ...base, steps: [] }
   const pace = Math.min(PACE_MAX_MS, Math.max(PACE_MIN_MS, Math.round(paceMs)))
   const lap = (ms: number) => TIME_SCORE_BASE - Math.round(ms)
-  return { ...base, steps: raceSteps(pace, RACE_MEDAL_STEP.hotlap, 'blue car', lap) }
+  return { ...base, steps: raceSteps(pace, RACE_MEDAL_STEP.hotlap, 'blue car', lap, platinumMs) }
 }
 
 /**
@@ -246,6 +256,11 @@ function paceOnDay(firstDay: string, paces: readonly number[], now: number): num
 /** The day's blue car from Hot Lap's plan. */
 export function plannedPace(now = Date.now()): number | null {
   return paceOnDay(HOTLAP_FIRST_DAY, HOTLAP_PACE_MS, now)
+}
+
+/** The day's platinum from Hot Lap's plan. */
+export function plannedPlatinum(now = Date.now()): number | null {
+  return paceOnDay(HOTLAP_FIRST_DAY, HOTLAP_PLATINUM_MS, now)
 }
 
 /** The day's blue ball from Marble Run's plan. */
@@ -363,7 +378,10 @@ export async function ladderFor(game: GameSlug, now = Date.now(), paceMs?: numbe
   if (game === 'findbug') return FINDBUG_LADDER
   if (game === 'halffull') return HALFFULL_LADDER
   if (game === 'centroid') return CENTROID_LADDER
-  if (game === 'hotlap') return hotlapLadder(plannedPace(now) ?? paceMs)
+  if (game === 'hotlap') {
+    const planned = plannedPace(now)
+    return planned ? hotlapLadder(planned, plannedPlatinum(now)) : hotlapLadder(paceMs)
+  }
   if (game === 'marblerun') return marblerunLadder(marblerunPlannedPace(now) ?? paceMs)
   if (game === 'lander') return landerLadder(landerPlannedPace(now) ?? paceMs)
   if (game === 'swoop') return swoopLadder(swoopPlannedPace(now) ?? paceMs)

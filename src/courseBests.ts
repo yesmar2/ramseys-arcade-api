@@ -10,8 +10,8 @@ import { peekRun } from './runs.js'
 import { getClaim } from './names.js'
 import { checkScoreRate, TIME_SCORE_BASE } from './scoreLimits.js'
 import { resolveGameSlug, type GameSlug } from './store.js'
-import { RACE_MEDAL_RUNGS, RACE_MEDAL_STEP } from './ticketLadders.js'
-import { coursePace, fastestBelievable, TRACK_GAMES, trackDayIso, trackState } from './trackLaps.js'
+import { raceMedalTimes, RACE_MEDAL_STEP } from './ticketLadders.js'
+import { coursePace, coursePlatinum, fastestBelievable, TRACK_GAMES, trackDayIso, trackState } from './trackLaps.js'
 
 /*
  * Your best time on every course of a racing daily, for your medals on its past courses (Ramsey picked A and C of
@@ -90,8 +90,9 @@ export async function medalCountsOf(accountId: string, window: readonly [number,
     const pace = coursePace(row.game as GameSlug, row.course)
     if (!step || !pace) continue
     // The highest rung the time beats, if any.
+    const times = raceMedalTimes(pace, step, coursePlatinum(row.game as GameSlug, row.course))
     let best = -1
-    for (let i = 0; i < MEDAL_ORDER.length; i++) if (row.ms <= Math.round(pace * (1 - RACE_MEDAL_RUNGS[i]! * step))) best = i
+    for (let i = 0; i < MEDAL_ORDER.length; i++) if (row.ms <= times[i]!) best = i
     if (best >= 0) counts[MEDAL_ORDER[best]!] += 1
   }
   return counts

@@ -7,7 +7,11 @@ import { boardDateKey } from './store.js'
  * take no runs until launch day and open to everyone together, so nobody buys a head start on them. The
  * site's data/games.ts Game.launchDay says the same. Take a game off once its day has come and gone.
  */
-export const LAUNCH_DAYS: Partial<Record<GameSlug, string>> = {}
+export const LAUNCH_DAYS: Partial<Record<GameSlug, string>> = {
+  // Held back from the site's launch and out the Saturday after (Ramsey, 2026-10-26): Plus members play it from
+  // launch day, and its boards open to everyone on Nov 7.
+  crumbtrail: '2026-11-07',
+}
 
 /** Whether a game hasn't launched yet: its boards take no runs until launch day. */
 export function beforeLaunch(game: GameSlug, now = Date.now()): boolean {

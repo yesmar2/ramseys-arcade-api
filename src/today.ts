@@ -94,13 +94,14 @@ export const SLING_TODAY_FROM: string | null = '2026-10-19'
  * the Wanted were on it from the start until the puzzles came off, so every day is judged as it was then.
  */
 export const TODAY_DAILIES: readonly { key: TodayKey; game: GameSlug; from: number | null; until?: number }[] = [
-  // The races in Ramsey's order (2026-10-14: swoop, then lander, then the race game, then marble run), as the site's.
+  // The races in Ramsey's order (2026-10-14: swoop, then lander, then the race game, then marble run), with Sling's
+  // tower before Marble Run since 2026-10-26 ("put it as the 5th game, so it's last in order"), as the site's.
   { key: 'hills', game: 'swoop', from: SWOOP_TODAY_FROM ? keyOf(SWOOP_TODAY_FROM) : null },
   { key: 'cave', game: 'lander', from: LANDER_TODAY_FROM ? keyOf(LANDER_TODAY_FROM) : null },
   { key: 'track', game: 'hotlap', from: 0 },
+  { key: 'tower', game: 'sling', from: SLING_TODAY_FROM ? keyOf(SLING_TODAY_FROM) : null },
   { key: 'course', game: 'marblerun', from: MARBLERUN_TODAY_FROM ? keyOf(MARBLERUN_TODAY_FROM) : null },
   { key: 'gauntlet', game: 'wobblerun', from: WOBBLERUN_TODAY_FROM ? keyOf(WOBBLERUN_TODAY_FROM) : null },
-  { key: 'tower', game: 'sling', from: SLING_TODAY_FROM ? keyOf(SLING_TODAY_FROM) : null },
   { key: 'hole', game: 'acechase', from: 0, until: PUZZLES_UNTIL },
   { key: 'wanted', game: 'findbug', from: 0, until: PUZZLES_UNTIL },
   { key: 'pour', game: 'halffull', from: HALFFULL_TODAY_FROM ? keyOf(HALFFULL_TODAY_FROM) : null, until: PUZZLES_UNTIL },

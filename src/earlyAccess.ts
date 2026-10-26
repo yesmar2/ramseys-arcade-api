@@ -8,9 +8,9 @@ import { boardDateKey } from './store.js'
  * site's data/games.ts Game.launchDay says the same. Take a game off once its day has come and gone.
  */
 export const LAUNCH_DAYS: Partial<Record<GameSlug, string>> = {
-  // Held back from the site's launch and out the Saturday after (Ramsey, 2026-10-26): Plus members play it from
-  // launch day, and its boards open to everyone on Nov 7.
-  crumbtrail: '2026-11-07',
+  // Held back from the site's launch and out three Saturdays after (Ramsey, 2026-10-26: "can we make it say coming
+  // nov 21st"): Plus members play it the week before, and its boards open to everyone on Nov 21.
+  crumbtrail: '2026-11-21',
 }
 
 /** Whether a game hasn't launched yet: its boards take no runs until launch day. */

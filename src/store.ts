@@ -544,13 +544,10 @@ const LIVE_ON_DECK_GAMES: readonly GameSlug[] = []
 // game for now"), and Wobble Run, held back on the live site since 2026-10-09 and on staging too from 2026-10-15
 // ("can we hide wobble run for now"): off the Dailies there as well (today.ts todayRule). Releasing it needs its
 // Dailies `from` moved to the release day, or todayRule puts it back on every past day since it came.
-// Marble Run is off at launch too, with no "Coming soon", while Ramsey may still change it (2026-10-26): the Dailies
-// are four races from launch day, and bringing it back needs its `from` moved the same way.
 export const ON_DECK_GAMES: ReadonlySet<GameSlug> = new Set<GameSlug>([
   'acechase',
   'putt',
   'wobblerun',
-  'marblerun',
   ...(isLiveApi() ? LIVE_ON_DECK_GAMES : []),
 ])
 

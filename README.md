@@ -148,7 +148,7 @@ It is therefore refused unless the process is pointed at a non-production branch
 Google sign-in, which is what the site actually offers, is unaffected. If you
 ever want email sign-in for real, add a mail sender first, then `ALLOW_MAGIC_LINK=1`.
 
-Copy `.env.example` to `.env` for local Google sign-in. In Google Cloud Console, create an **OAuth 2.0 Client ID** (Web application) and add Authorized JavaScript origins for `http://localhost:5173` and your production site. Use the same client ID in the frontend as `VITE_GOOGLE_CLIENT_ID`.
+Copy `.env.example` to `.env` for local Google sign-in. In Google Cloud Console, create an **OAuth 2.0 Client ID** (Web application) and add Authorized JavaScript origins for `http://localhost:5173` and your production site. Add Authorized redirect URIs for each API's `/auth/google/return` (`http://localhost:8787/auth/google/return`, the staging API's and production's): iPhones and the installed app sign in with Google by going to Google in the same tab, and Google posts back there. Use the same client ID in the frontend as `VITE_GOOGLE_CLIENT_ID`.
 
 ## Database scripts
 

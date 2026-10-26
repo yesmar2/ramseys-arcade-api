@@ -1,4 +1,4 @@
-import { Router } from 'express'
+import express, { Router } from 'express'
 import { z } from 'zod'
 import {
   accountFromRequest,
@@ -277,6 +277,28 @@ authRouter.post('/google', async (req, res) => {
   } catch (err) {
     authError(err, res)
   }
+})
+
+/**
+ * The site this server serves: the first of CORS_ORIGIN (production's is blipka.com, staging's its one site), else
+ * FRONTEND_ORIGIN, else the local site.
+ */
+function siteOrigin(): string {
+  const first = process.env.CORS_ORIGIN?.split(',')[0]?.trim()
+  return (first || process.env.FRONTEND_ORIGIN || 'http://localhost:5173').replace(/\/$/, '')
+}
+
+/*
+ * Google's sign-in by a trip, not a popup (the site's GoogleSignInButton): on an iPhone the popup can stick on
+ * a blank white page once the account is picked, so there the tab goes to Google, and Google posts its token here
+ * as a form. It goes on to the site's /auth/google in the address's #, which never reaches a server, and the site
+ * signs in with it as it would from the popup. This address has to be in the Google client's authorized
+ * redirect URIs.
+ */
+authRouter.post('/google/return', express.urlencoded({ extended: false, limit: '16kb' }), (req, res) => {
+  const credential = typeof req.body?.credential === 'string' ? req.body.credential : ''
+  const answer = credential && credential.length <= 8192 ? `credential=${encodeURIComponent(credential)}` : 'error=no_credential'
+  res.redirect(303, `${siteOrigin()}/auth/google#${answer}`)
 })
 
 authRouter.get('/me', async (req, res) => {

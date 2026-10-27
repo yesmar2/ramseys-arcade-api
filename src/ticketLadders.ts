@@ -206,14 +206,28 @@ export const RACE_MEDAL_STEP = { hotlap: 0.05, marblerun: 0.1, lander: 0.1, swoo
 export const RACE_MEDAL_RUNGS = [1.2, 1.8, 2.4, 3] as const
 
 /**
- * Each medal's time on a course whose blue goes in `pace` ms, bronze to platinum: the game's steps under it, or,
- * given a platinum of its own (Hot Lap's, set track by track: hotlapPace.ts HOTLAP_PLATINUM_MS), the other three
- * spaced between the blue and it as the steps would be. The same sums as the site's raceMedals.ts medalTimes.
+ * Swoop's and Hot Lap's rungs, closer again (Ramsey, 2026-10-27: "the other medals should be closer together i
+ * think. i think the same for hot lap"): bronze 70% of platinum's lead on the blue, silver 80%, gold 90%. The
+ * site's raceMedals.ts medalRungs is the same.
  */
-export function raceMedalTimes(pace: number, step: number, platinumMs?: number | null): number[] {
-  const top = RACE_MEDAL_RUNGS[RACE_MEDAL_RUNGS.length - 1]!
-  if (platinumMs && platinumMs < pace) return RACE_MEDAL_RUNGS.map((k) => Math.round(pace - ((pace - platinumMs) * k) / top))
-  return RACE_MEDAL_RUNGS.map((k) => Math.round(pace * (1 - k * step)))
+export const CLOSE_RUNGS = [2.1, 2.4, 2.7, 3] as const
+
+export type RaceGame = keyof typeof RACE_MEDAL_STEP
+
+function raceMedalRungs(game: RaceGame): readonly number[] {
+  return game === 'swoop' || game === 'hotlap' ? CLOSE_RUNGS : RACE_MEDAL_RUNGS
+}
+
+/**
+ * Each medal's time in `game` on a course whose blue goes in `pace` ms, bronze to platinum: the game's steps under
+ * it, or, given a platinum of its own (Hot Lap's, set track by track: hotlapPace.ts HOTLAP_PLATINUM_MS), the other
+ * three spaced between the blue and it as its rungs would be. The same sums as the site's raceMedals.ts medalTimes.
+ */
+export function raceMedalTimes(game: RaceGame, pace: number, platinumMs?: number | null): number[] {
+  const rungs = raceMedalRungs(game)
+  const top = rungs[rungs.length - 1]!
+  if (platinumMs && platinumMs < pace) return rungs.map((k) => Math.round(pace - ((pace - platinumMs) * k) / top))
+  return rungs.map((k) => Math.round(pace * (1 - k * RACE_MEDAL_STEP[game])))
 }
 
 /**
@@ -221,11 +235,11 @@ export function raceMedalTimes(pace: number, step: number, platinumMs?: number |
  * Each rung names what it beats: a run's tickets say one rung on its own, where "it" would be nothing
  * (Ramsey, 2026-10-05: "People won't know what 'it' is").
  */
-function raceSteps(pace: number, step: number, blue: string, score: (ms: number) => number, platinumMs?: number | null): LadderStep[] {
+function raceSteps(game: RaceGame, pace: number, blue: string, score: (ms: number) => number, platinumMs?: number | null): LadderStep[] {
   // Each rung's lead as the site's medalPercent says it; a course with its own platinum, from its times.
   const own = Boolean(platinumMs && platinumMs < pace)
-  const pct = (ms: number, i: number) => Math.round(own ? (1 - ms / pace) * 100 : RACE_MEDAL_RUNGS[i]! * step * 100)
-  return raceMedalTimes(pace, step, platinumMs).map((ms, i) => ({
+  const pct = (ms: number, i: number) => Math.round(own ? (1 - ms / pace) * 100 : raceMedalRungs(game)[i]! * RACE_MEDAL_STEP[game] * 100)
+  return raceMedalTimes(game, pace, platinumMs).map((ms, i) => ({
     at: score(ms),
     tickets: [5, 8, 11, 15][i]!,
     label: `beating the ${blue} by ${pct(ms, i)}%`,
@@ -235,15 +249,15 @@ function raceSteps(pace: number, step: number, blue: string, score: (ms: number)
 /**
  * Hot Lap, on a day whose blue car laps in `paceMs` and whose platinum is `platinumMs` (set track by track since
  * 2026-10-26: the site's medalLap.ts): platinum 15, and bronze 5, silver 8 and gold 11 between the blue car and it,
- * as the other races' steps are spaced; a lap short of bronze 3. Without a platinum, 6, 9, 12 and 15% under the
- * blue car. Without a blue car, a lap pays the 3 alone.
+ * at 70, 80 and 90% of the way to it (CLOSE_RUNGS); a lap short of bronze 3. Without a platinum, 11, 12, 14 and
+ * 15% under the blue car. Without a blue car, a lap pays the 3 alone.
  */
 export function hotlapLadder(paceMs: number | null | undefined, platinumMs?: number | null): Ladder {
   const base = { base: 3, baseLabel: 'a lap today' }
   if (!paceMs) return { ...base, steps: [] }
   const pace = Math.min(PACE_MAX_MS, Math.max(PACE_MIN_MS, Math.round(paceMs)))
   const lap = (ms: number) => TIME_SCORE_BASE - Math.round(ms)
-  return { ...base, steps: raceSteps(pace, RACE_MEDAL_STEP.hotlap, 'blue car', lap, platinumMs) }
+  return { ...base, steps: raceSteps('hotlap', pace, 'blue car', lap, platinumMs) }
 }
 
 /**
@@ -288,7 +302,7 @@ export function marblerunLadder(paceMs: number | null | undefined): Ladder {
   if (!paceMs) return { ...base, steps: [] }
   const pace = Math.min(BALL_MAX_MS, Math.max(BALL_MIN_MS, Math.round(paceMs)))
   const run = (ms: number) => TIME_SCORE_BASE - Math.round(ms)
-  return { ...base, steps: raceSteps(pace, RACE_MEDAL_STEP.marblerun, 'blue ball', run) }
+  return { ...base, steps: raceSteps('marblerun', pace, 'blue ball', run) }
 }
 
 /** The day's blue ship from Lander's plan. */
@@ -310,7 +324,7 @@ export function landerLadder(paceMs: number | null | undefined): Ladder {
   if (!paceMs) return { ...base, steps: [] }
   const pace = Math.min(SHIP_MAX_MS, Math.max(SHIP_MIN_MS, Math.round(paceMs)))
   const run = (ms: number) => TIME_SCORE_BASE - Math.round(ms)
-  return { ...base, steps: raceSteps(pace, RACE_MEDAL_STEP.lander, 'blue ship', run) }
+  return { ...base, steps: raceSteps('lander', pace, 'blue ship', run) }
 }
 
 /** The day's blue bird from Swoop's plan. */
@@ -323,8 +337,8 @@ const BIRD_MIN_MS = 50_000
 const BIRD_MAX_MS = 140_000
 
 /**
- * Swoop, on a day whose blue bird crosses the line in `paceMs`: under 14% faster than it 3, by 14% 5,
- * by 22% 8, by 29% 11, by 36% 15, as the other racing dailies pay against their blues. Without a blue bird, a run pays the
+ * Swoop, on a day whose blue bird crosses the line in `paceMs`: under 25% faster than it 3, by 25% 5,
+ * by 29% 8, by 32% 11, by 36% 15 (CLOSE_RUNGS), as the other racing dailies pay against their blues. Without a blue bird, a run pays the
  * 3 alone.
  */
 export function swoopLadder(paceMs: number | null | undefined): Ladder {
@@ -332,7 +346,7 @@ export function swoopLadder(paceMs: number | null | undefined): Ladder {
   if (!paceMs) return { ...base, steps: [] }
   const pace = Math.min(BIRD_MAX_MS, Math.max(BIRD_MIN_MS, Math.round(paceMs)))
   const run = (ms: number) => TIME_SCORE_BASE - Math.round(ms)
-  return { ...base, steps: raceSteps(pace, RACE_MEDAL_STEP.swoop, 'blue bird', run) }
+  return { ...base, steps: raceSteps('swoop', pace, 'blue bird', run) }
 }
 
 /** The day's blue blip from Wobble Run's plan. */
@@ -354,7 +368,7 @@ export function wobblerunLadder(paceMs: number | null | undefined): Ladder {
   if (!paceMs) return { ...base, steps: [] }
   const pace = Math.min(BEAN_MAX_MS, Math.max(BEAN_MIN_MS, Math.round(paceMs)))
   const run = (ms: number) => TIME_SCORE_BASE - Math.round(ms)
-  return { ...base, steps: raceSteps(pace, RACE_MEDAL_STEP.wobblerun, 'blue blip', run) }
+  return { ...base, steps: raceSteps('wobblerun', pace, 'blue blip', run) }
 }
 
 /** The day's blue blip from Sling's plan. */
@@ -376,7 +390,7 @@ export function slingLadder(paceMs: number | null | undefined): Ladder {
   if (!paceMs) return { ...base, steps: [] }
   const pace = Math.min(PEG_MAX_MS, Math.max(PEG_MIN_MS, Math.round(paceMs)))
   const run = (ms: number) => TIME_SCORE_BASE - Math.round(ms)
-  return { ...base, steps: raceSteps(pace, RACE_MEDAL_STEP.sling, 'blue blip', run) }
+  return { ...base, steps: raceSteps('sling', pace, 'blue blip', run) }
 }
 
 /** A game's ladder today. Hot Lap's goes by the plan's blue car for the day, or else the one the site says. */

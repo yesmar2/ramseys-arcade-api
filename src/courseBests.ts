@@ -90,7 +90,7 @@ export async function medalCountsOf(accountId: string, window: readonly [number,
     const pace = coursePace(row.game as GameSlug, row.course)
     if (!step || !pace) continue
     // The highest rung the time beats, if any.
-    const times = raceMedalTimes(pace, step, coursePlatinum(row.game as GameSlug, row.course))
+    const times = raceMedalTimes(row.game as keyof typeof RACE_MEDAL_STEP, pace, coursePlatinum(row.game as GameSlug, row.course))
     let best = -1
     for (let i = 0; i < MEDAL_ORDER.length; i++) if (row.ms <= times[i]!) best = i
     if (best >= 0) counts[MEDAL_ORDER[best]!] += 1

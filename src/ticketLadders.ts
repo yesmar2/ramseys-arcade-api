@@ -190,7 +190,11 @@ const TYPICAL_PACE_MS = 53_000
  * in both: his best Hot Lap laps had landed 13 to 25% under the blue car (17% the middle day, 12.8% that day, short of
  * gold at 14%), and no one's Marble Run had reached platinum's 36% (the best 34.5%; his 30.8% that day was gold).
  */
-export const RACE_MEDAL_STEP = { hotlap: 0.05, marblerun: 0.1, lander: 0.1, swoop: 0.13, wobblerun: 0.12, sling: 0.1 } as const
+/*
+ * Swoop's went from 13% to 10.5% on 2026-10-27, when Ramsey found its platinum "too hard": his best runs on the seven
+ * hills to then landed 29.6 to 43.3% under the blue bird, and he held platinum's 39% on three. At 31.5% he holds it on six.
+ */
+export const RACE_MEDAL_STEP = { hotlap: 0.05, marblerun: 0.1, lander: 0.1, swoop: 0.105, wobblerun: 0.12, sling: 0.1 } as const
 
 /**
  * How many steps faster than the blue each medal is, bronze to platinum. Platinum stays three; the others sit
@@ -217,11 +221,13 @@ export function raceMedalTimes(pace: number, step: number, platinumMs?: number |
  * (Ramsey, 2026-10-05: "People won't know what 'it' is").
  */
 function raceSteps(pace: number, step: number, blue: string, score: (ms: number) => number, platinumMs?: number | null): LadderStep[] {
-  const pct = (ms: number) => Math.round((1 - ms / pace) * 100)
+  // Each rung's lead as the site's medalPercent says it; a course with its own platinum, from its times.
+  const own = Boolean(platinumMs && platinumMs < pace)
+  const pct = (ms: number, i: number) => Math.round(own ? (1 - ms / pace) * 100 : RACE_MEDAL_RUNGS[i]! * step * 100)
   return raceMedalTimes(pace, step, platinumMs).map((ms, i) => ({
     at: score(ms),
     tickets: [5, 8, 11, 15][i]!,
-    label: `beating the ${blue} by ${pct(ms)}%`,
+    label: `beating the ${blue} by ${pct(ms, i)}%`,
   }))
 }
 
@@ -316,8 +322,8 @@ const BIRD_MIN_MS = 50_000
 const BIRD_MAX_MS = 140_000
 
 /**
- * Swoop, on a day whose blue bird crosses the line in `paceMs`: under 16% faster than it 3, by 16% 5,
- * by 23% 8, by 31% 11, by 39% 15, as the other racing dailies pay against their blues. Without a blue bird, a run pays the
+ * Swoop, on a day whose blue bird crosses the line in `paceMs`: under 13% faster than it 3, by 13% 5,
+ * by 19% 8, by 25% 11, by 32% 15, as the other racing dailies pay against their blues. Without a blue bird, a run pays the
  * 3 alone.
  */
 export function swoopLadder(paceMs: number | null | undefined): Ladder {

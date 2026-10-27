@@ -479,7 +479,7 @@ export function hotLapMs(q: number, pace: number, lap: number, rng: Rng): number
  * The other races' shapes, as shares of the day's blue time: a first go (`slow`), a middling player (`mid`) and
  * the very best (`fast`), who close on `best` past `knee` rather than reach it, so a board's leaders don't tie.
  * Each follows its game's medals (ticketLadders.ts RACE_MEDAL_STEP: platinum is 30% under the blue at Marble
- * Run and Lander and 39% at Swoop), and its best players take platinum, as Ramsey's own runs do: Marble Run 31
+ * Run and Lander and 31.5% at Swoop), and its best players take platinum, as Ramsey's own runs do: Marble Run 31
  * to 35% under, and platinum at Lander and Swoop easy for him before it was made harder. A middling player is
  * about level with the blue.
  */

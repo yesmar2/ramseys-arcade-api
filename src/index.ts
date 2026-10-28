@@ -46,11 +46,11 @@ import { discordEnabled, emailCodesEnabled, getGoogleClientId } from './auth.js'
 import { statsRouter } from './statsRoutes.js'
 import { trophiesRouter } from './trophiesRoutes.js'
 import { secretsRouter } from './secretsRoutes.js'
-import { checkDbHealth, queryStats } from './db/client.js'
+import { checkDbHealth, closeDb, queryStats } from './db/client.js'
 import { runMigrations } from './db/migrate.js'
 import { migrateStrideToCrosswalk } from './migrateStrideToCrosswalk.js'
 import { lastSweptAt, startSweeping } from './sweep.js'
-import { MULTI_INSTANCE, startFeed, waitFor, withLease } from './feed.js'
+import { letGoOfLeases, MULTI_INSTANCE, startFeed, waitFor, withLease } from './feed.js'
 import { seasonPreview } from './seasons.js'
 
 /** Load .env into process.env when present (does not override existing vars). */
@@ -278,9 +278,30 @@ async function main() {
     res.status(404).json({ error: 'Not found' })
   })
 
-  app.listen(PORT, HOST, () => {
+  const server = app.listen(PORT, HOST, () => {
     console.log(`Skermix API listening on http://${HOST}:${PORT}`)
   })
+  /*
+   * Told to stop (a deploy: Render sends SIGTERM once the new server is answering, and kills this one 30 s
+   * later): take no new requests, finish the ones under way so a save in flight still lands, then let go of
+   * any lease and the database. Anything still going after 20 s is cut off, before Render's kill.
+   */
+  const stop = (signal: string) => {
+    console.log(`[shutdown] ${signal}: finishing the requests under way`)
+    setTimeout(() => process.exit(0), 20_000).unref()
+    server.close(() => {
+      void letGoOfLeases()
+        .then(() => closeDb())
+        .catch(() => {})
+        .finally(() => process.exit(0))
+    })
+    // Browsers' kept-open connections with nothing in flight would hold the close up, as would one whose
+    // request has just been answered.
+    server.closeIdleConnections()
+    setInterval(() => server.closeIdleConnections(), 250).unref()
+  }
+  process.once('SIGTERM', () => stop('SIGTERM'))
+  process.once('SIGINT', () => stop('SIGINT'))
   startSweeping()
   // Each track's and hole's record book catches up with its board: what was set before the books kept them.
   void withLease('course-records', () => syncCourseRecords(), { ttlMs: 10 * 60_000, waitMs: 0 })

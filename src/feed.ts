@@ -256,17 +256,6 @@ export async function startFeed() {
   const now = Date.now()
   for (let id = Math.max(1, maxSeen - 200); id <= maxSeen; id++) if (!there.has(id)) gaps.set(id, now)
   started = true
-  // Told to stop (a deploy, a scale-down): let go of any lease, so another server sweeps without waiting it out.
-  const letGo = () => {
-    setTimeout(() => process.exit(0), 2_000).unref()
-    void db()
-      .delete(leases)
-      .where(eq(leases.holder, INSTANCE_ID))
-      .catch(() => {})
-      .finally(() => process.exit(0))
-  }
-  process.once('SIGTERM', letGo)
-  process.once('SIGINT', letGo)
   const tick = () => {
     pollNow()
       .catch((err: unknown) => console.warn('[feed] reading the feed failed:', err))
@@ -274,6 +263,21 @@ export async function startFeed() {
   }
   setTimeout(tick, POLL_MS).unref()
   console.log(`[feed] ${INSTANCE_ID} reading the change feed from #${maxSeen}`)
+}
+
+/**
+ * Told to stop (a deploy, a scale-down): let go of any lease, so another server sweeps without waiting it out.
+ * Two seconds at most.
+ */
+export async function letGoOfLeases() {
+  if (!MULTI_INSTANCE || !started) return
+  await Promise.race([
+    db()
+      .delete(leases)
+      .where(eq(leases.holder, INSTANCE_ID))
+      .catch(() => {}),
+    sleep(2_000),
+  ])
 }
 
 /** Drop changes every server has long since read, and leases long run out. For the sweep's holder. */

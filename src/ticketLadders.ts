@@ -194,8 +194,10 @@ const TYPICAL_PACE_MS = 53_000
  * Swoop's went from 13% to 10.5% on 2026-10-27, when Ramsey found its platinum "too hard": his best runs on the seven
  * hills to then landed 29.6 to 43.3% under the blue bird, and he held platinum's 39% on three. At 31.5% he held it on six,
  * which he found "a little too easy" the same day, so it's 12% (platinum 36%): four of the seven, gold on all of them.
+ * Sling's went from 10% to 12% on 2026-10-28, when its platinum was "way to easy": his second try on day 10 beat
+ * platinum's 30% by 7s (37.4% under the blue blip). At 36% it holds it by 1.3s.
  */
-export const RACE_MEDAL_STEP = { hotlap: 0.05, marblerun: 0.1, lander: 0.1, swoop: 0.12, wobblerun: 0.12, sling: 0.1 } as const
+export const RACE_MEDAL_STEP = { hotlap: 0.05, marblerun: 0.1, lander: 0.1, swoop: 0.12, wobblerun: 0.12, sling: 0.12 } as const
 
 /**
  * How many steps faster than the blue each medal is, bronze to platinum. Platinum stays three; the others sit
@@ -381,8 +383,8 @@ const PEG_MIN_MS = 30_000
 const PEG_MAX_MS = 120_000
 
 /**
- * Sling, on a day whose blue blip reaches the top in `paceMs`: under 12% faster than it 3, by 12% 5, by 18% 8,
- * by 24% 11, by 30% 15, as the other racing dailies pay against their blues. Without a blue blip, a run pays the
+ * Sling, on a day whose blue blip reaches the top in `paceMs`: under 14% faster than it 3, by 14% 5, by 22% 8,
+ * by 29% 11, by 36% 15, as the other racing dailies pay against their blues. Without a blue blip, a run pays the
  * 3 alone.
  */
 export function slingLadder(paceMs: number | null | undefined): Ladder {

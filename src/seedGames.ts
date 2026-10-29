@@ -175,8 +175,8 @@ const asteroids: Model = (q, rng) => {
     t += secs
     const par = Math.max(28, 48 - (wave - 1) * 2)
     score += rocks * perRock * luck(rng, 0.1) + (wave + 1) * 50 + Math.max(0, Math.round(par - secs)) * 20
-    // Every fifth wave's clear is timed in a book (records.ts ASTEROIDS_WAVE_BOOKS).
-    if (wave % 5 === 0) records.push({ recordId: `wave-time-${wave}`, value: Math.round(secs * 1000), atMs: t * 1000 })
+    // Every wave's clear to 20 is timed in a book (records.ts ASTEROIDS_WAVE_BOOKS).
+    if (wave <= 20) records.push({ recordId: `wave-time-${wave}`, value: Math.round(secs * 1000), atMs: t * 1000 })
   }
   const rocks = Math.min(5 + cleared, 12)
   const share = rng() * 0.85

@@ -30,12 +30,14 @@ import {
 /** Default page of a record board, for callers that ask for no depth. */
 const BOARD_PAGE = 100
 /*
- * The waves Asteroids times a clear of, and the lengths Snake times a growth to, in their books: every fifth
- * wave, and 30, 50, 75 and 100 (Ramsey, 2026-10-13: "yes, all of it", trimming them). They were every wave to
- * 20 and every tenth length from 30, and past the first few nobody reached them: a wall of empty books at the
- * top of each game's Records tab. Fastest to length 20 was retired before (2026-10-05).
+ * The waves Asteroids times a clear of, and the lengths Snake times a growth to, in their books: every wave to
+ * 20, and 30, 50, 75 and 100. Both were trimmed on 2026-10-13 (Ramsey: "yes, all of it"), the waves to every
+ * fifth, because past the first few nobody reached them: a wall of empty books at the top of each game's Records
+ * tab. Every wave came back on 2026-10-29 (Ramsey: "let's have wave records for the first ten at least, or just
+ * don't show wave records for waves that haven't been reached yet"): the site's Records tab now folds the waves
+ * nobody has reached into one line. Fastest to length 20 was retired before (2026-10-05).
  */
-const ASTEROIDS_WAVE_BOOKS: readonly number[] = [5, 10, 15, 20]
+const ASTEROIDS_WAVE_BOOKS: readonly number[] = Array.from({ length: 20 }, (_, i) => i + 1)
 const SNAKE_LENGTH_BOOKS: readonly number[] = [30, 50, 75, 100]
 const CROSSWALK_ROW_MILESTONE_MIN = 50
 const CROSSWALK_ROW_MILESTONE_MAX = 200

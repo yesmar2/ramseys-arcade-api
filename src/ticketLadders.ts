@@ -1,4 +1,4 @@
-import { HOTLAP_FIRST_DAY, HOTLAP_PACE_MS, HOTLAP_PLATINUM_MS } from './hotlapPace.js'
+import { HOTLAP_FIRST_DAY, HOTLAP_PACE_MS } from './hotlapPace.js'
 import { LANDER_FIRST_DAY, LANDER_PACE_MS } from './landerPace.js'
 import { MARBLERUN_FIRST_DAY, MARBLERUN_PACE_MS } from './marblerunPace.js'
 import { SLING_FIRST_DAY, SLING_PACE_MS } from './slingPace.js'
@@ -6,6 +6,7 @@ import { SWOOP_FIRST_DAY, SWOOP_PACE_MS } from './swoopPace.js'
 import { WOBBLERUN_FIRST_DAY, WOBBLERUN_PACE_MS } from './wobblerunPace.js'
 import { TIME_SCORE_BASE, TIME_SCORED_GAMES, TRIES_SCORE_BASE } from './scoreLimits.js'
 import { GAME_BANDS } from './seedBoards.js'
+import { coursePlatinum, todaysCourse } from './trackLaps.js'
 import { ALLOWED_GAMES, boardDateKey, boardDayStart, runScores, type GameSlug } from './store.js'
 
 /*
@@ -281,11 +282,6 @@ export function plannedPace(now = Date.now()): number | null {
   return paceOnDay(HOTLAP_FIRST_DAY, HOTLAP_PACE_MS, now)
 }
 
-/** The day's platinum from Hot Lap's plan. */
-export function plannedPlatinum(now = Date.now()): number | null {
-  return paceOnDay(HOTLAP_FIRST_DAY, HOTLAP_PLATINUM_MS, now)
-}
-
 /** The day's blue ball from Marble Run's plan. */
 export function marblerunPlannedPace(now = Date.now()): number | null {
   return paceOnDay(MARBLERUN_FIRST_DAY, MARBLERUN_PACE_MS, now)
@@ -299,12 +295,12 @@ const BALL_MAX_MS = 90_000
  * Marble Run, on a day whose blue ball rolls down in `paceMs`: under 12% faster than it 3, by 12% 5, by
  * 18% 8, by 24% 11, by 30% 15, as Hot Lap pays against its blue car. Without a blue ball, a run pays the 3 alone.
  */
-export function marblerunLadder(paceMs: number | null | undefined): Ladder {
+export function marblerunLadder(paceMs: number | null | undefined, platinumMs?: number | null): Ladder {
   const base = { base: 3, baseLabel: 'a run today' }
   if (!paceMs) return { ...base, steps: [] }
   const pace = Math.min(BALL_MAX_MS, Math.max(BALL_MIN_MS, Math.round(paceMs)))
   const run = (ms: number) => TIME_SCORE_BASE - Math.round(ms)
-  return { ...base, steps: raceSteps('marblerun', pace, 'blue ball', run) }
+  return { ...base, steps: raceSteps('marblerun', pace, 'blue ball', run, platinumMs) }
 }
 
 /** The day's blue ship from Lander's plan. */
@@ -321,12 +317,12 @@ const SHIP_MAX_MS = 100_000
  * 11, by 30% 15, as Hot Lap pays against its blue car and Marble Run against its blue ball. Without a blue ship, a
  * run pays the 3 alone.
  */
-export function landerLadder(paceMs: number | null | undefined): Ladder {
+export function landerLadder(paceMs: number | null | undefined, platinumMs?: number | null): Ladder {
   const base = { base: 3, baseLabel: 'a run today' }
   if (!paceMs) return { ...base, steps: [] }
   const pace = Math.min(SHIP_MAX_MS, Math.max(SHIP_MIN_MS, Math.round(paceMs)))
   const run = (ms: number) => TIME_SCORE_BASE - Math.round(ms)
-  return { ...base, steps: raceSteps('lander', pace, 'blue ship', run) }
+  return { ...base, steps: raceSteps('lander', pace, 'blue ship', run, platinumMs) }
 }
 
 /** The day's blue bird from Swoop's plan. */
@@ -343,12 +339,12 @@ const BIRD_MAX_MS = 140_000
  * by 29% 8, by 32% 11, by 36% 15 (CLOSE_RUNGS), as the other racing dailies pay against their blues. Without a blue bird, a run pays the
  * 3 alone.
  */
-export function swoopLadder(paceMs: number | null | undefined): Ladder {
+export function swoopLadder(paceMs: number | null | undefined, platinumMs?: number | null): Ladder {
   const base = { base: 3, baseLabel: 'a run today' }
   if (!paceMs) return { ...base, steps: [] }
   const pace = Math.min(BIRD_MAX_MS, Math.max(BIRD_MIN_MS, Math.round(paceMs)))
   const run = (ms: number) => TIME_SCORE_BASE - Math.round(ms)
-  return { ...base, steps: raceSteps('swoop', pace, 'blue bird', run) }
+  return { ...base, steps: raceSteps('swoop', pace, 'blue bird', run, platinumMs) }
 }
 
 /** The day's blue blip from Wobble Run's plan. */
@@ -365,12 +361,12 @@ const BEAN_MAX_MS = 140_000
  * by 22% 8, by 29% 11, by 36% 15, as the other racing dailies pay against their blues. Without a blue blip, a run pays the
  * 3 alone.
  */
-export function wobblerunLadder(paceMs: number | null | undefined): Ladder {
+export function wobblerunLadder(paceMs: number | null | undefined, platinumMs?: number | null): Ladder {
   const base = { base: 3, baseLabel: 'a run today' }
   if (!paceMs) return { ...base, steps: [] }
   const pace = Math.min(BEAN_MAX_MS, Math.max(BEAN_MIN_MS, Math.round(paceMs)))
   const run = (ms: number) => TIME_SCORE_BASE - Math.round(ms)
-  return { ...base, steps: raceSteps('wobblerun', pace, 'blue blip', run) }
+  return { ...base, steps: raceSteps('wobblerun', pace, 'blue blip', run, platinumMs) }
 }
 
 /** The day's blue blip from Sling's plan. */
@@ -387,12 +383,12 @@ const PEG_MAX_MS = 120_000
  * by 29% 11, by 36% 15, as the other racing dailies pay against their blues. Without a blue blip, a run pays the
  * 3 alone.
  */
-export function slingLadder(paceMs: number | null | undefined): Ladder {
+export function slingLadder(paceMs: number | null | undefined, platinumMs?: number | null): Ladder {
   const base = { base: 3, baseLabel: 'a run today' }
   if (!paceMs) return { ...base, steps: [] }
   const pace = Math.min(PEG_MAX_MS, Math.max(PEG_MIN_MS, Math.round(paceMs)))
   const run = (ms: number) => TIME_SCORE_BASE - Math.round(ms)
-  return { ...base, steps: raceSteps('sling', pace, 'blue blip', run) }
+  return { ...base, steps: raceSteps('sling', pace, 'blue blip', run, platinumMs) }
 }
 
 /** A game's ladder today. Hot Lap's goes by the plan's blue car for the day, or else the one the site says. */
@@ -401,15 +397,17 @@ export async function ladderFor(game: GameSlug, now = Date.now(), paceMs?: numbe
   if (game === 'findbug') return FINDBUG_LADDER
   if (game === 'halffull') return HALFFULL_LADDER
   if (game === 'centroid') return CENTROID_LADDER
+  // Today's course's own platinum: an admin's set lap (setLaps.ts), or Hot Lap's worked out; only with the plan's blue.
+  const own = (planned: number | null) => (planned ? coursePlatinum(game, todaysCourse(game, now)) : null)
   if (game === 'hotlap') {
     const planned = plannedPace(now)
-    return planned ? hotlapLadder(planned, plannedPlatinum(now)) : hotlapLadder(paceMs)
+    return planned ? hotlapLadder(planned, own(planned)) : hotlapLadder(paceMs)
   }
-  if (game === 'marblerun') return marblerunLadder(marblerunPlannedPace(now) ?? paceMs)
-  if (game === 'lander') return landerLadder(landerPlannedPace(now) ?? paceMs)
-  if (game === 'swoop') return swoopLadder(swoopPlannedPace(now) ?? paceMs)
-  if (game === 'wobblerun') return wobblerunLadder(wobblerunPlannedPace(now) ?? paceMs)
-  if (game === 'sling') return slingLadder(slingPlannedPace(now) ?? paceMs)
+  if (game === 'marblerun') return marblerunLadder(marblerunPlannedPace(now) ?? paceMs, own(marblerunPlannedPace(now)))
+  if (game === 'lander') return landerLadder(landerPlannedPace(now) ?? paceMs, own(landerPlannedPace(now)))
+  if (game === 'swoop') return swoopLadder(swoopPlannedPace(now) ?? paceMs, own(swoopPlannedPace(now)))
+  if (game === 'wobblerun') return wobblerunLadder(wobblerunPlannedPace(now) ?? paceMs, own(wobblerunPlannedPace(now)))
+  if (game === 'sling') return slingLadder(slingPlannedPace(now) ?? paceMs, own(slingPlannedPace(now)))
   return drawnLadder(game, now)
 }
 

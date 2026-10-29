@@ -232,6 +232,13 @@
       "when": 1792700398904,
       "tag": "0032_share_events",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1793288202063,
+      "tag": "0033_set_laps",
+      "breakpoints": true
     }
   ]
 }

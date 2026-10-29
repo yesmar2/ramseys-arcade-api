@@ -15,12 +15,14 @@ import { claimRun, peekRun } from './runs.js'
 import { checkScoreRate, scoreCeiling, TIME_SCORE_BASE } from './scoreLimits.js'
 import { resolveGameSlug, type GameSlug } from './store.js'
 import { awardTickets, RECORD_TICKETS } from './tickets.js'
-import { addTrackLap, fastestBelievable, TRACK_GAMES, trackBoard, trackDayIso, trackRecords, trackState } from './trackLaps.js'
+import { addTrackLap, coursePace, coursePlatinum, fastestBelievable, TRACK_GAMES, trackBoard, trackDayIso, trackRecords, trackState } from './trackLaps.js'
+import { allSetLaps, SET_LAP_SLACK_MS } from './setLaps.js'
 
 /*
  * Course records (trackLaps.ts): every Hot Lap track's, Marble Run course's and Lander cave's own board, its
  * All time board, for good. A course's n is its number: a track's, or a course's or cave's day number.
  *
+ *   GET  /tracks/platinums             every course an admin set the platinum of by driving it (setLaps.ts)
  *   GET  /tracks/:game/records?name=   every track that has had its day: its record (and when it was driven),
  *                                      drivers, your best and place
  *   GET  /tracks/:game/:n/board?name=  a track's board, a page at a time (limit/offset, the top ten unless
@@ -66,6 +68,26 @@ function trackGame(raw: string): GameSlug | null {
 }
 
 const cleanName = (raw: unknown) => (typeof raw === 'string' && raw.trim() ? raw.trim().slice(0, 12).toUpperCase() : null)
+
+/**
+ * Every course whose platinum an admin set by driving it (setLaps.ts): its set lap and its platinum, half a second
+ * slower, by game and course. The site's medals go by these (lib/setPlatinum.ts).
+ */
+tracksRouter.get('/platinums', (_req, res) => {
+  res.setHeader('Cache-Control', 'public, max-age=30')
+  res.json({
+    slackMs: SET_LAP_SLACK_MS,
+    laps: allSetLaps().map((l) => ({
+      game: l.game,
+      course: l.course,
+      // The course's blue, which the site's medals know a course by (its lib/setPlatinum.ts).
+      paceMs: coursePace(l.game as GameSlug, l.course),
+      lapMs: l.ms,
+      platinumMs: coursePlatinum(l.game as GameSlug, l.course),
+      at: l.at,
+    })),
+  })
+})
 
 tracksRouter.get('/:game/records', async (req, res) => {
   const game = trackGame(req.params.game)

@@ -51,6 +51,7 @@ import { runMigrations } from './db/migrate.js'
 import { migrateStrideToCrosswalk } from './migrateStrideToCrosswalk.js'
 import { lastSweptAt, startSweeping } from './sweep.js'
 import { letGoOfLeases, MULTI_INSTANCE, startFeed, waitFor, withLease } from './feed.js'
+import { startSetLaps } from './setLaps.js'
 import { seasonPreview } from './seasons.js'
 
 /** Load .env into process.env when present (does not override existing vars). */
@@ -96,6 +97,7 @@ async function main() {
   await runMigrations()
   // Before anything reads a copy into memory, so no other server's change is missed.
   await startFeed()
+  await startSetLaps()
   // One server at a time through the checks at boot: two would do each twice.
   await withLease('boot', () => migrateStrideToCrosswalk(), { ttlMs: 5 * 60_000, waitMs: 5 * 60_000 })
   // The season's boards go by the early preview (store.ts setSeasonSpan): known before the first is asked for.

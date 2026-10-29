@@ -17,8 +17,10 @@ import { launchNumbers } from './launchNumbers.js'
 import { playerStats } from './playerStats.js'
 import { grantPlusMembership, plusState } from './plus.js'
 import { grantPlus, hasPlus, revokePlus, seasonInfo, seasonNow, seasonPreview, SEASONS, setSeasonPreview } from './seasons.js'
+import { clearSetLap, recordSetLap } from './setLaps.js'
 import { setSiteEvents, siteEventsOn } from './siteEvents.js'
 import { resolveGameSlug } from './store.js'
+import { courseOfDay, coursePace, coursePlatinum, TRACK_GAMES } from './trackLaps.js'
 import { awardTickets } from './tickets.js'
 import { grantFreeze, todayState } from './today.js'
 
@@ -560,6 +562,55 @@ adminRouter.delete('/bans/:name', async (req, res) => {
     }
     console.log(`[admin] ${account.email} lifted the ban on ${req.params.name.toUpperCase()}`)
     res.json({ lifted: true })
+  } catch (err) {
+    refuse(err, res)
+  }
+})
+
+/*
+ * Set platinum (setLaps.ts): an admin's test run on a race course, its time in ms. The best kept, and the course's
+ * platinum is it and half a second more. A time slower than the course's blue doesn't set anything.
+ */
+const setLapBody = z.object({ game: z.string().min(1).max(20), course: z.number().int().min(1).max(10_000), ms: z.number().int().min(1_000).max(3_600_000) })
+
+adminRouter.post('/set-laps', async (req, res) => {
+  try {
+    const account = await requireAdmin(req)
+    const parsed = setLapBody.safeParse(req.body)
+    const game = parsed.success ? resolveGameSlug(parsed.data.game) : null
+    if (!parsed.success || !game || !TRACK_GAMES.has(game)) {
+      res.status(400).json({ error: 'game, course and ms required', code: 'INVALID_BODY' })
+      return
+    }
+    // A day's number, as the site has it: Hot Lap's days come round its tracks again.
+    const course = courseOfDay(game, parsed.data.course)
+    const { ms } = parsed.data
+    const pace = coursePace(game, course)
+    if (!pace || ms >= pace) {
+      res.status(400).json({ error: 'Slower than the blue: no platinum set', code: 'TOO_SLOW' })
+      return
+    }
+    const kept = await recordSetLap(game, course, ms, account.email)
+    if (kept.improved) console.log(`[admin] ${account.email} set ${game} #${course}'s lap to ${ms} ms`)
+    res.json({ lapMs: kept.ms, improved: kept.improved, platinumMs: coursePlatinum(game, course) })
+  } catch (err) {
+    refuse(err, res)
+  }
+})
+
+adminRouter.delete('/set-laps/:game/:course', async (req, res) => {
+  try {
+    const account = await requireAdmin(req)
+    const game = resolveGameSlug(String(req.params.game ?? ''))
+    const day = Number(req.params.course)
+    if (!game || !TRACK_GAMES.has(game) || !Number.isInteger(day) || day < 1) {
+      res.status(400).json({ error: 'No such course', code: 'INVALID_BODY' })
+      return
+    }
+    const course = courseOfDay(game, day)
+    const cleared = await clearSetLap(game, course)
+    if (cleared) console.log(`[admin] ${account.email} cleared ${game} #${course}'s set lap`)
+    res.json({ cleared, platinumMs: coursePlatinum(game, course) })
   } catch (err) {
     refuse(err, res)
   }

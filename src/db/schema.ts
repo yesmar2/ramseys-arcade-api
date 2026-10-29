@@ -985,3 +985,20 @@ export const shareEvents = pgTable(
   },
   (t) => [index('share_events_at_idx').on(t.at)],
 )
+
+/**
+ * Each race course's lap set by an admin (setLaps.ts): the best of their test runs on it, whose platinum is it and
+ * half a second more. Keyed by game and course number (a Hot Lap track's, any other race's day number).
+ */
+export const setLaps = pgTable(
+  'set_laps',
+  {
+    game: text('game').notNull(),
+    course: integer('course').notNull(),
+    ms: integer('ms').notNull(),
+    at: bigint('at', { mode: 'number' }).notNull(),
+    /** The admin's email. */
+    by: text('by'),
+  },
+  (t) => [primaryKey({ columns: [t.game, t.course] })],
+)

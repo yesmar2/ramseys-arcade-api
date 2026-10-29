@@ -6,6 +6,7 @@ import { trackLaps } from './db/schema.js'
 import { HOTLAP_FIRST_DAY, HOTLAP_PACE_MS, HOTLAP_PLATINUM_MS } from './hotlapPace.js'
 import { LANDER_FIRST_DAY, LANDER_PACE_MS } from './landerPace.js'
 import { MARBLERUN_FIRST_DAY, MARBLERUN_PACE_MS } from './marblerunPace.js'
+import { SET_LAP_SLACK_MS, setLapOf } from './setLaps.js'
 import { SLING_FIRST_DAY, SLING_PACE_MS } from './slingPace.js'
 import { SWOOP_FIRST_DAY, SWOOP_PACE_MS } from './swoopPace.js'
 import { WOBBLERUN_FIRST_DAY, WOBBLERUN_PACE_MS } from './wobblerunPace.js'
@@ -96,9 +97,16 @@ export function coursePace(game: GameSlug, n: number): number | null {
   return plan.pace[(n - 1) % plan.pace.length] ?? null
 }
 
-/** A course's own platinum in ms, where its game sets one course by course: Hot Lap's tracks. Null elsewhere. */
+/**
+ * A course's own platinum in ms: an admin's set lap on it and half a second more (setLaps.ts), in any race; else
+ * Hot Lap's worked out track by track. Null for a course with neither, whose medals go by its game's steps.
+ */
 export function coursePlatinum(game: GameSlug, n: number): number | null {
-  if (game !== 'hotlap' || !HOTLAP_PLATINUM_MS.length || !Number.isInteger(n) || n < 1) return null
+  if (!Number.isInteger(n) || n < 1) return null
+  const set = PLANS[game] ? setLapOf(game, n) : null
+  const pace = coursePace(game, n)
+  if (set != null && pace != null && set + SET_LAP_SLACK_MS < pace) return set + SET_LAP_SLACK_MS
+  if (game !== 'hotlap' || !HOTLAP_PLATINUM_MS.length) return null
   return HOTLAP_PLATINUM_MS[(n - 1) % HOTLAP_PLATINUM_MS.length] ?? null
 }
 
@@ -130,7 +138,7 @@ export function trackOfDay(n: number): number {
 }
 
 /** The course a game's day plays: Hot Lap's tracks go round; any other game's course is its day's number. */
-function courseOfDay(game: GameSlug, n: number): number {
+export function courseOfDay(game: GameSlug, n: number): number {
   return planOf(game).repeats ? trackOfDay(n) : n
 }
 

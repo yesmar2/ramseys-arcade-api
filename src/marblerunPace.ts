@@ -3,7 +3,7 @@
 // goes by it (ticketLadders.ts), and so does the fastest run a day's board believes (routes.ts), whatever the
 // site sends. Past the last planned day the days come round again, as the site's dailyCourse has them.
 // Don't edit it by hand: the script writes it again whenever the plan changes.
-export const MARBLERUN_FIRST_DAY = '2026-09-29'
+export const MARBLERUN_FIRST_DAY = '2026-10-16'
 
 export const MARBLERUN_PACE_MS: readonly number[] = [
   44597, 44115, 53298, 65501, 54979, 56510, 58753, 57477, 65038, 61745,

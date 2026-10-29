@@ -3,7 +3,7 @@
 // goes by it (ticketLadders.ts), and so does the fastest run a day's board believes (routes.ts), whatever the
 // site sends. Past the last planned day the days come round again, as the site's dailyCave has them.
 // Don't edit it by hand: the script writes it again whenever the plan changes.
-export const LANDER_FIRST_DAY = '2026-09-30'
+export const LANDER_FIRST_DAY = '2026-10-16'
 
 export const LANDER_PACE_MS: readonly number[] = [
   57083, 65500, 58192, 55575, 65392, 67358, 61050, 53783, 65650, 60033,

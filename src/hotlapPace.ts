@@ -3,7 +3,7 @@
 // by them (ticketLadders.ts), so a lap is paid by the day's own medals, whatever the site sends. Past the last
 // planned day the days come round again, as the site's dailyTrack has them. Don't edit it by hand: the
 // script writes it again whenever the plan changes.
-export const HOTLAP_FIRST_DAY = '2026-09-26'
+export const HOTLAP_FIRST_DAY = '2026-10-16'
 
 export const HOTLAP_PACE_MS: readonly number[] = [
   53358, 57808, 89783, 61025, 68467, 60717, 67658, 60083, 66667, 67250,

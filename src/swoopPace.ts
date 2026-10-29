@@ -3,7 +3,7 @@
 // ticket ladder goes by it (ticketLadders.ts), and so does the fastest run a day's board believes (routes.ts),
 // whatever the site sends. Past the last planned day the days come round again, as the site's dailyHills has
 // them. Don't edit it by hand: the script writes it again whenever the plan changes.
-export const SWOOP_FIRST_DAY = '2026-10-06'
+export const SWOOP_FIRST_DAY = '2026-10-16'
 
 export const SWOOP_PACE_MS: readonly number[] = [
   91846, 87907, 75294, 77999, 81760, 87917, 78754, 89211, 82706, 76210,

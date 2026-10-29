@@ -57,21 +57,21 @@ const keyOf = (day: string) => Number(day.replace(/-/g, ''))
  * The first day Marble Run's Today's Course is on the card: the day the game came, so its first course is
  * on the ticket too (the site's games/marblerun/daily.ts TODAY_FROM says the same).
  */
-export const MARBLERUN_TODAY_FROM: string | null = '2026-09-29'
+export const MARBLERUN_TODAY_FROM: string | null = '2026-10-16'
 
 /**
- * The first day Lander's Today's Cave is on the card: the day after the game came (the site's
- * games/lander/daily.ts TODAY_FROM says the same). A day is judged as it began, and its first day's card
- * began with five.
+ * The first day Lander's Today's Cave is on the card (the site's games/lander/daily.ts TODAY_FROM says the
+ * same). Every race's is Oct 16, their day #1 since Ramsey's 14 days back (2026-10-29), so the card began with
+ * all five that day.
  */
-export const LANDER_TODAY_FROM: string | null = '2026-10-01'
+export const LANDER_TODAY_FROM: string | null = '2026-10-16'
 
 /**
  * The first day Swoop's Today's Hills are on the card: the day the game came, as Marble Run's was (the site's
  * games/swoop/daily.ts TODAY_FROM says the same), since a daily isn't on the games wall and the card is the
  * way to it (Ramsey, 2026-10-06: "i don't see swoop on the dailies").
  */
-export const SWOOP_TODAY_FROM: string | null = '2026-10-06'
+export const SWOOP_TODAY_FROM: string | null = '2026-10-16'
 
 /**
  * The first day Wobble Run's Today's Gauntlet is on the card: the day the game comes, as Swoop's was (the site's
@@ -85,7 +85,7 @@ export const WOBBLERUN_TODAY_FROM: string | null = '2026-10-09'
  * (released there the same day, 2026-10-19; the site's games/sling/daily.ts TODAY_FROM says the same). It's the
  * fifth race on the card: any two keep the day, all five are a Full ticket.
  */
-export const SLING_TODAY_FROM: string | null = '2026-10-19'
+export const SLING_TODAY_FROM: string | null = '2026-10-16'
 
 /**
  * The Today set's dailies, in the card's order, the first board day (YYYYMMDD) each is on the card (0 for

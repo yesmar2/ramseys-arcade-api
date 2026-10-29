@@ -488,22 +488,23 @@ export const DAILY_GAMES: ReadonlySet<GameSlug> = new Set<GameSlug>(['hotlap', '
  * points count from here.
  */
 export const DAILY_SINCE: Partial<Record<GameSlug, number>> = {
-  hotlap: 20260926,
+  // The races all count from Oct 16, their day #1 since Ramsey's 14 days back (2026-10-29; *Pace.ts FIRST_DAY).
+  hotlap: 20261016,
   acechase: 20260927,
   findbug: 20260927,
   halffull: HALFFULL_FIRST_KEY,
   // Centroid's daily #1 (centroid/launch.ts): before it, an endless arcade game.
   centroid: CENTROID_FIRST_KEY,
   // Marble Run's course #1 (marblerunPace.ts MARBLERUN_FIRST_DAY).
-  marblerun: 20260929,
+  marblerun: 20261016,
   // Lander's cave #1 (landerPace.ts LANDER_FIRST_DAY).
-  lander: 20260930,
+  lander: 20261016,
   // Swoop's course #1 (swoopPace.ts SWOOP_FIRST_DAY).
-  swoop: 20261006,
+  swoop: 20261016,
   // Wobble Run's gauntlet #1 (wobblerunPace.ts WOBBLERUN_FIRST_DAY).
   wobblerun: 20261009,
   // Sling's tower #1 (slingPace.ts SLING_FIRST_DAY).
-  sling: 20261019,
+  sling: 20261016,
 }
 
 /**

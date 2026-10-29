@@ -230,6 +230,25 @@ const REPAIRS: Repair[] = [
       return `took the "Scores over … in a row" books down: ${gone.length} rows gone`
     },
   },
+  {
+    // Snake's length books went to every tenth from 30 to 100 (records.ts SNAKE_LENGTH_BOOKS, Ramsey, 2026-10-29):
+    // length 75's rows go with its book.
+    id: '2026-10-29-snake-lengths-every-ten',
+    run: async () => {
+      const gone = await db()
+        .delete(recordScores)
+        .where(
+          and(
+            eq(recordScores.game, 'snake'),
+            like(recordScores.recordId, 'fastest-length-%'),
+            notInArray(recordScores.recordId, SNAKE_LENGTH_BOOKS.map((length) => `fastest-length-${length}`)),
+          ),
+        )
+        .returning({ id: recordScores.id })
+      invalidateRecordHistoryCache()
+      return `Snake's length books are every tenth from 30: ${gone.length} rows of retired ones gone`
+    },
+  },
 ]
 
 /**

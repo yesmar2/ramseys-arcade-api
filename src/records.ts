@@ -31,14 +31,16 @@ import {
 const BOARD_PAGE = 100
 /*
  * The waves Asteroids times a clear of, and the lengths Snake times a growth to, in their books: every wave to
- * 20, and 30, 50, 75 and 100. Both were trimmed on 2026-10-13 (Ramsey: "yes, all of it"), the waves to every
- * fifth, because past the first few nobody reached them: a wall of empty books at the top of each game's Records
- * tab. Every wave came back on 2026-10-29 (Ramsey: "let's have wave records for the first ten at least, or just
- * don't show wave records for waves that haven't been reached yet"): the site's Records tab now folds the waves
- * nobody has reached into one line. Fastest to length 20 was retired before (2026-10-05).
+ * 20, and every tenth length from 30 to 100. Both were trimmed on 2026-10-13 (Ramsey: "yes, all of it"), to every
+ * fifth wave and to lengths 30, 50, 75 and 100, because past the first few nobody reached them: a wall of empty
+ * books at the top of each game's Records tab. Every wave came back on 2026-10-29 (Ramsey: "let's have wave records
+ * for the first ten at least, or just don't show wave records for waves that haven't been reached yet"), and every
+ * tenth length the same day ("for snake, there should be fastest to 40, 50, etc every ten. same idea we did for
+ * asteroids"): the site's Records tab folds the ones nobody has reached into one line. Length 75 went with that
+ * (repairs.ts), and fastest to length 20 was retired before (2026-10-05).
  */
 const ASTEROIDS_WAVE_BOOKS: readonly number[] = Array.from({ length: 20 }, (_, i) => i + 1)
-const SNAKE_LENGTH_BOOKS: readonly number[] = [30, 50, 75, 100]
+const SNAKE_LENGTH_BOOKS: readonly number[] = [30, 40, 50, 60, 70, 80, 90, 100]
 const CROSSWALK_ROW_MILESTONE_MIN = 50
 const CROSSWALK_ROW_MILESTONE_MAX = 200
 const CROSSWALK_ROW_MILESTONE_STEP = 25

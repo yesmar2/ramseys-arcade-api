@@ -214,7 +214,7 @@ const snake: Model = (q, rng) => {
   const times = stepTimes(rng, foods, lerp(2.8, 1.6, q) * between(rng, 0.92, 1.1), 0.4)
   const records: RunRecord[] = []
   // The lengths timed in a book (records.ts SNAKE_LENGTH_BOOKS).
-  for (const m of [30, 50, 75, 100]) {
+  for (let m = 30; m <= 100; m += 10) {
     if (length < m) break
     const at = times[m - 4]! * 1000
     records.push({ recordId: `fastest-length-${m}`, value: Math.round(at), atMs: at })

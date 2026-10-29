@@ -216,6 +216,20 @@ const REPAIRS: Repair[] = [
       return `counted Fireflies' streaks again at ${line.toLocaleString()}: ${gone} rows out, ${kept} in`
     },
   },
+  {
+    // The "Scores over … in a row" books are off (records.ts THRESHOLD_STREAKS_ON, Ramsey, 2026-10-29): their rows go,
+    // so nothing counts a record nobody can see. The runs they came from stay, to count them again from when the
+    // lines are set from live scores (recountStreakBook).
+    id: '2026-10-29-score-streaks-off',
+    run: async () => {
+      const gone = await db()
+        .delete(recordScores)
+        .where(eq(recordScores.recordId, THRESHOLD_STREAK_ID))
+        .returning({ id: recordScores.id })
+      invalidateRecordHistoryCache()
+      return `took the "Scores over … in a row" books down: ${gone.length} rows gone`
+    },
+  },
 ]
 
 /**

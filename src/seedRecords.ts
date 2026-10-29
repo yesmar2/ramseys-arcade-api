@@ -9,6 +9,7 @@ import {
   CROSSWALK_ROW_MILESTONE_MIN,
   CROSSWALK_ROW_MILESTONE_STEP,
   THRESHOLD_STREAK_ID,
+  THRESHOLD_STREAKS_ON,
   type RecordEntry,
 } from './records.js'
 import { SEED_NAMES } from './seedBoards.js'
@@ -175,7 +176,8 @@ export function buildRecordsSeed(seed = 20260904) {
           p.device!,
         ),
       )
-    store[`${game}::${THRESHOLD_STREAK_ID}`] = players
+    // Off for now (records.ts THRESHOLD_STREAKS_ON): a world seeded today keeps no rows for it.
+    if (THRESHOLD_STREAKS_ON) store[`${game}::${THRESHOLD_STREAK_ID}`] = players
       .filter((p) => p.skill > 0.18 || rand() < 0.3)
       .slice(0, 12)
       .map((p) =>

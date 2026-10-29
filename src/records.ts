@@ -399,6 +399,15 @@ export const THRESHOLD_STREAK_ID = 'threshold-streak'
 const MIN_CROSS_RUN_STREAK = 2
 
 /**
+ * The "Scores over … in a row" books are off for now (Ramsey, 2026-10-29: "let's remove all the most scores over x
+ * in a row from all games for now. i don't have a good grasp at what the threasholds should be for those yet and i
+ * think real live scores will help us with that in the future"). Off, no game lists the book, so no run is counted
+ * into it, and its rows went (repairs.ts). The lines below stay, to be set again from live runs; turned back on,
+ * each game's book can be counted again from its runs (repairs.ts recountStreakBook).
+ */
+export const THRESHOLD_STREAKS_ON = false
+
+/**
  * Score a run must meet (or beat) to keep a “strong scores in a row” streak.
  * Spotter uses inverted time (higher board score = faster clear).
  *
@@ -466,7 +475,7 @@ function buildCrossRunStreakRecords(): RecordDef[] {
       unit: 'count',
     })
     // A daily's scores are each on the day's own track or puzzle: a run of them over a line means nothing.
-    if (DAILY_GAMES.has(game)) continue
+    if (DAILY_GAMES.has(game) || !THRESHOLD_STREAKS_ON) continue
     defs.push({
       id: THRESHOLD_STREAK_ID,
       game,

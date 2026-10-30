@@ -4,9 +4,12 @@
  * /admin can be swapped or edited for its day (poll.ts keeps that in app_meta), which never moves the others.
  * Light and harmless on purpose, for everyone: nothing political, nothing anyone could be hurt by. Two to four
  * answers, each short enough for a narrow card.
+ *
+ * Day #1 was Oct 9 for the test run, and moved to launch day, Oct 30 (Ramsey, 2026-10-30: "can we reset all of
+ * blips questions too?"), so the list starts again from the top for real players and nothing before it is past.
  */
 
-export const POLL_FIRST_DAY = '2026-10-09'
+export const POLL_FIRST_DAY = '2026-10-30'
 
 export type PlannedPoll = { q: string; options: readonly string[] }
 

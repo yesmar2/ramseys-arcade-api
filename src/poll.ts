@@ -8,8 +8,9 @@ import { awardTickets } from './tickets.js'
 
 /*
  * Blip's question of the day (Ramsey, 2026-10-09: "maybe he can even come out daily and do a daily poll with a
- * question about random things"). One question a day on the boards' clock, planned ahead (pollPlan.ts) and
- * editable for its day on /admin (kept in app_meta as `poll:<n>`). Only a signed-in player answers ("if
+ * question about random things"). One question a day on the boards' clock, planned ahead (pollPlan.ts) and changed
+ * on /admin: edited, moved to another day or taken out (2026-10-30: "can you add ability to reorder questions and
+ * delete them in admin?"), which the queue below keeps. Only a signed-in player answers ("if
  * non-signed in players can vote, doesn't that mean they could just keep voting?"), once a day, for a few
  * tickets: the answer is that ticket row (reason 'poll', ref `poll:<n>`, its pick in the detail), so the
  * ledger's one-row-per-reason-and-ref keeps it to one each, and the counts are its rows. Off the streak.
@@ -50,31 +51,82 @@ function planned(n: number): PlannedPoll {
   return POLLS[(n - 1) % POLLS.length]!
 }
 
-/** A question as edited on /admin, if it was. */
-function parseEdit(value: string | undefined): PlannedPoll | null {
+/** A question to come, in /admin's order: `was` is how the plan had it before it was edited there, to go back to. */
+type QueueItem = PlannedPoll & { was?: PlannedPoll }
+
+/**
+ * Blip's questions in the order /admin left them: day #from takes the first, each day after it the next, and round
+ * again from the top once they run out. It's made the first time a question is edited, moved or taken out, from the
+ * plan as it stood from that day on. Each change starts it again from that day, and keeps the days it covered before
+ * as they were asked (app_meta `poll:<n>`, `kept`), since their answers are in and go by the day's number.
+ */
+type Queue = { from: number; items: QueueItem[] }
+
+const QUEUE_KEY = 'poll_queue'
+
+function asPoll(value: unknown): PlannedPoll | null {
+  const v = value as { q?: unknown; options?: unknown } | null | undefined
+  if (!v || typeof v.q !== 'string' || !Array.isArray(v.options) || !v.options.every((o) => typeof o === 'string')) return null
+  return { q: v.q, options: v.options as string[] }
+}
+
+/**
+ * A day's own question in app_meta: edited on /admin before the queue began, or kept as it was asked once the queue
+ * moved on from it (`kept`, with whether it had been edited).
+ */
+function parseEdit(value: string | undefined): (PlannedPoll & { edited: boolean }) | null {
   if (!value) return null
   try {
-    const v = JSON.parse(value) as { q?: unknown; options?: unknown }
-    if (typeof v.q !== 'string' || !Array.isArray(v.options) || !v.options.every((o) => typeof o === 'string')) return null
-    return { q: v.q, options: v.options as string[] }
+    const v = JSON.parse(value) as { kept?: unknown; edited?: unknown }
+    const poll = asPoll(v)
+    return poll && { ...poll, edited: v.kept === true ? v.edited === true : true }
   } catch {
     return null
   }
 }
 
-/** Questions #from to #to, each as planned or as edited. */
+function parseQueue(value: string | undefined): Queue | null {
+  if (!value) return null
+  try {
+    const v = JSON.parse(value) as { from?: unknown; items?: unknown }
+    if (typeof v.from !== 'number' || !Number.isInteger(v.from) || v.from < 1 || !Array.isArray(v.items) || !v.items.length) return null
+    const items: QueueItem[] = []
+    for (const raw of v.items as unknown[]) {
+      const poll = asPoll(raw)
+      if (!poll) return null
+      const was = asPoll((raw as { was?: unknown }).was)
+      items.push(was ? { ...poll, was } : poll)
+    }
+    return { from: v.from, items }
+  } catch {
+    return null
+  }
+}
+
+/** Day #n's question in the queue, for a day from its first on. */
+function queued(queue: Queue, n: number): QueueItem {
+  const len = queue.items.length
+  return queue.items[(((n - queue.from) % len) + len) % len]!
+}
+
+/** Questions #from to #to, each as planned, as /admin changed it, or as it was asked. */
 export async function pollsBetween(from: number, to: number): Promise<Poll[]> {
   const ns = Array.from({ length: Math.max(0, to - from + 1) }, (_, i) => from + i)
   if (!ns.length) return []
   const rows = await db()
     .select({ key: appMeta.key, value: appMeta.value })
     .from(appMeta)
-    .where(inArray(appMeta.key, ns.map(metaKey)))
+    .where(inArray(appMeta.key, [QUEUE_KEY, ...ns.map(metaKey)]))
+  const queue = parseQueue(rows.find((r) => r.key === QUEUE_KEY)?.value)
   const edits = new Map(rows.map((r) => [r.key, parseEdit(r.value)]))
   return ns.map((n) => {
+    if (queue && n >= queue.from) {
+      const item = queued(queue, n)
+      return { n, day: pollDay(n), q: item.q, options: [...item.options], edited: item.was != null }
+    }
     const edit = edits.get(metaKey(n)) ?? null
     const p = edit ?? planned(n)
-    return { n, day: pollDay(n), q: p.q, options: [...p.options], edited: edit != null }
+    return { n, day: pollDay(n), q: p.q, options: [...p.options], edited: edit?.edited ?? false }
   })
 }
 
@@ -82,19 +134,132 @@ async function pollAt(n: number): Promise<Poll> {
   return (await pollsBetween(n, n))[0]!
 }
 
-/** Edit question #n for its day. */
-export async function editPoll(n: number, q: string, options: string[]): Promise<Poll> {
-  const value = JSON.stringify({ q, options })
-  await db().insert(appMeta).values({ key: metaKey(n), value }).onConflictDoUpdate({ target: appMeta.key, set: { value } })
-  counted.delete(n)
+type Tx = Parameters<Parameters<ReturnType<typeof db>['transaction']>[0]>[0]
+
+function refusal(message: string, status: number, code: string) {
+  return Object.assign(new Error(message), { status, code })
+}
+
+/**
+ * The questions from today on, today's first, for a change on /admin: the queue started again from today, with the
+ * days it covered before today kept as they were asked; or, before there's a queue, a round of the plan from today,
+ * where a day edited here takes its edit along (the queue has it now, so its own row goes). Holds the queue's row
+ * until the change is written, so two changes at once take turns.
+ */
+async function queueFromToday(tx: Tx, today: number): Promise<QueueItem[]> {
+  // An upsert that changes nothing still locks the row it meets, and returns it as the last change left it.
+  const [row] = await tx
+    .insert(appMeta)
+    .values({ key: QUEUE_KEY, value: '' })
+    .onConflictDoUpdate({ target: appMeta.key, set: { key: sql`excluded.key` } })
+    .returning({ value: appMeta.value })
+  const queue = parseQueue(row?.value)
+  if (queue) {
+    const kept = []
+    for (let n = queue.from; n < today; n++) {
+      const { q, options, was } = queued(queue, n)
+      kept.push({ key: metaKey(n), value: JSON.stringify({ q, options, kept: true, edited: was != null }) })
+    }
+    if (kept.length) {
+      await tx.insert(appMeta).values(kept).onConflictDoUpdate({ target: appMeta.key, set: { value: sql`excluded.value` } })
+    }
+    const len = queue.items.length
+    const k = (((today - queue.from) % len) + len) % len
+    return [...queue.items.slice(k), ...queue.items.slice(0, k)]
+  }
+  const ns = Array.from({ length: POLLS.length }, (_, i) => today + i)
+  const rows = await tx
+    .select({ key: appMeta.key, value: appMeta.value })
+    .from(appMeta)
+    .where(inArray(appMeta.key, ns.map(metaKey)))
+  if (rows.length) await tx.delete(appMeta).where(inArray(appMeta.key, rows.map((r) => r.key)))
+  const edits = new Map(rows.map((r) => [r.key, parseEdit(r.value)]))
+  return ns.map((n) => {
+    const plan = planned(n)
+    const edit = edits.get(metaKey(n))
+    return edit ? { q: edit.q, options: edit.options, was: plan } : { q: plan.q, options: [...plan.options] }
+  })
+}
+
+/** A change to the questions from today on (today's at 0), written as the queue from today. */
+async function changeQueue(now: number, change: (items: QueueItem[], today: number) => void): Promise<void> {
+  const today = pollNumber(boardDateKey(now))
+  if (today == null) throw refusal('Blip’s questions haven’t started yet', 409, 'NO_POLL')
+  await db().transaction(async (tx) => {
+    const items = await queueFromToday(tx, today)
+    change(items, today)
+    await tx.update(appMeta).set({ value: JSON.stringify({ from: today, items }) }).where(eq(appMeta.key, QUEUE_KEY))
+  })
+  counted.clear()
+}
+
+/** Day #n's place in the questions from today on: never a past day (its answers are in), nor past a round. */
+function placeOf(n: number, today: number, items: QueueItem[]): number {
+  if (n < today) throw refusal('That day’s gone: its answers are in', 409, 'PAST_POLL')
+  if (n - today >= items.length) throw refusal('That day is a question come round again', 409, 'NO_POLL')
+  return n - today
+}
+
+function samePoll(a: PlannedPoll, b: PlannedPoll): boolean {
+  return a.q === b.q && a.options.length === b.options.length && a.options.every((o, i) => o === b.options[i])
+}
+
+/** Edit day #n's question: today's or one to come, never a past one (its answers are in). */
+export async function editPoll(n: number, q: string, options: string[], now = Date.now()): Promise<Poll> {
+  await changeQueue(now, (items, today) => {
+    const i = placeOf(n, today, items)
+    const item = items[i]!
+    const was = item.was ?? { q: item.q, options: item.options }
+    items[i] = samePoll(was, { q, options }) ? { q, options } : { q, options, was }
+  })
   return pollAt(n)
 }
 
-/** Put question #n back to the plan's. */
-export async function resetPoll(n: number): Promise<Poll> {
-  await db().delete(appMeta).where(eq(appMeta.key, metaKey(n)))
-  counted.delete(n)
+/** Put day #n's question back to how the plan had it, before it was edited here. */
+export async function resetPoll(n: number, now = Date.now()): Promise<Poll> {
+  await changeQueue(now, (items, today) => {
+    const i = placeOf(n, today, items)
+    const was = items[i]!.was
+    if (was) items[i] = { q: was.q, options: [...was.options] }
+  })
   return pollAt(n)
+}
+
+/**
+ * Move day #n's question a day sooner (`by` -1) or later (1), swapping with that day's: a question to come, never
+ * today's, whose answers may be in, nor into its place.
+ */
+export async function movePoll(n: number, by: -1 | 1, now = Date.now()): Promise<void> {
+  await changeQueue(now, (items, today) => {
+    const i = placeOf(n, today, items)
+    const j = i + by
+    if (i === 0 || j === 0) throw refusal('Today’s question stays where it is: its answers may be in', 409, 'TODAY_POLL')
+    if (j >= items.length) throw refusal('That’s the last question before they come round again', 409, 'LAST_POLL')
+    const moving = items[i]!
+    items[i] = items[j]!
+    items[j] = moving
+  })
+}
+
+/** Take day #n's question out: Blip doesn't ask it again, and each question after it comes a day sooner. */
+export async function removePoll(n: number, now = Date.now()): Promise<void> {
+  await changeQueue(now, (items, today) => {
+    const i = placeOf(n, today, items)
+    if (i === 0) throw refusal('Today’s question stays: its answers may be in', 409, 'TODAY_POLL')
+    if (items.length <= 2) throw refusal('Blip needs a question for tomorrow too', 409, 'LAST_POLL')
+    items.splice(i, 1)
+  })
+}
+
+/** Blip's questions from day #from (today's, by default) for /admin, and how many there are before they come round. */
+export async function adminPolls(from: number | null, count: number, now = Date.now()) {
+  const today = pollNumber(boardDateKey(now)) ?? 1
+  const start = from ?? today
+  const [polls, rows] = await Promise.all([
+    pollsBetween(start, start + count - 1),
+    db().select({ value: appMeta.value }).from(appMeta).where(eq(appMeta.key, QUEUE_KEY)),
+  ])
+  return { today, total: parseQueue(rows[0]?.value)?.items.length ?? POLLS.length, polls }
 }
 
 /** Counts a short while old, so a busy morning doesn't count every row on every look. */

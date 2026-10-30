@@ -2,13 +2,12 @@ import { Router } from 'express'
 import { z } from 'zod'
 import { requireAdmin } from './admin.js'
 import { accountFromRequest } from './auth.js'
-import { answerPastPoll, answerPoll, editPoll, pastPolls, pollNumber, pollsBetween, pollView, resetPoll } from './poll.js'
+import { adminPolls, answerPastPoll, answerPoll, editPoll, movePoll, pastPolls, pollView, removePoll, resetPoll } from './poll.js'
 import { takeToken } from './rateLimit.js'
-import { boardDateKey } from './store.js'
 
 /*
  * Blip's question of the day (poll.ts): anyone can see it and yesterday's result, a signed-in player answers
- * it, and an admin plans and edits the days to come.
+ * it, and an admin edits, moves and takes out the questions to come.
  */
 export const pollRouter = Router()
 
@@ -111,7 +110,7 @@ const listSchema = z.object({
   count: z.coerce.number().int().min(1).max(120).optional(),
 })
 
-/** The questions from a day on (today's, by default), for /admin. */
+/** The questions from a day on (today's, by default), for /admin, and how many there are before they come round. */
 pollRouter.get('/admin', async (req, res) => {
   const parsed = listSchema.safeParse(req.query)
   if (!parsed.success) {
@@ -120,10 +119,7 @@ pollRouter.get('/admin', async (req, res) => {
   }
   try {
     await requireAdmin(req)
-    const today = pollNumber(boardDateKey(Date.now())) ?? 1
-    const from = parsed.data.from ?? today
-    const count = parsed.data.count ?? 30
-    res.json({ today, polls: await pollsBetween(from, from + count - 1) })
+    res.json(await adminPolls(parsed.data.from ?? null, parsed.data.count ?? 30))
   } catch (err) {
     fail(err, res)
   }
@@ -144,18 +140,13 @@ pollRouter.put('/admin/:n', async (req, res) => {
   }
   try {
     await requireAdmin(req)
-    const today = pollNumber(boardDateKey(Date.now())) ?? 1
-    if (n < today) {
-      res.status(409).json({ error: 'That day’s gone: its answers are in', code: 'PAST_POLL' })
-      return
-    }
     res.json({ poll: await editPoll(n, parsed.data.q, parsed.data.options) })
   } catch (err) {
     fail(err, res)
   }
 })
 
-/** Put a day's question back to the plan's. */
+/** Put a day's question back to the plan's: today's or one to come. */
 pollRouter.delete('/admin/:n', async (req, res) => {
   const n = Number(req.params.n)
   if (!Number.isInteger(n) || n < 1) {
@@ -165,6 +156,44 @@ pollRouter.delete('/admin/:n', async (req, res) => {
   try {
     await requireAdmin(req)
     res.json({ poll: await resetPoll(n) })
+  } catch (err) {
+    fail(err, res)
+  }
+})
+
+const moveSchema = z.object({ by: z.union([z.literal(-1), z.literal(1)]), count: z.number().int().min(1).max(120).optional() })
+
+/** Move a question to come a day sooner or later, swapping with that day's. Answers with the list from today. */
+pollRouter.post('/admin/:n/move', async (req, res) => {
+  const n = Number(req.params.n)
+  const parsed = moveSchema.safeParse(req.body)
+  if (!Number.isInteger(n) || n < 1 || !parsed.success) {
+    res.status(400).json({ error: 'Which day, and a day sooner or later?', code: 'INVALID_BODY' })
+    return
+  }
+  try {
+    await requireAdmin(req)
+    await movePoll(n, parsed.data.by)
+    res.json(await adminPolls(null, parsed.data.count ?? 30))
+  } catch (err) {
+    fail(err, res)
+  }
+})
+
+const removeSchema = z.object({ count: z.number().int().min(1).max(120).optional() })
+
+/** Take a question to come out: each after it comes a day sooner. Answers with the list from today. */
+pollRouter.post('/admin/:n/remove', async (req, res) => {
+  const n = Number(req.params.n)
+  const parsed = removeSchema.safeParse(req.body ?? {})
+  if (!Number.isInteger(n) || n < 1 || !parsed.success) {
+    res.status(400).json({ error: 'Which day?', code: 'INVALID_BODY' })
+    return
+  }
+  try {
+    await requireAdmin(req)
+    await removePoll(n)
+    res.json(await adminPolls(null, parsed.data.count ?? 30))
   } catch (err) {
     fail(err, res)
   }

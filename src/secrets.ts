@@ -23,7 +23,7 @@ import { ALLOWED_GAMES, boardDateKey, dayStartMs, runsByGameBetween, type GameSl
 
 export const SECRETS = {
   nightowl: { n: 1, name: 'Night Owl', says: 'Played a run between 3 and 4 in the morning.' },
-  earlybird: { n: 2, name: 'Early Bird', says: 'Caught the day’s bug before 8 in the morning.' },
+  earlybird: { n: 2, name: 'Early Bird', says: 'Caught the day’s Blip before 8 in the morning.' },
   grandtour: { n: 3, name: 'Grand Tour', says: 'Played every game in the arcade in one day.' },
   holeinone: { n: 8, name: 'Hole in One', says: 'Today’s Hole on the very first try.' },
   konami: { n: 9, name: 'Up Up Down Down', says: 'Found the old cheat code.' },

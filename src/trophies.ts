@@ -499,8 +499,8 @@ export async function awardHuntSet(opts: {
     kind: 'trophy',
     title: `You caught ${month}’s full set`,
     body: firstSet
-      ? 'All ten bugs in the hunt. The set is on your shelf, and the bug net pin is yours to wear.'
-      : 'All ten bugs in the hunt. The set is on your shelf.',
+      ? 'All ten Blips in the hunt. The set is on your shelf, and the Blip net pin is yours to wear.'
+      : 'All ten Blips in the hunt. The set is on your shelf.',
     href: '/rank?focus=trophies',
     meta: { trophy: { period: 'hunt', rank: 1 }, ...(firstSet ? { pin: 'bugnet' } : {}) },
     digestKey: `trophy:hunt:${opts.periodKey}`,

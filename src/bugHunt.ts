@@ -22,22 +22,11 @@ import { awardHuntSet } from './trophies.js'
  */
 
 /**
- * The bugs in the hunt: ten of Find the Bug's twelve wanted bugs, in the site's order, which is part of
- * the pick. Pickle and Tiger stay in Find the Bug only (2026-09-28): peeking out, a top hat and a bobble
- * hat read most like the others'.
+ * The Blips in the hunt, in the site's order (its bugHuntPick.ts), which is part of the pick. They took over
+ * from ten of Find the Bug's wanted bugs on 2026-11-09, when production had no finds at all. The code still
+ * says "bug" for whatever is loose today.
  */
-export const HUNT_BUG_ORDER = [
-  'bug',
-  'skip',
-  'dotty',
-  'rosie',
-  'ziggy',
-  'honey',
-  'buzz',
-  'pip',
-  'hopper',
-  'flutter',
-] as const
+export const HUNT_BUG_ORDER = ['blip', 'ember', 'frost', 'berry', 'sunny', 'moss', 'dusk', 'bolt', 'pebble', 'cloud'] as const
 
 const HUNT_BUGS: ReadonlySet<string> = new Set(HUNT_BUG_ORDER)
 export const SET_SIZE = HUNT_BUG_ORDER.length

@@ -28,6 +28,7 @@ import { clientErrorsRouter } from './clientErrorsRoutes.js'
 import { noteApiFailure, routeLabel, startErrorAlerts } from './errorAlerts.js'
 import { feedbackRouter } from './feedbackRoutes.js'
 import { sharesRouter } from './sharesRoutes.js'
+import { sourcesRouter } from './sourcesRoutes.js'
 import { launchListRouter } from './launchListRoutes.js'
 import { ticketsRouter } from './ticketsRoutes.js'
 import { pollRouter } from './pollRoutes.js'
@@ -237,6 +238,7 @@ async function main() {
   app.use('/client-errors', clientErrorsRouter)
   app.use('/feedback', feedbackRouter)
   app.use('/shares', sharesRouter)
+  app.use('/sources', sourcesRouter)
   app.use('/launch-list', launchListRouter)
   app.use('/tickets', ticketsRouter)
   app.use('/poll', pollRouter)

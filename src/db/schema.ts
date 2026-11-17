@@ -987,6 +987,25 @@ export const shareEvents = pgTable(
 )
 
 /**
+ * Where players came from (sources.ts): a tagged link's tag (?src=, an ad's, say) and, for each day, how many
+ * devices arrived on it, stayed a minute, came back on a later day, and the later days' visits. Daily counts only:
+ * no account, address or device id is kept.
+ */
+export const sourceDays = pgTable(
+  'source_days',
+  {
+    /** The day it happened on the boards (America/New_York), YYYYMMDD. */
+    day: integer('day').notNull(),
+    /** The link's tag, as sources.ts takes it: lowercase letters, digits and dashes. */
+    src: text('src').notNull(),
+    /** 'arrive', 'stay', 'back' or 'day' (sources.ts KINDS). */
+    kind: text('kind').notNull(),
+    count: integer('count').notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.day, t.src, t.kind] })],
+)
+
+/**
  * Each race course's lap set by an admin (setLaps.ts): the best of their test runs on it, whose platinum is it and
  * half a second more. Keyed by game and course number (a Hot Lap track's, any other race's day number).
  */

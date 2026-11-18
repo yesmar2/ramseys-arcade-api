@@ -201,6 +201,8 @@ const submitSchema = z.object({
   plates: platesSchema.optional(),
   /** The season skin it was played in (skins.ts): kept only if it's the game's and the player owns it. */
   skin: z.string().min(1).max(40).optional(),
+  /** Swoop: how many of the day's three kites the run brought to the line, paid on their own ladder (tickets.ts KITE_TICKETS). */
+  kites: z.number().int().min(0).max(3).optional(),
 })
 
 /*
@@ -570,7 +572,7 @@ leaderboardsRouter.post('/:game', async (req, res) => {
     return
   }
 
-  const { name, token, device, runId, runLagMs, challengeId, pickups, pace, pours, plates, skin } = parsed.data
+  const { name, token, device, runId, runLagMs, challengeId, pickups, pace, pours, plates, skin, kites } = parsed.data
   let score = parsed.data.score
   // Before launch, Plus members play a new game as practice: its boards open to everyone on launch day (earlyAccess.ts).
   if (beforeLaunch(game)) {
@@ -859,6 +861,7 @@ leaderboardsRouter.post('/:game', async (req, res) => {
           priorBest,
           pickups: game === 'crosswalk' ? plausiblePickups(score, pickups) : 0,
           paceMs: game === 'hotlap' || game === 'marblerun' || game === 'lander' || game === 'swoop' || game === 'wobblerun' || game === 'sling' ? pace : null,
+          kites: game === 'swoop' ? (kites ?? 0) : 0,
         }).catch((err: unknown) => {
           console.warn(`[tickets] ${game} run ${payRef}:`, err)
           return null

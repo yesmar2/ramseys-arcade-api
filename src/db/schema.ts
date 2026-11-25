@@ -704,10 +704,12 @@ export type TicketDetail = {
   stepAt?: number | null
   /** How a daily says the step ("beating the blue car by 6%"), or its ladder's words for a run below the first. */
   label?: string
-  /** A daily pays its step once a day: what its runs had already been paid of it that day. (A Swoop run's kites too.) */
+  /** A daily pays its step once a day: what its runs had already been paid of it that day. (A Swoop run's kites and a Lander run's lanterns too.) */
   before?: number
   /** Swoop's kites (tickets.ts KITE_TICKETS): how many the run brought to the line. */
   kites?: number
+  /** Lander's lanterns, paid as kites are: how many the run lit and brought home. */
+  lanterns?: number
   /** Blip's question (poll.ts): which answer was picked, from 0. */
   pick?: number
 }
@@ -725,7 +727,7 @@ export const ticketLedger = pgTable(
       .references(() => accounts.id, { onDelete: 'cascade' }),
     /** Earned is more than zero; a trade is less. */
     amount: integer('amount').notNull(),
-    /** run, best, first, pickup, kite, streak, daily, hunt, top, record, today, freeze, season, poll, grant or trade. */
+    /** run, best, first, pickup, kite, lantern, streak, daily, hunt, top, record, today, freeze, season, poll, grant or trade. */
     reason: text('reason').notNull(),
     ref: text('ref').notNull(),
     game: text('game'),

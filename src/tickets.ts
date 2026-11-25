@@ -33,8 +33,8 @@ import { ladderFor, stepFor, type LadderStep } from './ticketLadders.js'
  * so grinding pays no more than playing. On top, and uncapped: a first go at a
  * game, the first run of each day on a streak, a run in the Daily, each day's
  * bug caught, taking a past Hot Lap track's or Ace Chase hole's record
- * (once a track or hole), and the kites a Swoop run brings to the line
- * (KITE_TICKETS). Only a run with a run id pays, since that's the run the
+ * (once a track or hole), and the kites a Swoop run brings to the line or the
+ * lanterns a Lander run lights (KITE_TICKETS). Only a run with a run id pays, since that's the run the
  * server timed and checked (a day's Ace Chase result is paid as it goes on
  * the board, dailyHole.ts).
  *
@@ -69,6 +69,12 @@ export const DAY_TOP_FIELD = 3
  * The count is the site's word for it: the API never sees a landing (a run's path comes afterwards, with its
  * ghost, and only for a run that's kept one). So what's held to is what can be: a run the server timed, on the
  * day's hills, three kites at most, and this ladder once a day, which is ten tickets a day whatever is sent.
+ *
+ * Lander's lanterns (the site's games/lander/lanterns.ts, with its new look on test) pay by the same ladder,
+ * under a reason of their own: three a day in the cave, each lit by flying the ship into its ring, and counted
+ * when the run lands. Ramsey, 2026-11-25, asked for "the same redesign ideas" for Lander as Swoop had, and to
+ * "Build the three lanterns a day next?": "yes, lanterns". The count is the site's word here too, held to the
+ * same things: a run the server timed, in the day's cave, three at most, once a day.
  */
 export const KITE_TICKETS = [0, 2, 4, 10] as const
 
@@ -84,6 +90,8 @@ export type TicketReason =
   | 'record'
   /** The kites a Swoop run brought to the line (KITE_TICKETS): its run in the ref, how many in the detail. */
   | 'kite'
+  /** The lanterns a Lander run lit and brought home, paid as kites are: its run in the ref, how many in the detail. */
+  | 'lantern'
   | 'grant'
   | 'trade'
   /** A Today streak's milestone (today.ts): its tickets, or a 0 that marks a look as given. */
@@ -117,6 +125,8 @@ export type RunTickets = {
   todayLeft: number
   /** Swoop: how many kites the run brought to the line, when it brought any: what its 'kite' line was paid by. */
   kites?: number
+  /** Lander: how many lanterns the run lit and brought home, when it lit any: what its 'lantern' line was paid by. */
+  lanterns?: number
 }
 
 export type TicketsSummary = {
@@ -160,8 +170,8 @@ export function plausiblePickups(score: number, claimed: number | undefined): nu
   return Math.min(Math.floor(claimed), Math.floor(score * 0.3) + 3)
 }
 
-/** What a game's runs have paid since the day began, for one reason: on the ladder ('run'), or for Swoop's kites ('kite'). */
-async function paidToday(tx: Tx, accountId: string, game: GameSlug, reason: 'run' | 'kite', now: number): Promise<number> {
+/** What a game's runs have paid since the day began, for one reason: on the ladder ('run'), for Swoop's kites ('kite') or Lander's lanterns ('lantern'). */
+async function paidToday(tx: Tx, accountId: string, game: GameSlug, reason: 'run' | 'kite' | 'lantern', now: number): Promise<number> {
   const [row] = await tx
     .select({ n: sql<number>`coalesce(sum(${ticketLedger.amount}), 0)::int` })
     .from(ticketLedger)
@@ -179,7 +189,8 @@ async function paidToday(tx: Tx, accountId: string, game: GameSlug, reason: 'run
 /**
  * Pay a saved run its tickets. `priorBest` is the player's best on the game before it, or null for a
  * first go; `paceMs` is Hot Lap's blue car on the day, which its ladder goes by; `kites` is how many of the
- * day's kites a Swoop run brought to the line (KITE_TICKETS).
+ * day's kites a Swoop run brought to the line, and `lanterns` how many of the day's lanterns a Lander run lit
+ * and brought home (KITE_TICKETS, both).
  */
 export async function payRun(input: {
   accountId: string
@@ -192,14 +203,17 @@ export async function payRun(input: {
   pickups: number
   paceMs?: number | null
   kites?: number
+  lanterns?: number
   now?: number
 }): Promise<RunTickets> {
   const now = input.now ?? Date.now()
   const ladder = await ladderFor(input.game, now, input.paceMs)
   const { tickets: step, reached, next } = stepFor(ladder, input.score)
   const daily = DAILY_GAMES.has(input.game)
-  // Only Swoop has kites, and never more than the ladder has steps for, whatever was sent.
-  const kites = input.game === 'swoop' ? Math.max(0, Math.min(KITE_TICKETS.length - 1, Math.floor(input.kites ?? 0))) : 0
+  // Only Swoop has kites and only Lander lanterns, and never more than the ladder has steps for, whatever was sent.
+  const caught = (sent: number | undefined) => Math.max(0, Math.min(KITE_TICKETS.length - 1, Math.floor(sent ?? 0)))
+  const kites = input.game === 'swoop' ? caught(input.kites) : 0
+  const lanterns = input.game === 'lander' ? caught(input.lanterns) : 0
 
   return db().transaction(async (tx) => {
     const wallet = await lockWallet(tx, input.accountId, now)
@@ -209,6 +223,9 @@ export async function payRun(input: {
     // And Swoop's kites their best count of the day once, the same way.
     const kitesBefore = kites > 0 ? await paidToday(tx, input.accountId, input.game, 'kite', now) : 0
     const kitePay = KITE_TICKETS[kites]! - kitesBefore
+    // And Lander's lanterns theirs.
+    const lanternsBefore = lanterns > 0 ? await paidToday(tx, input.accountId, input.game, 'lantern', now) : 0
+    const lanternPay = KITE_TICKETS[lanterns]! - lanternsBefore
     const wanted: TicketLine[] = []
     if (step - paidBefore > 0) wanted.push({ reason: 'run', amount: step - paidBefore })
     // A daily's best of the day is its step; a best on the others pays on top.
@@ -254,6 +271,19 @@ export async function payRun(input: {
         game: input.game,
         at: now,
         detail: { ...ofRun, kites, ...(kitesBefore > 0 ? { before: kitesBefore } : {}) },
+      })
+    }
+    // Lanterns, the same: their own ladder, off the day's run tickets.
+    if (lanternPay > 0) {
+      rows.push({
+        id: ledgerId(now),
+        accountId: input.accountId,
+        amount: lanternPay,
+        reason: 'lantern',
+        ref: input.runId,
+        game: input.game,
+        at: now,
+        detail: { ...ofRun, lanterns, ...(lanternsBefore > 0 ? { before: lanternsBefore } : {}) },
       })
     }
     if (input.priorBest == null) {
@@ -327,6 +357,7 @@ export async function payRun(input: {
       capped,
       todayLeft: Math.max(0, RUN_TICKETS_PER_DAY - runToday),
       ...(kites > 0 ? { kites } : {}),
+      ...(lanterns > 0 ? { lanterns } : {}),
     }
   })
 }
